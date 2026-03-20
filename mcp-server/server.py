@@ -33,6 +33,7 @@ from prometheus_client import (
 import uvicorn
 
 import graph_service as graph
+from graph_service import validate_identifier
 
 # ── Konfiguration ────────────────────────────────────────────
 QDRANT_URL    = os.getenv("QDRANT_URL",    "http://localhost:6333")
@@ -784,11 +785,15 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         params: list[Any] = [ds["id"]]
         idx = 2
         for key, value in conditions.items():
+            if not validate_identifier(key):
+                return [TextContent(type="text",
+                    text=json.dumps({"error": f"Ungültiger Condition-Key: {key!r}"}))]
             where_clauses.append(f"data->>'{key}' = ${idx}")
             params.append(str(value))
             idx += 1
 
-        q = f"SELECT data FROM dataset_rows WHERE {' AND '.join(where_clauses)} LIMIT {limit}"
+        q = f"SELECT data FROM dataset_rows WHERE {' AND '.join(where_clauses)} LIMIT ${idx}"
+        params.append(int(limit))
         rows = await pool.fetch(q, *params)
 
         await log_access(agent_id, agent_role, "dataset", str(ds["id"]), "query", "allow")

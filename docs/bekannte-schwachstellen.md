@@ -103,40 +103,25 @@ Minimallösung: API-Key pro Agent mit Rollen-Mapping in PG.
 
 ---
 
-### P1-2: SQL-Injection in `query_data`
+### ~~P1-2: SQL-Injection in `query_data`~~ — RESOLVED
 
-**Datei:** `mcp-server/server.py`, Zeile ~441
-
-```python
-# conditions-Keys werden unsanitiert interpoliert:
-where_clauses.append(f"data->>'{key}' = ${idx}")
-```
-
-Ein Angreifer mit `conditions = {"x' OR '1'='1": "foo"}` bricht aus der
-WHERE-Bedingung aus.
-
-**Fix:** Erlaubte Feldnamen gegen eine Whitelist (Datensatz-Schema) prüfen,
-oder die Key-Namen ebenfalls parametrisiert übergeben (JSONB-Operatoren
-unterstützen das via `$1::text`-Casting).
+**Status:** RESOLVED — Condition-Keys in `query_data` werden nun durch
+`validate_identifier()` gegen eine Regex-Whitelist (`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+geprüft, bevor sie in SQL-Strings interpoliert werden. Ungültige Keys
+liefern einen Fehler zurück. Der `LIMIT`-Wert wird ebenfalls als Parameter
+übergeben statt interpoliert. `validate_identifier` ist in `graph_service.py`
+definiert und wird von `server.py` importiert.
 
 ---
 
-### P1-3: Cypher-Injection in `graph_service.py`
+### ~~P1-3: Cypher-Injection in `graph_service.py`~~ — RESOLVED
 
-**Datei:** `mcp-server/graph_service.py`, `_execute_cypher()` / `find_node()`
-
-```python
-# Property-Keys werden nie escaped:
-where_parts.append(f"n.{k} = {_escape_cypher_value(v)}")
-```
-
-Ein Key wie `"id} RETURN n //"` bricht aus dem WHERE aus.
-Zusätzlich ist `_escape_cypher_value()` für AGE nicht ausreichend —
-AGE-spezifische Escape-Anforderungen weichen von Neo4j ab.
-
-**Fix:** Property-Keys gegen ein definiertes Schema validieren (Whitelist).
-Cypher-Queries nicht per String-Interpolation aufbauen, sondern parametrisierte
-AGE-Funktionen oder vorbereitete Statement-Templates nutzen.
+**Status:** RESOLVED — Alle Graph-Funktionen (`create_node`, `find_node`,
+`delete_node`, `create_relationship`, `find_relationships`, `get_neighbors`,
+`find_path`) validieren Labels, Property-Keys und Relationship-Types durch
+`_require_identifier()`, das intern `validate_identifier()` aufruft.
+Nur ASCII-Identifier (`^[a-zA-Z_][a-zA-Z0-9_]*$`) werden akzeptiert.
+Ungültige Eingaben werfen `ValueError`.
 
 ---
 

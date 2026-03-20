@@ -27,11 +27,36 @@ Abhängigkeiten:
 
 import json
 import logging
+import re
 from typing import Any
 
 import asyncpg
 
 log = logging.getLogger("kb-graph")
+
+# ── Identifier-Validierung (Injection Prevention) ───────────
+
+_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+def validate_identifier(name: str) -> bool:
+    """
+    Prüft ob ein String ein sicherer Identifier ist (SQL-Spaltenname,
+    Cypher-Label, Property-Key). Erlaubt nur ASCII-Buchstaben, Ziffern
+    und Unterstriche; muss mit Buchstabe oder Unterstrich beginnen.
+
+    Verhindert SQL-Injection (P1-2) und Cypher-Injection (P1-3).
+    """
+    if not isinstance(name, str) or not name:
+        return False
+    return bool(_IDENTIFIER_RE.match(name))
+
+
+def _require_identifier(name: str, context: str = "identifier") -> None:
+    """Wirft ValueError wenn name kein gültiger Identifier ist."""
+    if not validate_identifier(name):
+        raise ValueError(f"Ungültiger {context}: {name!r}")
+
 
 # ── Cypher-Query-Hilfsfunktionen ────────────────────────────
 
@@ -102,6 +127,9 @@ def _escape_cypher_value(value: Any) -> str:
 
 async def create_node(pool: asyncpg.Pool, label: str, properties: dict) -> dict:
     """Erstellt einen Knoten im Graph."""
+    _require_identifier(label, "Label")
+    for k in properties:
+        _require_identifier(k, "Property-Key")
     props_str = ", ".join(f"{k}: {_escape_cypher_value(v)}" for k, v in properties.items())
     cypher = f"CREATE (n:{label} {{{props_str}}}) RETURN n"
     results = await _execute_cypher(pool, cypher)
@@ -115,8 +143,10 @@ async def create_node(pool: asyncpg.Pool, label: str, properties: dict) -> dict:
 
 async def find_node(pool: asyncpg.Pool, label: str, properties: dict) -> list[dict]:
     """Findet Knoten nach Label und Properties."""
+    _require_identifier(label, "Label")
     where_parts = []
     for k, v in properties.items():
+        _require_identifier(k, "Property-Key")
         where_parts.append(f"n.{k} = {_escape_cypher_value(v)}")
     where_clause = " AND ".join(where_parts) if where_parts else "true"
 
@@ -126,6 +156,7 @@ async def find_node(pool: asyncpg.Pool, label: str, properties: dict) -> list[di
 
 async def delete_node(pool: asyncpg.Pool, label: str, node_id: str) -> bool:
     """Löscht einen Knoten und alle seine Beziehungen."""
+    _require_identifier(label, "Label")
     cypher = f"MATCH (n:{label} {{id: {_escape_cypher_value(node_id)}}}) DETACH DELETE n"
     await _execute_cypher(pool, cypher)
     await _log_sync(pool, label.lower(), node_id, "delete")
@@ -142,8 +173,13 @@ async def create_relationship(
     properties: dict | None = None,
 ) -> dict:
     """Erstellt eine Beziehung zwischen zwei Knoten."""
+    _require_identifier(from_label, "from_label")
+    _require_identifier(to_label, "to_label")
+    _require_identifier(rel_type, "rel_type")
     props_str = ""
     if properties:
+        for k in properties:
+            _require_identifier(k, "Property-Key")
         props_items = ", ".join(f"{k}: {_escape_cypher_value(v)}" for k, v in properties.items())
         props_str = f" {{{props_items}}}"
 
@@ -169,6 +205,12 @@ async def find_relationships(
     Findet Beziehungen im Graph.
     Unterstützt variable Tiefe für Pfad-Traversierung.
     """
+    if from_label:
+        _require_identifier(from_label, "from_label")
+    if to_label:
+        _require_identifier(to_label, "to_label")
+    if rel_type:
+        _require_identifier(rel_type, "rel_type")
     # Dynamisch die MATCH-Klausel aufbauen
     from_part = f"(a:{from_label}" if from_label else "(a"
     if from_id:
@@ -197,6 +239,7 @@ async def get_neighbors(pool: asyncpg.Pool, label: str, node_id: str,
     Findet alle Nachbarn eines Knotens.
     direction: 'out', 'in', oder 'both'
     """
+    _require_identifier(label, "Label")
     node_match = f"(n:{label} {{id: {_escape_cypher_value(node_id)}}})"
 
     if direction == "out":
@@ -214,6 +257,8 @@ async def find_path(pool: asyncpg.Pool,
                     to_label: str, to_id: str,
                     max_depth: int = 5) -> list[dict]:
     """Findet den kürzesten Pfad zwischen zwei Knoten."""
+    _require_identifier(from_label, "from_label")
+    _require_identifier(to_label, "to_label")
     cypher = (
         f"MATCH p = shortestPath("
         f"(a:{from_label} {{id: {_escape_cypher_value(from_id)}}})-[*..{max_depth}]-"
