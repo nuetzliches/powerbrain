@@ -142,6 +142,46 @@ async def process_deletion_requests(pool: asyncpg.Pool, qdrant: AsyncQdrantClien
                     except Exception as e:
                         report["actions"].append(f"Qdrant-Fehler: {e}")
 
+        # Vault: Original + Mapping löschen (Stufe 1: restrict)
+        vault_deleted = 0
+        mapping_deleted = 0
+        dataset_ids = [str(ds_id) for ds_id in req["datasets"]] if req["datasets"] else []
+        if execute and dataset_ids:
+            for ds_id in dataset_ids:
+                m_result = await pool.execute("""
+                    DELETE FROM pii_vault.pseudonym_mapping
+                    WHERE document_id IN (
+                        SELECT id FROM documents_meta WHERE id = $1
+                    )
+                """, ds_id)
+                mapping_deleted += int(m_result.split()[-1]) if m_result else 0
+
+                v_result = await pool.execute("""
+                    DELETE FROM pii_vault.original_content
+                    WHERE document_id IN (
+                        SELECT id FROM documents_meta WHERE id = $1
+                    )
+                """, ds_id)
+                vault_deleted += int(v_result.split()[-1]) if v_result else 0
+
+            # restrict: Qdrant-Punkte behalten, aber contains_pii → false
+            # (Pseudonyme sind jetzt irreversibel = de facto anonym)
+            if vault_deleted > 0:
+                for ds_id in dataset_ids:
+                    await pool.execute("""
+                        UPDATE documents_meta SET contains_pii = false
+                        WHERE id = $1
+                    """, ds_id)
+
+            report["actions"].append(
+                f"Vault: {vault_deleted} original entries, "
+                f"{mapping_deleted} mappings gelöscht (restrict)"
+            )
+        elif dataset_ids:
+            report["actions"].append(
+                f"[DRY-RUN] Würde Vault-Einträge für {len(dataset_ids)} Dokumente löschen (restrict)"
+            )
+
         # Status aktualisieren
         if execute:
             await pool.execute("""
