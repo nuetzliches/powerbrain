@@ -62,6 +62,7 @@ kb-project/
 │   ├── rules.rego          ← Business Rules
 │   └── privacy.rego        ← DSGVO-Policies
 └── docs/
+    ├── what-is-powerbrain.md       ← Key features, problem/solution overview (English)
     ├── architektur.md              ← Detaillierte Doku (inkl. Bausteine 3-5, DSGVO §4.5)
     ├── bekannte-schwachstellen.md  ← P0–P3 Issues, Priorisierung, Fix-Hinweise
     ├── technologie-entscheidungen.md ← VLM, vLLM, Git-Adapter, OTel, Adapter-Schicht

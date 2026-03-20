@@ -81,13 +81,13 @@ Expected: FAIL — file does not exist
 
 ```sql
 -- init-db/007_pii_vault.sql
--- Sealed Vault: Sichere Speicherung von Original-PII-Daten
--- Separates Schema mit Row-Level Security
+-- Sealed Vault: Secure storage of original PII data
+-- Separate schema with Row-Level Security
 
--- ── Schema + Rolle ─────────────────────────────────────────
+-- ── Schema + Role ─────────────────────────────────────────
 CREATE SCHEMA IF NOT EXISTS pii_vault;
 
--- DB-Rolle für Vault-Zugriff (nur MCP-Server darf diese Rolle annehmen)
+-- DB role for vault access (only the MCP server may assume this role)
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'mcp_vault_reader') THEN
@@ -96,12 +96,12 @@ BEGIN
 END
 $$;
 
--- Dem kb_admin Zugriff gewähren (der Applikationsuser)
+-- Grant access to kb_admin (the application user)
 GRANT USAGE ON SCHEMA pii_vault TO mcp_vault_reader;
 
--- ── Tabellen ───────────────────────────────────────────────
+-- ── Tables ───────────────────────────────────────────────
 
--- Original-Inhalte (Klartext + erkannte PII-Entities)
+-- Original content (plain text + detected PII entities)
 CREATE TABLE pii_vault.original_content (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id     UUID NOT NULL REFERENCES documents_meta(id) ON DELETE CASCADE,
@@ -119,7 +119,7 @@ CREATE INDEX idx_vault_content_retention
 CREATE INDEX idx_vault_content_document
     ON pii_vault.original_content(document_id);
 
--- Pseudonym-Mapping (für Rückverfolgung + Art. 17 Löschung)
+-- Pseudonym mapping (for traceability + Art. 17 GDPR deletion)
 CREATE TABLE pii_vault.pseudonym_mapping (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id     UUID NOT NULL REFERENCES documents_meta(id) ON DELETE CASCADE,
@@ -135,7 +135,7 @@ CREATE INDEX idx_vault_mapping_document
 CREATE INDEX idx_vault_mapping_pseudonym
     ON pii_vault.pseudonym_mapping(pseudonym);
 
--- Separates Audit-Log nur für Vault-Zugriffe
+-- Separate audit log only for vault access
 CREATE TABLE pii_vault.vault_access_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     agent_id        VARCHAR(200) NOT NULL,
@@ -151,7 +151,7 @@ CREATE INDEX idx_vault_access_agent
 CREATE INDEX idx_vault_access_document
     ON pii_vault.vault_access_log(document_id);
 
--- Projekt-Salts (deterministisch pro Projekt)
+-- Project salts (deterministic per project)
 CREATE TABLE pii_vault.project_salts (
     project_id      VARCHAR(100) PRIMARY KEY REFERENCES projects(id),
     salt            VARCHAR(200) NOT NULL,
@@ -166,7 +166,7 @@ ALTER TABLE pii_vault.pseudonym_mapping ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pii_vault.vault_access_log  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pii_vault.project_salts     ENABLE ROW LEVEL SECURITY;
 
--- Policy: Nur mcp_vault_reader und der DB-Owner (kb_admin) dürfen lesen
+-- Policy: Only mcp_vault_reader and the DB owner (kb_admin) may read
 CREATE POLICY vault_content_read ON pii_vault.original_content
     FOR SELECT TO mcp_vault_reader USING (true);
 
@@ -194,20 +194,20 @@ CREATE POLICY vault_access_log_read ON pii_vault.vault_access_log
 CREATE POLICY vault_salts_all ON pii_vault.project_salts
     TO mcp_vault_reader USING (true) WITH CHECK (true);
 
--- Grant Berechtigungen
+-- Grant permissions
 GRANT SELECT, INSERT, DELETE ON pii_vault.original_content TO mcp_vault_reader;
 GRANT SELECT, INSERT, DELETE ON pii_vault.pseudonym_mapping TO mcp_vault_reader;
 GRANT SELECT, INSERT ON pii_vault.vault_access_log TO mcp_vault_reader;
 GRANT ALL ON pii_vault.project_salts TO mcp_vault_reader;
 
--- ── View: Verwaiste Vault-Einträge ─────────────────────────
+-- ── View: Orphaned vault entries ─────────────────────────
 CREATE OR REPLACE VIEW pii_vault.v_orphaned_content AS
 SELECT oc.id, oc.document_id, oc.chunk_index, oc.stored_at
 FROM pii_vault.original_content oc
 LEFT JOIN documents_meta dm ON dm.id = oc.document_id
 WHERE dm.id IS NULL;
 
--- ── View: Abgelaufene Vault-Einträge ───────────────────────
+-- ── View: Expired vault entries ───────────────────────
 CREATE OR REPLACE VIEW pii_vault.v_expired_vault_content AS
 SELECT id, document_id, chunk_index, retention_expires_at, data_category
 FROM pii_vault.original_content
@@ -287,8 +287,8 @@ Append the following after line 146 (after the existing `deletion_response` rule
 
 ```rego
 # ── Dual Storage Policy ─────────────────────────────────────
-# Bestimmt pro Klassifizierung, ob Original + Pseudonym gespeichert werden.
-# Änderbar ohne Code-Deployment.
+# Determines per classification whether original + pseudonym are stored.
+# Changeable without code deployment.
 
 default dual_storage_enabled := false
 
@@ -303,8 +303,8 @@ dual_storage_enabled if {
 }
 
 # ── Vault Access Policy ─────────────────────────────────────
-# Prüft ob ein Agent auf Original-Daten im Vault zugreifen darf.
-# Erfordert gültigen Token + Zweckbindung.
+# Checks whether an agent is allowed to access original data in the vault.
+# Requires valid token + purpose binding.
 
 default vault_access_allowed := false
 
@@ -331,8 +331,8 @@ role_allowed_for_classification if {
 }
 
 # ── Vault Field Redaction ───────────────────────────────────
-# Welche Felder im Original redaktiert werden, abhängig vom Zweck.
-# Nutzt gleiche Logik wie fields_to_redact, aber explizit für Vault.
+# Which fields in the original are redacted, depending on the purpose.
+# Uses the same logic as fields_to_redact, but explicitly for the vault.
 
 default vault_fields_to_redact := set()
 
@@ -456,11 +456,11 @@ Replace lines 188-217 in `ingestion/pii_scanner.py`:
         self, text: str, salt: str, language: str = "de"
     ) -> tuple[str, dict[str, str]]:
         """
-        Ersetzt PII durch deterministische Pseudonyme.
-        Gleicher Input + Salt → gleiches Pseudonym (für Verknüpfbarkeit).
+        Replaces PII with deterministic pseudonyms.
+        Same input + salt → same pseudonym (for linkability).
 
         Returns:
-            Tuple aus (pseudonymisierter Text, Mapping {original → pseudonym})
+            Tuple of (pseudonymized text, mapping {original → pseudonym})
         """
         results = self.analyzer.analyze(
             text=text,
@@ -473,18 +473,18 @@ Replace lines 188-217 in `ingestion/pii_scanner.py`:
             h = hashlib.sha256(f"{salt}:{entity_text}".encode()).hexdigest()[:8]
             return h
 
-        # Baue individuelle Operatoren pro Ergebnis (nicht pro Entity-Typ),
-        # damit mehrere Entities gleichen Typs unterschiedliche Pseudonyme bekommen.
+        # Build individual operators per result (not per entity type),
+        # so that multiple entities of the same type get different pseudonyms.
         mapping: dict[str, str] = {}
         for r in results:
             original = text[r.start:r.end]
             pseudo = make_pseudonym(original)
             mapping[original] = pseudo
 
-        # Presidio's anonymizer braucht Operatoren pro Entity-Typ.
-        # Bei mehreren Entities gleichen Typs: manuell ersetzen statt Presidio.
+        # Presidio's anonymizer requires operators per entity type.
+        # With multiple entities of the same type: replace manually instead of using Presidio.
         pseudonymized = text
-        # Sortiere nach Position absteigend, damit Offsets stabil bleiben
+        # Sort by position descending so that offsets remain stable
         for r in sorted(results, key=lambda x: x.start, reverse=True):
             original = pseudonymized[r.start:r.end]
             pseudo = mapping.get(original, make_pseudonym(original))
@@ -500,8 +500,8 @@ Also update `pseudonymize_record` (lines 229-255) to match the new return type:
         self, record: dict[str, Any], salt: str, language: str = "de"
     ) -> tuple[dict[str, Any], dict[str, str]]:
         """
-        Pseudonymisiert PII in einem Record.
-        Gibt (pseudonymisierter Record, Mapping original→pseudonym) zurück.
+        Pseudonymizes PII in a record.
+        Returns (pseudonymized record, mapping original→pseudonym).
         """
         pseudonymized = {}
         mapping: dict[str, str] = {}
@@ -608,7 +608,7 @@ Replace the `ingest_text_chunks` function (lines 121-194) in `ingestion/ingestio
 
 ```python
 async def get_or_create_project_salt(project: str | None) -> str:
-    """Holt oder erstellt einen Salt für das Projekt aus pii_vault.project_salts."""
+    """Retrieves or creates a salt for the project from pii_vault.project_salts."""
     import secrets
     if not pg_pool or not project:
         return secrets.token_hex(16)
@@ -636,7 +636,7 @@ async def get_or_create_project_salt(project: str | None) -> str:
 async def check_opa_privacy(
     classification: str, contains_pii: bool, legal_basis: str | None = None
 ) -> dict:
-    """Fragt OPA nach pii_action und dual_storage_enabled."""
+    """Queries OPA for pii_action and dual_storage_enabled."""
     input_data = {
         "classification": classification,
         "contains_pii": contains_pii,
@@ -668,13 +668,13 @@ async def store_in_vault(
     retention_days: int,
     data_category: str | None,
 ) -> str:
-    """Speichert Originaltext + Mapping im pii_vault. Gibt vault_ref UUID zurück."""
+    """Stores original text + mapping in pii_vault. Returns vault_ref UUID."""
     vault_id = str(uuid.uuid4())
     expires_at = datetime.now(timezone.utc) + timedelta(days=retention_days)
 
     async with pg_pool.acquire() as conn:
         async with conn.transaction():
-            # Original speichern
+            # Store original
             await conn.execute("""
                 INSERT INTO pii_vault.original_content
                     (id, document_id, chunk_index, original_text,
@@ -683,7 +683,7 @@ async def store_in_vault(
             """, vault_id, doc_id, chunk_index, original_text,
                 json.dumps(pii_entities), expires_at, data_category)
 
-            # Mapping speichern (ein Eintrag pro Entity)
+            # Store mapping (one entry per entity)
             for original, pseudonym in mapping.items():
                 entity_type = "UNKNOWN"
                 for e in pii_entities:
@@ -707,7 +707,7 @@ async def log_pii_scan(
     classification: str,
     dataset_id: str | None = None,
 ):
-    """Schreibt einen Eintrag in pii_scan_log."""
+    """Writes an entry to pii_scan_log."""
     if not pg_pool:
         return
     try:
@@ -729,14 +729,14 @@ async def ingest_text_chunks(
     project: str | None,
     metadata: dict[str, Any],
 ) -> dict:
-    """Vektorisiert Chunks und speichert sie in Qdrant + PostgreSQL.
+    """Vectorizes chunks and stores them in Qdrant + PostgreSQL.
 
     Pipeline:
-    1. PII-Scan jedes Chunks
-    2. OPA-Policy: pii_action + dual_storage_enabled
-    3. Je nach Action: mask, pseudonymize+vault, oder block
+    1. PII scan of each chunk
+    2. OPA policy: pii_action + dual_storage_enabled
+    3. Depending on action: mask, pseudonymize+vault, or block
     4. Embed + Qdrant upsert
-    5. PostgreSQL Metadaten
+    5. PostgreSQL metadata
     """
     scanner = get_scanner()
     points = []
@@ -745,14 +745,14 @@ async def ingest_text_chunks(
     doc_id = str(uuid.uuid4())
 
     for i, chunk in enumerate(chunks):
-        # 1. PII-Scan
+        # 1. PII scan
         scan_result = scanner.scan_text(chunk)
         vault_ref = None
 
         if scan_result.contains_pii:
             pii_detected = True
 
-            # 2. OPA Policy: Was tun mit PII?
+            # 2. OPA Policy: What to do with PII?
             opa_result = await check_opa_privacy(
                 classification, True, metadata.get("legal_basis")
             )
@@ -762,8 +762,8 @@ async def ingest_text_chunks(
 
             if pii_action == "block":
                 log.warning(
-                    f"PII in Chunk {i} erkannt, Klassifizierung '{classification}'"
-                    f" → blockiert durch OPA-Policy"
+                    f"PII detected in chunk {i}, classification '{classification}'"
+                    f" → blocked by OPA policy"
                 )
                 await log_pii_scan(
                     source, scan_result.entity_counts, "block", classification
@@ -776,15 +776,15 @@ async def ingest_text_chunks(
                 }
 
             elif pii_action == "pseudonymize" and dual_storage:
-                # 3a. Dual Storage: pseudonymisieren + Original im Vault
+                # 3a. Dual Storage: pseudonymize + store original in vault
                 log.info(
-                    f"PII in Chunk {i}: {scan_result.entity_counts}"
-                    f" → pseudonymisiere (dual storage)"
+                    f"PII in chunk {i}: {scan_result.entity_counts}"
+                    f" → pseudonymizing (dual storage)"
                 )
                 salt = await get_or_create_project_salt(project)
                 pseudo_text, mapping = scanner.pseudonymize_text(chunk, salt)
 
-                # Vault: Original + Mapping speichern
+                # Vault: store original + mapping
                 pii_entities = [
                     {
                         "type": loc["type"],
@@ -810,9 +810,9 @@ async def ingest_text_chunks(
                 )
 
             else:
-                # 3b. Fallback: maskieren (public oder dual_storage=false)
+                # 3b. Fallback: mask (public or dual_storage=false)
                 log.warning(
-                    f"PII in Chunk {i}: {scan_result.entity_counts} → maskiere"
+                    f"PII in chunk {i}: {scan_result.entity_counts} → masking"
                 )
                 chunk = scanner.mask_text(chunk)
                 await log_pii_scan(
@@ -839,12 +839,12 @@ async def ingest_text_chunks(
         ))
         vault_refs.append(vault_ref)
 
-    # 5. In Qdrant upserten
+    # 5. Upsert into Qdrant
     if points:
         await qdrant.upsert(collection_name=collection, points=points)
-        log.info(f"{len(points)} Punkte in '{collection}' eingefügt")
+        log.info(f"{len(points)} points inserted into '{collection}'")
 
-    # 6. Metadaten in PostgreSQL speichern
+    # 6. Store metadata in PostgreSQL
     if pg_pool:
         try:
             await pg_pool.execute("""
@@ -867,7 +867,7 @@ async def ingest_text_chunks(
                 }),
             )
         except Exception as e:
-            log.error(f"PG documents_meta Insert fehlgeschlagen: {e}")
+            log.error(f"PG documents_meta insert failed: {e}")
 
     return {
         "status": "ok",
@@ -965,7 +965,7 @@ VAULT_HMAC_SECRET = os.getenv("VAULT_HMAC_SECRET", "change-me-in-production")
 
 def validate_pii_access_token(token: dict) -> dict:
     """
-    Validiert einen PII Access Token (HMAC-signiert, kurzlebig).
+    Validates a PII access token (HMAC-signed, short-lived).
     Returns: {"valid": bool, "reason": str, "payload": dict}
     """
     import hmac as hmac_mod
@@ -975,7 +975,7 @@ def validate_pii_access_token(token: dict) -> dict:
     signature = token.get("signature", "")
     payload = {k: v for k, v in token.items() if k != "signature"}
 
-    # HMAC-Signatur prüfen
+    # Verify HMAC signature
     expected = hmac_mod.new(
         VAULT_HMAC_SECRET.encode(),
         json.dumps(payload, sort_keys=True).encode(),
@@ -985,7 +985,7 @@ def validate_pii_access_token(token: dict) -> dict:
     if not hmac_mod.compare_digest(signature, expected):
         return {"valid": False, "reason": "Invalid token signature", "payload": payload}
 
-    # Ablauf prüfen
+    # Check expiration
     expires_at = token.get("expires_at", "")
     try:
         exp = datetime.fromisoformat(expires_at)
@@ -1003,7 +1003,7 @@ async def check_opa_vault_access(
     agent_role: str, purpose: str, classification: str,
     data_category: str, token_valid: bool, token_expired: bool,
 ) -> dict:
-    """Prüft via OPA ob Vault-Zugriff erlaubt ist."""
+    """Checks via OPA whether vault access is allowed."""
     input_data = {
         "agent_role": agent_role,
         "purpose": purpose,
@@ -1036,8 +1036,8 @@ async def check_opa_vault_access(
 
 
 def redact_fields(text: str, pii_entities: list[dict], fields_to_redact: set[str]) -> str:
-    """Redaktiert bestimmte PII-Entity-Typen im Text basierend auf OPA-Policy."""
-    # Mapping von OPA-Feldnamen zu Presidio-Entity-Typen
+    """Redacts specific PII entity types in text based on OPA policy."""
+    # Mapping from OPA field names to Presidio entity types
     field_to_entity = {
         "email": "EMAIL_ADDRESS",
         "phone": "PHONE_NUMBER",
@@ -1052,7 +1052,7 @@ def redact_fields(text: str, pii_entities: list[dict], fields_to_redact: set[str
     if not entities_to_redact:
         return text
 
-    # Sortiere nach Position absteigend für stabile Offsets
+    # Sort by position descending for stable offsets
     sorted_entities = sorted(pii_entities, key=lambda e: e.get("start", 0), reverse=True)
     result = text
     for entity in sorted_entities:
@@ -1067,7 +1067,7 @@ def redact_fields(text: str, pii_entities: list[dict], fields_to_redact: set[str
 async def vault_lookup(
     document_id: str, chunk_indices: list[int] | None = None
 ) -> list[dict]:
-    """Holt Original-Daten aus dem Vault."""
+    """Retrieves original data from the vault."""
     pool = await get_pg_pool()
     if chunk_indices:
         rows = await pool.fetch("""
@@ -1100,7 +1100,7 @@ async def log_vault_access(
     agent_id: str, document_id: str, chunk_index: int | None,
     purpose: str, token_hash: str,
 ):
-    """Loggt Vault-Zugriff in separates Audit-Log."""
+    """Logs vault access to a separate audit log."""
     pool = await get_pg_pool()
     await pool.execute("""
         INSERT INTO pii_vault.vault_access_log
@@ -1297,12 +1297,12 @@ Add the following functions before `main()` (before line 161) in `ingestion/rete
 ```python
 async def clean_expired_vault(conn, dry_run: bool = True) -> dict:
     """
-    Löscht abgelaufene Vault-Einträge und zugehörige Mappings.
-    Gibt Statistiken zurück.
+    Deletes expired vault entries and associated mappings.
+    Returns statistics.
     """
     stats = {"expired_content": 0, "expired_mappings": 0, "orphaned": 0}
 
-    # 1. Abgelaufene Vault-Einträge finden
+    # 1. Find expired vault entries
     expired = await conn.fetch("""
         SELECT id, document_id, chunk_index
         FROM pii_vault.original_content
@@ -1314,7 +1314,7 @@ async def clean_expired_vault(conn, dry_run: bool = True) -> dict:
         expired_ids = [r["id"] for r in expired]
         expired_doc_chunks = [(r["document_id"], r["chunk_index"]) for r in expired]
 
-        # Mappings löschen
+        # Delete mappings
         for doc_id, chunk_idx in expired_doc_chunks:
             deleted = await conn.execute("""
                 DELETE FROM pii_vault.pseudonym_mapping
@@ -1322,7 +1322,7 @@ async def clean_expired_vault(conn, dry_run: bool = True) -> dict:
             """, doc_id, chunk_idx)
             stats["expired_mappings"] += int(deleted.split()[-1]) if deleted else 0
 
-        # Original-Content löschen
+        # Delete original content
         await conn.execute("""
             DELETE FROM pii_vault.original_content
             WHERE id = ANY($1::uuid[])
@@ -1333,7 +1333,7 @@ async def clean_expired_vault(conn, dry_run: bool = True) -> dict:
             f"{stats['expired_mappings']} mappings removed"
         )
 
-    # 2. Verwaiste Vault-Einträge (document_meta gelöscht, Vault noch da)
+    # 2. Orphaned vault entries (document_meta deleted, vault still present)
     orphaned = await conn.fetch("""
         SELECT oc.id, oc.document_id
         FROM pii_vault.original_content oc
@@ -1371,7 +1371,7 @@ Then in `main()`, add a Phase 3 vault cleanup step after the existing Phase 2 (a
         log.info(
             f"Vault: {vault_stats['expired_content']} expired, "
             f"{vault_stats['orphaned']} orphaned"
-            f"{' (dry-run)' if dry_run else ' → gelöscht'}"
+            f"{' (dry-run)' if dry_run else ' → deleted'}"
         )
 ```
 
@@ -1441,7 +1441,7 @@ Expected: FAIL (or partial pass since "vault" might appear after Task 6)
 Modify `process_deletion_requests()` in `ingestion/retention_cleanup.py` (lines 109-158) to add vault deletion. In the deletion loop, after deleting Qdrant points and before updating deletion status, add:
 
 ```python
-            # Vault: Original + Mapping löschen (Stufe 1: restrict)
+            # Vault: delete original + mapping (Tier 1: restrict)
             vault_deleted = 0
             mapping_deleted = 0
             for ds_id in dataset_ids:
@@ -1461,8 +1461,8 @@ Modify `process_deletion_requests()` in `ingestion/retention_cleanup.py` (lines 
                 """, ds_id)
                 vault_deleted += int(v_result.split()[-1]) if v_result else 0
 
-            # restrict: Qdrant-Punkte behalten, aber contains_pii → false
-            # (Pseudonyme sind jetzt irreversibel = de facto anonym)
+            # restrict: keep Qdrant points, but set contains_pii → false
+            # (pseudonyms are now irreversible = effectively anonymous)
             if vault_deleted > 0:
                 for ds_id in dataset_ids:
                     await conn.execute("""
