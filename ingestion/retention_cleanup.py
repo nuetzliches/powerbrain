@@ -15,6 +15,7 @@ import asyncio
 import argparse
 import json
 import logging
+import os
 from datetime import datetime, timezone
 
 import asyncpg
@@ -26,6 +27,7 @@ log = logging.getLogger("retention")
 
 POSTGRES_URL = "postgresql://kb_admin:changeme@localhost:5432/knowledgebase"
 QDRANT_URL = "http://localhost:6333"
+AUDIT_RETENTION_DAYS = int(os.getenv("AUDIT_RETENTION_DAYS", "365"))
 
 
 async def get_expiring_data(pool: asyncpg.Pool) -> list[dict]:
@@ -265,6 +267,38 @@ async def clean_expired_vault(conn, dry_run: bool = True) -> dict:
     return stats
 
 
+async def anonymize_old_audit_logs(pool: asyncpg.Pool, execute: bool) -> dict:
+    """
+    Anonymisiert Audit-Log-Einträge, deren Aufbewahrungsfrist abgelaufen ist.
+    Setzt request_context auf '{"anonymized": true}' für Einträge älter als
+    AUDIT_RETENTION_DAYS Tage.
+    """
+    count = await pool.fetchval("""
+        SELECT count(*) FROM agent_access_log
+        WHERE created_at < now() - interval '1 day' * $1
+          AND request_context != '{"anonymized": true}'::jsonb
+    """, AUDIT_RETENTION_DAYS)
+
+    report = {
+        "retention_days": AUDIT_RETENTION_DAYS,
+        "entries_to_anonymize": count,
+        "actions": [],
+    }
+
+    if execute and count > 0:
+        await pool.execute("""
+            UPDATE agent_access_log
+            SET request_context = '{"anonymized": true}'::jsonb
+            WHERE created_at < now() - interval '1 day' * $1
+              AND request_context != '{"anonymized": true}'::jsonb
+        """, AUDIT_RETENTION_DAYS)
+        report["actions"].append(f"Audit-Log: {count} Einträge anonymisiert (>{AUDIT_RETENTION_DAYS} Tage)")
+    else:
+        report["actions"].append(f"[DRY-RUN] Würde {count} Audit-Einträge anonymisieren (>{AUDIT_RETENTION_DAYS} Tage)")
+
+    return report
+
+
 async def main():
     parser = argparse.ArgumentParser(description="Retention Cleanup Service")
     parser.add_argument("--execute", action="store_true", help="Tatsächlich löschen (ohne: Dry-Run)")
@@ -308,6 +342,12 @@ async def main():
         f"{vault_stats['orphaned']} orphaned"
         f"{' (dry-run)' if not args.execute else ' → gelöscht'}"
     )
+
+    # 4. Audit-Log: Zeitbasierte Anonymisierung
+    log.info("=== Phase 4: Audit-Log Retention ===")
+    audit_report = await anonymize_old_audit_logs(pool, args.execute)
+    for action in audit_report["actions"]:
+        log.info(f"  {action}")
 
     await pool.close()
     log.info(f"Retention Cleanup abgeschlossen [{mode}]")
