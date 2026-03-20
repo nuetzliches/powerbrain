@@ -68,26 +68,26 @@ default pii_action := "block"
 # Public-Daten: PII immer maskieren
 pii_action := "mask" if {
     input.classification == "public"
-    input.pii_detected
+    input.contains_pii == true
 }
 
 # Internal: PII pseudonymisieren (reversibel mit Schlüssel)
 pii_action := "pseudonymize" if {
     input.classification == "internal"
-    input.pii_detected
+    input.contains_pii == true
 }
 
 # Confidential: PII speichern, aber verschlüsselt + zweckgebunden
 pii_action := "encrypt_and_store" if {
     input.classification == "confidential"
-    input.pii_detected
+    input.contains_pii == true
     input.legal_basis != ""
 }
 
 # Restricted: Nie PII in die Wissensdatenbank
 pii_action := "block" if {
     input.classification == "restricted"
-    input.pii_detected
+    input.contains_pii == true
 }
 
 # ── Aufbewahrungsfristen (Art. 5 Abs. 1 lit. e DSGVO) ──────

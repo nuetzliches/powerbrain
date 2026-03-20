@@ -33,7 +33,7 @@ FORGEJO_URL  = os.getenv("FORGEJO_URL",  "http://forgejo.local:3000")
 FORGEJO_TOKEN = os.getenv("FORGEJO_TOKEN", "")
 
 QDRANT_COLLECTIONS = ["knowledge_general", "knowledge_code", "knowledge_rules"]
-PG_SNAPSHOT_TABLES = ["datasets", "dataset_rows", "business_rules", "documents_meta"]
+PG_SNAPSHOT_TABLES = ["datasets", "dataset_rows", "documents_meta"]
 KEEP_LAST_N        = int(os.getenv("SNAPSHOT_KEEP_LAST_N", "10"))
 
 

@@ -17,6 +17,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import secrets
+
 import httpx
 import asyncpg
 from fastapi import FastAPI, HTTPException
@@ -120,7 +122,6 @@ def chunk_text(text: str, max_chars: int = 1000, overlap: int = 200) -> list[str
 
 async def get_or_create_project_salt(project: str | None) -> str:
     """Holt oder erstellt einen Salt für das Projekt aus pii_vault.project_salts."""
-    import secrets
     if not pg_pool or not project:
         return secrets.token_hex(16)
 
@@ -141,7 +142,12 @@ async def get_or_create_project_salt(project: str | None) -> str:
         )
     except Exception as e:
         log.warning(f"Project salt creation failed: {e}")
-    return salt
+    # Re-read to get the winning salt (handles race condition)
+    row = await pg_pool.fetchrow(
+        "SELECT salt FROM pii_vault.project_salts WHERE project_id = $1",
+        project,
+    )
+    return row["salt"] if row else salt
 
 
 async def check_opa_privacy(
@@ -183,6 +189,9 @@ async def store_in_vault(
     data_category: str | None,
 ) -> str:
     """Speichert Originaltext + Mapping im pii_vault. Gibt vault_ref UUID zurück."""
+    if not pg_pool:
+        raise RuntimeError("PostgreSQL unavailable for vault storage")
+
     vault_id = str(uuid.uuid4())
     expires_at = datetime.now(timezone.utc) + timedelta(days=retention_days)
 
@@ -247,7 +256,7 @@ async def ingest_text_chunks(
 
     Pipeline:
     1. PII-Scan jedes Chunks
-    2. OPA-Policy: pii_action + dual_storage_enabled
+    2. OPA-Policy: pii_action + dual_storage_enabled (einmal pro Dokument)
     3. Je nach Action: mask, pseudonymize+vault, oder block
     4. Embed + Qdrant upsert
     5. PostgreSQL Metadaten
@@ -258,6 +267,30 @@ async def ingest_text_chunks(
     vault_refs: list[str | None] = []
     doc_id = str(uuid.uuid4())
 
+    # Vorab documents_meta anlegen (damit Vault-FK-Constraints erfüllt sind)
+    if pg_pool:
+        try:
+            await pg_pool.execute("""
+                INSERT INTO documents_meta
+                    (id, title, source, qdrant_collection, classification,
+                     chunk_count, contains_pii, metadata)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            """,
+                doc_id,
+                source[:200],
+                source,
+                collection,
+                classification,
+                0,  # chunk_count wird später aktualisiert
+                False,  # contains_pii wird später aktualisiert
+                json.dumps(metadata),
+            )
+        except Exception as e:
+            log.error(f"PG documents_meta Insert fehlgeschlagen: {e}")
+
+    # OPA-Policy einmal pro Dokument abfragen (Klassifizierung ist gleich für alle Chunks)
+    opa_result: dict | None = None
+
     for i, chunk in enumerate(chunks):
         # 1. PII-Scan
         scan_result = scanner.scan_text(chunk)
@@ -266,10 +299,11 @@ async def ingest_text_chunks(
         if scan_result.contains_pii:
             pii_detected = True
 
-            # 2. OPA Policy: Was tun mit PII?
-            opa_result = await check_opa_privacy(
-                classification, True, metadata.get("legal_basis")
-            )
+            # 2. OPA Policy: Was tun mit PII? (nur beim ersten Fund abfragen)
+            if opa_result is None:
+                opa_result = await check_opa_privacy(
+                    classification, True, metadata.get("legal_basis")
+                )
             pii_action = opa_result["pii_action"]
             dual_storage = opa_result["dual_storage_enabled"]
             retention_days = opa_result.get("retention_days", 365)
@@ -289,11 +323,11 @@ async def ingest_text_chunks(
                     "pii_detected": True,
                 }
 
-            elif pii_action == "pseudonymize" and dual_storage:
+            elif pii_action in ("pseudonymize", "encrypt_and_store") and dual_storage:
                 # 3a. Dual Storage: pseudonymisieren + Original im Vault
                 log.info(
                     f"PII in Chunk {i}: {scan_result.entity_counts}"
-                    f" → pseudonymisiere (dual storage)"
+                    f" → pseudonymisiere (dual storage, action={pii_action})"
                 )
                 salt = await get_or_create_project_salt(project)
                 pseudo_text, mapping = scanner.pseudonymize_text(chunk, salt)
@@ -325,6 +359,11 @@ async def ingest_text_chunks(
 
             else:
                 # 3b. Fallback: maskieren (public oder dual_storage=false)
+                if pii_action not in ("mask", "pseudonymize"):
+                    log.warning(
+                        f"PII action '{pii_action}' not fully implemented, "
+                        f"falling back to mask"
+                    )
                 log.warning(
                     f"PII in Chunk {i}: {scan_result.entity_counts} → maskiere"
                 )
@@ -358,20 +397,17 @@ async def ingest_text_chunks(
         await qdrant.upsert(collection_name=collection, points=points)
         log.info(f"{len(points)} Punkte in '{collection}' eingefügt")
 
-    # 6. Metadaten in PostgreSQL speichern
+    # 6. documents_meta aktualisieren mit finalen Werten
     if pg_pool:
         try:
             await pg_pool.execute("""
-                INSERT INTO documents_meta
-                    (id, title, source, qdrant_collection, classification,
-                     chunk_count, contains_pii, metadata)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                UPDATE documents_meta
+                SET chunk_count = $2,
+                    contains_pii = $3,
+                    metadata = $4
+                WHERE id = $1
             """,
                 doc_id,
-                source[:200],
-                source,
-                collection,
-                classification,
                 len(points),
                 pii_detected,
                 json.dumps({
@@ -381,7 +417,7 @@ async def ingest_text_chunks(
                 }),
             )
         except Exception as e:
-            log.error(f"PG documents_meta Insert fehlgeschlagen: {e}")
+            log.error(f"PG documents_meta Update fehlgeschlagen: {e}")
 
     return {
         "status": "ok",
