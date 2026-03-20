@@ -145,3 +145,73 @@ deletion_response := response if {
         "review_after_days": retention_days,
     }
 }
+
+# ── Dual Storage Policy ─────────────────────────────────────
+# Bestimmt pro Klassifizierung, ob Original + Pseudonym gespeichert werden.
+# Änderbar ohne Code-Deployment.
+
+default dual_storage_enabled := false
+
+dual_storage_enabled if {
+    input.classification == "internal"
+    input.contains_pii == true
+}
+
+dual_storage_enabled if {
+    input.classification == "confidential"
+    input.contains_pii == true
+}
+
+# ── Vault Access Policy ─────────────────────────────────────
+# Prüft ob ein Agent auf Original-Daten im Vault zugreifen darf.
+# Erfordert gültigen Token + Zweckbindung.
+
+default vault_access_allowed := false
+
+vault_access_allowed if {
+    input.token_valid == true
+    input.token_expired == false
+    purpose_allowed_for_vault
+    role_allowed_for_classification
+}
+
+purpose_allowed_for_vault if {
+    some allowed_purpose in allowed_purposes[input.data_category]
+    input.purpose == allowed_purpose
+}
+
+role_allowed_for_classification if {
+    input.classification == "internal"
+    input.agent_role in {"analyst", "admin", "developer"}
+}
+
+role_allowed_for_classification if {
+    input.classification == "confidential"
+    input.agent_role == "admin"
+}
+
+# ── Vault Field Redaction ───────────────────────────────────
+# Welche Felder im Original redaktiert werden, abhängig vom Zweck.
+# Nutzt gleiche Logik wie fields_to_redact, aber explizit für Vault.
+
+default vault_fields_to_redact := set()
+
+vault_fields_to_redact := {"email", "phone", "iban", "birthdate", "address"} if {
+    input.purpose == "reporting"
+}
+
+vault_fields_to_redact := {"iban", "birthdate", "address"} if {
+    input.purpose == "support"
+}
+
+vault_fields_to_redact := {"email", "phone", "iban", "birthdate", "address"} if {
+    input.purpose == "product_improvement"
+}
+
+vault_fields_to_redact := {"birthdate"} if {
+    input.purpose == "billing"
+}
+
+vault_fields_to_redact := set() if {
+    input.purpose == "contract_fulfillment"
+}
