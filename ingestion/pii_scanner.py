@@ -20,7 +20,7 @@ from typing import Any
 
 from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
 from presidio_anonymizer import AnonymizerEngine
-from presidio_anonymizer.entities import OperatorConfig
+# OperatorConfig no longer needed — pseudonymize_text does manual replacement
 
 log = logging.getLogger("kb-pii")
 
@@ -101,8 +101,8 @@ class PIIScanner:
         # → "Rufen Sie <PHONE_NUMBER> an"
         
         # Text pseudonymisieren (reversibel mit Salt)
-        pseudo = scanner.pseudonymize_text("Max Mustermann bestellt", salt="project-key")
-        # → "a3f8c1d2 bestellt"
+        pseudo, mapping = scanner.pseudonymize_text("Max Mustermann bestellt", salt="project-key")
+        # → pseudo = "a3f8c1d2 bestellt", mapping = {"Max Mustermann": "a3f8c1d2"}
     """
 
     def __init__(self, languages: list[str] | None = None):
@@ -185,10 +185,15 @@ class PIIScanner:
         )
         return anonymized.text
 
-    def pseudonymize_text(self, text: str, salt: str, language: str = "de") -> str:
+    def pseudonymize_text(
+        self, text: str, salt: str, language: str = "de"
+    ) -> tuple[str, dict[str, str]]:
         """
         Ersetzt PII durch deterministische Pseudonyme.
         Gleicher Input + Salt → gleiches Pseudonym (für Verknüpfbarkeit).
+
+        Returns:
+            Tuple aus (pseudonymisierter Text, Mapping {original → pseudonym})
         """
         results = self.analyzer.analyze(
             text=text,
@@ -201,20 +206,23 @@ class PIIScanner:
             h = hashlib.sha256(f"{salt}:{entity_text}".encode()).hexdigest()[:8]
             return h
 
-        operators = {}
+        # Baue individuelle Pseudonyme pro Ergebnis (nicht pro Entity-Typ),
+        # damit mehrere Entities gleichen Typs unterschiedliche Pseudonyme bekommen.
+        mapping: dict[str, str] = {}
         for r in results:
             original = text[r.start:r.end]
             pseudo = make_pseudonym(original)
-            operators[r.entity_type] = OperatorConfig(
-                "replace", {"new_value": pseudo}
-            )
+            mapping[original] = pseudo
 
-        anonymized = self.anonymizer.anonymize(
-            text=text,
-            analyzer_results=results,
-            operators=operators,
-        )
-        return anonymized.text
+        # Manuell ersetzen statt Presidio's anonymizer (der per-Typ-Operatoren braucht).
+        # Sortiere nach Position absteigend, damit Offsets stabil bleiben.
+        pseudonymized = text
+        for r in sorted(results, key=lambda x: x.start, reverse=True):
+            original = pseudonymized[r.start:r.end]
+            pseudo = mapping.get(original, make_pseudonym(original))
+            pseudonymized = pseudonymized[:r.start] + pseudo + pseudonymized[r.end:]
+
+        return pseudonymized, mapping
 
     def mask_record(self, record: dict[str, Any], language: str = "de") -> dict[str, Any]:
         """Maskiert PII in allen String-Feldern eines Records."""
@@ -240,13 +248,11 @@ class PIIScanner:
             if isinstance(value, str) and value.strip():
                 scan = self.scan_text(value, language)
                 if scan.contains_pii:
-                    pseudo_text = self.pseudonymize_text(value, salt, language)
+                    pseudo_text, text_mapping = self.pseudonymize_text(
+                        value, salt, language
+                    )
                     pseudonymized[key] = pseudo_text
-                    # Mapping speichern (für Rückverfolgung bei Löschanfragen)
-                    for loc in scan.entity_locations:
-                        original = value[loc["start"]:loc["end"]]
-                        h = hashlib.sha256(f"{salt}:{original}".encode()).hexdigest()[:8]
-                        mapping[original] = h
+                    mapping.update(text_mapping)
                 else:
                     pseudonymized[key] = value
             else:
