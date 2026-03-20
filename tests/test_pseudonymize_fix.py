@@ -50,14 +50,17 @@ class TestPseudonymizeFix(unittest.TestCase):
         # After fix: returns tuple (pseudonymized_text, mapping)
         self.assertIsInstance(result, tuple, "pseudonymize_text should return a tuple")
         pseudo_text, mapping = result
-        # The two names should NOT be replaced with the same pseudonym
-        import re
-        pseudonyms = re.findall(r'\b[0-9a-f]{8}\b', pseudo_text)
-        if len(pseudonyms) >= 2:
-            self.assertNotEqual(
-                pseudonyms[0], pseudonyms[1],
-                f"Two different persons got the same pseudonym: {pseudo_text}"
+        # Mapping must have at least 2 entries for the two names
+        if len(mapping) < 2:
+            self.skipTest(
+                f"spaCy detected fewer than 2 entities — cannot test uniqueness (mapping={mapping})"
             )
+        # All pseudonyms in the mapping must be unique per distinct original
+        pseudonym_values = list(mapping.values())
+        self.assertEqual(
+            len(pseudonym_values), len(set(pseudonym_values)),
+            f"Different entities got the same pseudonym: {mapping}"
+        )
 
     def test_pseudonymize_text_returns_mapping(self):
         """After fix, pseudonymize_text should return (text, mapping) tuple."""
