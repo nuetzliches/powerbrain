@@ -1,0 +1,218 @@
+{
+  "title": "KB Queries",
+  "uid": "kb-queries",
+  "tags": ["kb", "queries", "audit"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Echtzeit-Metriken (Prometheus)",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Requests/min gesamt",
+      "gridPos": { "x": 0, "y": 1, "w": 6, "h": 4 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "sum(rate(kb_mcp_requests_total[1m])) * 60",
+        "legendFormat": "req/min"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "green", "value": 1 },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Requests/s pro Tool",
+      "gridPos": { "x": 6, "y": 1, "w": 9, "h": 8 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "sum by(tool) (rate(kb_mcp_requests_total[1m]))",
+        "legendFormat": "{{tool}}"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "stacking": { "mode": "none" }
+          },
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Latenz p50 / p95 / p99",
+      "gridPos": { "x": 15, "y": 1, "w": 9, "h": 8 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.50, sum by(le) (rate(kb_mcp_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.95, sum by(le) (rate(kb_mcp_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.99, sum by(le) (rate(kb_mcp_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Error-Rate",
+      "gridPos": { "x": 0, "y": 5, "w": 6, "h": 4 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "sum(rate(kb_mcp_requests_total{status=\"error\"}[5m])) / sum(rate(kb_mcp_requests_total[5m]))",
+        "legendFormat": "Error-Rate"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 200,
+      "type": "row",
+      "title": "Query-Log (PostgreSQL)",
+      "gridPos": { "x": 0, "y": 9, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Letzte Anfragen",
+      "gridPos": { "x": 0, "y": 10, "w": 24, "h": 10 },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT created_at AS \"Zeit\", agent_id AS \"Agent\", agent_role AS \"Rolle\", action AS \"Aktion\", resource_type AS \"Ressource\", policy_result AS \"Policy\", contains_pii AS \"PII\" FROM agent_access_log ORDER BY created_at DESC LIMIT 50",
+        "format": "table"
+      }],
+      "fieldConfig": {
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Policy" },
+            "properties": [{
+              "id": "custom.cellOptions",
+              "value": {
+                "type": "color-text"
+              }
+            }, {
+              "id": "mappings",
+              "value": [
+                { "type": "value", "options": { "allow": { "text": "allow", "color": "green" }, "deny": { "text": "deny", "color": "red" } } }
+              ]
+            }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "PII" },
+            "properties": [{
+              "id": "custom.cellOptions",
+              "value": {
+                "type": "color-text"
+              }
+            }, {
+              "id": "mappings",
+              "value": [
+                { "type": "value", "options": { "true": { "text": "ja", "color": "orange" }, "false": { "text": "nein", "color": "green" } } }
+              ]
+            }]
+          }
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "type": "barchart",
+      "title": "Queries pro Agent (24h)",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT agent_id AS \"Agent\", COUNT(*) AS \"Anfragen\" FROM agent_access_log WHERE created_at > now() - interval '24 hours' GROUP BY agent_id ORDER BY \"Anfragen\" DESC LIMIT 20",
+        "format": "table"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "always"
+      }
+    },
+    {
+      "id": 7,
+      "type": "piechart",
+      "title": "Allow vs. Deny (24h)",
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
+      "targets": [{
+        "datasource": "PostgreSQL",
+        "rawSql": "SELECT policy_result AS \"Ergebnis\", COUNT(*) AS \"Anzahl\" FROM agent_access_log WHERE created_at > now() - interval '24 hours' GROUP BY policy_result",
+        "format": "table"
+      }],
+      "fieldConfig": {
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "allow" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "deny" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "pieType": "donut"
+      }
+    }
+  ]
+}

@@ -20,3 +20,18 @@ datasources:
         datasourceUid: Prometheus
       nodeGraph:
         enabled: true
+
+  - name: PostgreSQL
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    user: kb_admin
+    editable: false
+    jsonData:
+      database: knowledgebase
+      sslmode: disable
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+    secureJsonData:
+      password: $__env{PG_PASSWORD}

@@ -10,7 +10,7 @@ class SearchFirstMvpStructureTests(unittest.TestCase):
         server_source = (ROOT / "mcp-server" / "server.py").read_text()
 
         self.assertNotIn("from mcp.server.stdio import stdio_server", server_source)
-        self.assertIn("streamable_http_app", server_source)
+        self.assertIn("StreamableHTTPSessionManager", server_source)
         self.assertIn("uvicorn.run", server_source)
 
     def test_mcp_dockerfile_copies_graph_service(self) -> None:
