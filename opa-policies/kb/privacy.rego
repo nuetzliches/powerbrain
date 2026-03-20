@@ -194,7 +194,7 @@ role_allowed_for_classification if {
 # Welche Felder im Original redaktiert werden, abhängig vom Zweck.
 # Nutzt gleiche Logik wie fields_to_redact, aber explizit für Vault.
 
-default vault_fields_to_redact := set()
+default vault_fields_to_redact := {"email", "phone", "iban", "birthdate", "address"}
 
 vault_fields_to_redact := {"email", "phone", "iban", "birthdate", "address"} if {
     input.purpose == "reporting"
