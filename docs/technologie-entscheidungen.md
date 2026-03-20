@@ -7,6 +7,7 @@ Diskutierte Architekturentscheidungen und deren Begründung.
 ## T-1: Vision Language Models (VLM) neben Ollama
 
 ### Frage
+
 Können wir zusätzlich zu Ollama ein lokales VLM (Vision Language Model)
 für multimodale Inhalte (Bilder, Diagramme, PDFs mit Grafiken) anbinden?
 
@@ -14,12 +15,12 @@ für multimodale Inhalte (Bilder, Diagramme, PDFs mit Grafiken) anbinden?
 
 Ollama kann nativ Vision-Modelle hosten. Kein separater Service nötig:
 
-| Modell | Stärke | RAM-Bedarf |
-|--------|--------|------------|
-| `llava:7b` | Allgemein, gute Balance | ~6 GB |
-| `llama3.2-vision` | Texterkennung in Bildern | ~6 GB |
-| `moondream2` | Sehr schnell, kompakt | ~2 GB |
-| `llava:34b` | Hohe Qualität, langsam | ~25 GB |
+| Modell            | Stärke                   | RAM-Bedarf |
+| ----------------- | ------------------------ | ---------- |
+| `llava:7b`        | Allgemein, gute Balance  | ~6 GB      |
+| `llama3.2-vision` | Texterkennung in Bildern | ~6 GB      |
+| `moondream2`      | Sehr schnell, kompakt    | ~2 GB      |
+| `llava:34b`       | Hohe Qualität, langsam   | ~25 GB     |
 
 ### Konzeptionelle Abgrenzung (wichtig)
 
@@ -33,7 +34,7 @@ Embedding (nomic-embed-text)  → Vektor [0.12, -0.34, ...]
 Qdrant
 ```
 
-**VLM ≠ multimodales Embedding.** Das VLM *beschreibt* das Bild in Text,
+**VLM ≠ multimodales Embedding.** Das VLM _beschreibt_ das Bild in Text,
 der anschließend normal embedded wird. Man sucht semantisch über die
 Beschreibung, nicht direkt über Pixel.
 
@@ -44,6 +45,7 @@ eigene Qdrant-Collection. Für dieses Projekt nicht empfohlen.
 ### Implementierung
 
 **Ingestion-Pipeline** (neues VLM-Modul):
+
 ```python
 async def describe_image(image_bytes: bytes, mime_type: str) -> str:
     """Sendet Bild an Ollama VLM, erhält Textbeschreibung zurück."""
@@ -57,11 +59,13 @@ async def describe_image(image_bytes: bytes, mime_type: str) -> str:
 ```
 
 Eingebunden im Adapter-Layer (→ T-4) beim Verarbeiten von:
+
 - PDF-Seiten mit Grafiken (via `pymupdf`)
 - Standalone-Bilddateien
 - DOCX/PPTX mit eingebetteten Diagrammen
 
 **Konfiguration** (`.env`):
+
 ```
 VLM_ENABLED=false          # default aus, opt-in
 VLM_MODEL=llava:7b
@@ -71,6 +75,7 @@ VLM_MAX_IMAGE_SIZE_MB=10
 ### Ollama-Container Anpassung
 
 Kein zusätzlicher Container. Modell muss einmalig geladen werden:
+
 ```bash
 docker exec kb-ollama ollama pull llava:7b
 ```
@@ -80,6 +85,7 @@ docker exec kb-ollama ollama pull llava:7b
 ## T-2: Git-Server-Unterstützung (Forgejo als Beispiel)
 
 ### Frage
+
 Ist Forgejo ein festes Requirement, oder funktionieren alle Git-basierten Server?
 
 ### Antwort: Forgejo ist ein Beispiel — alle gängigen Git-Server funktionieren
@@ -102,17 +108,17 @@ services:
 bundles:
   kb:
     service: git-server
-    resource: /api/v1/repos/org/kb-policies/raw/bundle.tar.gz  # Pfad anpassen
+    resource: /api/v1/repos/org/kb-policies/raw/bundle.tar.gz # Pfad anpassen
     polling:
       min_delay_seconds: 10
 ```
 
-| Server | Bundle-URL-Schema |
-|--------|-------------------|
-| Forgejo/Gitea | `/api/v1/repos/{org}/{repo}/raw/{file}` |
-| GitHub | `/raw/{org}/{repo}/{branch}/{file}` (über API oder raw.githubusercontent.com) |
-| GitLab | `/api/v4/projects/{id}/repository/files/{file}/raw` |
-| Bitbucket Cloud | `/2.0/repositories/{ws}/{repo}/src/{branch}/{file}` |
+| Server          | Bundle-URL-Schema                                                             |
+| --------------- | ----------------------------------------------------------------------------- |
+| Forgejo/Gitea   | `/api/v1/repos/{org}/{repo}/raw/{file}`                                       |
+| GitHub          | `/raw/{org}/{repo}/{branch}/{file}` (über API oder raw.githubusercontent.com) |
+| GitLab          | `/api/v4/projects/{id}/repository/files/{file}/raw`                           |
+| Bitbucket Cloud | `/2.0/repositories/{ws}/{repo}/src/{branch}/{file}`                           |
 
 #### Integrationspunkt 2: Code-Ingestion (Repo-Inhalte lesen)
 
@@ -135,6 +141,7 @@ Der Git-Adapter (→ T-4) übersetzt auf den jeweiligen API-Dialekt.
 ## T-3: Monitoring — Externer OTel Collector, optionaler Grafana-Stack
 
 ### Frage
+
 Kann das Monitoring über einen externen OpenTelemetry Collector angeboten
 werden, so dass der lokale Grafana-Stack optional wird?
 
@@ -185,11 +192,13 @@ services:
 ```
 
 **Betrieb mit lokalem Stack:**
+
 ```bash
 docker compose --profile monitoring-local up -d
 ```
 
 **Betrieb mit externem Backend (z.B. Grafana Cloud):**
+
 ```bash
 # .env:
 OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway.grafana.net/otlp
@@ -246,15 +255,15 @@ service:
 
 ### Prometheus-Metriken: Scraping vs. Push
 
-Aktuell: Prometheus *scrapet* Services aktiv (`/metrics`-Endpoint).
-Alternative: Services *pushen* Metriken per OTLP an den Collector.
+Aktuell: Prometheus _scrapet_ Services aktiv (`/metrics`-Endpoint).
+Alternative: Services _pushen_ Metriken per OTLP an den Collector.
 
-| | Scraping (aktuell) | OTLP Push |
-|-|-------------------|-----------|
-| Prometheus nötig | Ja | Nein (Collector reicht) |
-| Pull-Modell | Ja | Nein |
-| Firewall-freundlich | Weniger | Ja (Collector ausgehend) |
-| Empfehlung | Einfacher für lokalen Betrieb | Besser für externe Backends |
+|                     | Scraping (aktuell)            | OTLP Push                   |
+| ------------------- | ----------------------------- | --------------------------- |
+| Prometheus nötig    | Ja                            | Nein (Collector reicht)     |
+| Pull-Modell         | Ja                            | Nein                        |
+| Firewall-freundlich | Weniger                       | Ja (Collector ausgehend)    |
+| Empfehlung          | Einfacher für lokalen Betrieb | Besser für externe Backends |
 
 **Empfehlung:** Beide parallel anbieten — Scraping bleibt als Fallback,
 OTLP-Push für externe Backends. Services brauchen beide Methoden nicht zu wissen:
@@ -265,6 +274,7 @@ Der Collector ist der einzige Endpunkt.
 ## T-4: Adapter-Schicht für zusätzliche Datenquellen
 
 ### Frage
+
 Soll eine Adapter-Schicht für zusätzliche Datenquellen implementiert werden?
 Wo ist sie anzusiedeln — vor oder nach der Datenschutz-Schicht?
 
@@ -322,15 +332,15 @@ class SourceAdapter:
 
 ### Geplante Adapter
 
-| Adapter | Quellen | Priorität |
-|---------|---------|-----------|
-| `GitAdapter` | Forgejo, GitHub, GitLab, Bitbucket, Gitea | Hoch |
-| `FileAdapter` | PDF, DOCX, XLSX, Markdown, TXT | Hoch |
-| `DatabaseAdapter` | PostgreSQL-Dump, CSV, JSON | Mittel |
-| `ConfluenceAdapter` | Confluence REST API | Mittel |
-| `WebAdapter` | HTTP/HTML-Scraping, Sitemaps | Niedrig |
-| `KafkaAdapter` | Streaming-Inhalte | Niedrig |
-| `EmailAdapter` | IMAP, EML-Dateien | Niedrig |
+| Adapter             | Quellen                                   | Priorität |
+| ------------------- | ----------------------------------------- | --------- |
+| `GitAdapter`        | Forgejo, GitHub, GitLab, Bitbucket, Gitea | Hoch      |
+| `FileAdapter`       | PDF, DOCX, XLSX, Markdown, TXT            | Hoch      |
+| `DatabaseAdapter`   | PostgreSQL-Dump, CSV, JSON                | Mittel    |
+| `ConfluenceAdapter` | Confluence REST API                       | Mittel    |
+| `WebAdapter`        | HTTP/HTML-Scraping, Sitemaps              | Niedrig   |
+| `KafkaAdapter`      | Streaming-Inhalte                         | Niedrig   |
+| `EmailAdapter`      | IMAP, EML-Dateien                         | Niedrig   |
 
 ### Git-Adapter (löst auch T-2)
 
@@ -409,22 +419,23 @@ kein separater MCP-Tool-Aufruf nötig.
 ## T-5: vLLM als Alternative zu Ollama
 
 ### Frage
+
 Kann vLLM Ollama ersetzen, und wann ist das sinnvoll?
 
 ### Vergleich
 
-| | Ollama | vLLM |
-|---|---|---|
-| **Primärzweck** | Developer-Experience, lokale Nutzung | Production-Grade LLM Serving |
-| **Throughput** | Sequenziell, niedrig | Continuous Batching → 10–50× höher |
-| **GPU-Memory** | Standard-Allokation | PagedAttention → deutlich effizienter |
-| **Parallelität** | Schlecht (ein Request nach dem anderen) | Sehr gut (dozens simultaneous) |
-| **CPU-only** | ✅ Gut | ⚠️ Experimentell, sehr langsam |
-| **API** | Ollama-spezifisch + OpenAI-compat. | OpenAI-kompatibel (nativ) |
-| **VLM-Support** | LLaVA, moondream2, llama3.2-vision | LLaVA, InternVL, Qwen-VL — besser gebaztcht |
-| **Embedding-Modelle** | Breit (nomic, mxbai, all-minilm ...) | Eingeschränkt |
-| **Multi-GPU** | Nein | Tensor Parallelism, ja |
-| **Setup** | `ollama pull modell` | CUDA + Docker + Modell-Konfiguration |
+|                       | Ollama                                  | vLLM                                        |
+| --------------------- | --------------------------------------- | ------------------------------------------- |
+| **Primärzweck**       | Developer-Experience, lokale Nutzung    | Production-Grade LLM Serving                |
+| **Throughput**        | Sequenziell, niedrig                    | Continuous Batching → 10–50× höher          |
+| **GPU-Memory**        | Standard-Allokation                     | PagedAttention → deutlich effizienter       |
+| **Parallelität**      | Schlecht (ein Request nach dem anderen) | Sehr gut (dozens simultaneous)              |
+| **CPU-only**          | ✅ Gut                                  | ⚠️ Experimentell, sehr langsam              |
+| **API**               | Ollama-spezifisch + OpenAI-compat.      | OpenAI-kompatibel (nativ)                   |
+| **VLM-Support**       | LLaVA, moondream2, llama3.2-vision      | LLaVA, InternVL, Qwen-VL — besser gebaztcht |
+| **Embedding-Modelle** | Breit (nomic, mxbai, all-minilm ...)    | Eingeschränkt                               |
+| **Multi-GPU**         | Nein                                    | Tensor Parallelism, ja                      |
+| **Setup**             | `ollama pull modell`                    | CUDA + Docker + Modell-Konfiguration        |
 
 ### Das Problem mit direktem Ersatz
 
@@ -433,25 +444,26 @@ aber die Embedding-Modell-Auswahl ist schmaler als bei Ollama. `nomic-embed-text
 ist nicht garantiert verfügbar. Für hochperformante Embeddings gibt es bessere
 dedizierte Alternativen:
 
-| Service | Stärke |
-|---------|--------|
-| **HuggingFace Text Embeddings Inference (TEI)** | Viele Modelle, sehr schnell, OpenAI-compat. |
-| **infinity-embedding** | Lightweight, OpenAI-compat., einfaches Setup |
-| **Ollama** | Einfach, breite Modell-Unterstützung, CPU-tauglich |
+| Service                                         | Stärke                                             |
+| ----------------------------------------------- | -------------------------------------------------- |
+| **HuggingFace Text Embeddings Inference (TEI)** | Viele Modelle, sehr schnell, OpenAI-compat.        |
+| **infinity-embedding**                          | Lightweight, OpenAI-compat., einfaches Setup       |
+| **Ollama**                                      | Einfach, breite Modell-Unterstützung, CPU-tauglich |
 
 ### Empfohlene Aufteilung
 
 ```
-Embeddings:  Ollama (Dev/CPU)  oder  HF TEI / infinity (Prod/GPU)
-LLM/VLM:     Ollama (Dev/CPU)  oder  vLLM (Prod/GPU)
+Embeddings:  infinity (Prod/GPU)
+LLM/VLM:     vLLM (Prod/GPU)
 ```
 
 Beide Rollen über getrennte Endpunkte konfigurierbar:
+
 ```env
-EMBEDDING_PROVIDER_URL=http://ollama:11434   # oder http://tei:80
+EMBEDDING_PROVIDER_URL=http://infinity:80
 EMBEDDING_MODEL=nomic-embed-text
 
-LLM_PROVIDER_URL=http://ollama:11434         # oder http://vllm:8000
+LLM_PROVIDER_URL=http://vllm:8000
 LLM_MODEL=llama3.2-vision                   # für VLM
 ```
 
@@ -518,62 +530,63 @@ API unter `/v1/` — der Provider-Code funktioniert damit ohne Änderungen.
 ### Docker Compose Erweiterung
 
 ```yaml
-  # ── vLLM (optional, ersetzt Ollama für LLM/VLM) ──────────
-  vllm:
-    image: vllm/vllm-openai:latest
-    container_name: kb-vllm
-    profiles: ["gpu"]
-    ports:
-      - "8000:8000"
-    volumes:
-      - vllm_models:/root/.cache/huggingface
-    environment:
-      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
-    command:
-      - "--model"
-      - "${VLLM_MODEL:-llava-hf/llava-1.5-7b-hf}"
-      - "--dtype"
-      - "bfloat16"
-      - "--max-model-len"
-      - "4096"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    networks:
-      - kb-net
-    restart: unless-stopped
+# ── vLLM (optional, ersetzt Ollama für LLM/VLM) ──────────
+vllm:
+  image: vllm/vllm-openai:latest
+  container_name: kb-vllm
+  profiles: ["gpu"]
+  ports:
+    - "8000:8000"
+  volumes:
+    - vllm_models:/root/.cache/huggingface
+  environment:
+    HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
+  command:
+    - "--model"
+    - "${VLLM_MODEL:-llava-hf/llava-1.5-7b-hf}"
+    - "--dtype"
+    - "bfloat16"
+    - "--max-model-len"
+    - "4096"
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+  networks:
+    - kb-net
+  restart: unless-stopped
 
-  # ── HF Text Embeddings Inference (optional) ──────────────
-  tei:
-    image: ghcr.io/huggingface/text-embeddings-inference:latest
-    container_name: kb-tei
-    profiles: ["gpu"]
-    ports:
-      - "8010:80"
-    volumes:
-      - tei_models:/data
-    command:
-      - "--model-id"
-      - "nomic-ai/nomic-embed-text-v1"
-      - "--port"
-      - "80"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    networks:
-      - kb-net
-    restart: unless-stopped
+# ── HF Text Embeddings Inference (optional) ──────────────
+tei:
+  image: ghcr.io/huggingface/text-embeddings-inference:latest
+  container_name: kb-tei
+  profiles: ["gpu"]
+  ports:
+    - "8010:80"
+  volumes:
+    - tei_models:/data
+  command:
+    - "--model-id"
+    - "nomic-ai/nomic-embed-text-v1"
+    - "--port"
+    - "80"
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+  networks:
+    - kb-net
+  restart: unless-stopped
 ```
 
 **Betrieb mit GPU-Stack:**
+
 ```bash
 docker compose --profile gpu up -d
 # .env:
@@ -586,14 +599,14 @@ docker compose --profile gpu up -d
 
 ## Zusammenfassung der Empfehlungen
 
-| Thema | Dev (CPU) | Prod (GPU) | Aufwand |
-|-------|-----------|------------|---------|
-| Embeddings | Ollama | HF TEI oder infinity | Klein (Provider-Abstraktion) |
-| LLM/VLM | Ollama | vLLM | Mittel (Docker Profile) |
-| VLM-Integration | Ollama `llava:7b` | vLLM mit LLaVA/InternVL | Klein |
-| Git-Server | Adapter-Schicht mit Provider-Abstraktion | ← gleich | Mittel |
-| Monitoring | Lokaler OTel+Grafana-Stack | Externer OTel Collector | Mittel |
-| Adapter-Schicht | Vor PII-Scanner, `NormalizedDocument` | ← gleich | Groß |
+| Thema           | Dev (CPU)                                | Prod (GPU)              | Aufwand                      |
+| --------------- | ---------------------------------------- | ----------------------- | ---------------------------- |
+| Embeddings      | Ollama                                   | HF TEI oder infinity    | Klein (Provider-Abstraktion) |
+| LLM/VLM         | Ollama                                   | vLLM                    | Mittel (Docker Profile)      |
+| VLM-Integration | Ollama `llava:7b`                        | vLLM mit LLaVA/InternVL | Klein                        |
+| Git-Server      | Adapter-Schicht mit Provider-Abstraktion | ← gleich                | Mittel                       |
+| Monitoring      | Lokaler OTel+Grafana-Stack               | Externer OTel Collector | Mittel                       |
+| Adapter-Schicht | Vor PII-Scanner, `NormalizedDocument`    | ← gleich                | Groß                         |
 
 Die **Provider-Abstraktion (T-5)** und die **Adapter-Schicht (T-4)** sind
 die zwei strategisch wichtigsten Erweiterungen: T-5 entkoppelt die Inference-

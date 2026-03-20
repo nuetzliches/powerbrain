@@ -7,7 +7,8 @@ RUN pip install --no-cache-dir \
     fastapi \
     "uvicorn[standard]" \
     sentence-transformers \
-    torch
+    torch \
+    prometheus-client
 
 COPY service.py .
 

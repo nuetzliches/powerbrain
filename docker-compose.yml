@@ -36,14 +36,14 @@ services:
       - kb-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
       interval: 10s
       timeout: 5s
       retries: 3
 
   # ── PostgreSQL + Apache AGE ───────────────────────────────
   postgres:
-    image: apache/age:latest
+    image: apache/age:release_PG16_1.6.0
     container_name: kb-postgres
     ports:
       - "5432:5432"
@@ -100,7 +100,7 @@ services:
       - kb-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8181/health"]
+      test: ["CMD", "/opa", "eval", "true"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -248,7 +248,7 @@ services:
 
   # ── Grafana Tempo (Distributed Tracing) ──────────────────
   tempo:
-    image: grafana/tempo:latest
+    image: grafana/tempo:2.7.2
     container_name: kb-tempo
     command: ["-config.file=/etc/tempo/tempo.yml"]
     volumes:

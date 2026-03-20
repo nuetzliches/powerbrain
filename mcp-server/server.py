@@ -21,7 +21,11 @@ import asyncpg
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 from mcp.server import Server
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import Tool, TextContent
+from starlette.applications import Starlette
+from starlette.routing import Route
+from starlette.types import Scope, Receive, Send
 from prometheus_client import (
     Counter, Histogram, Gauge,
     start_http_server as prom_start_http_server,
@@ -674,13 +678,13 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         oversample_k  = top_k * OVERSAMPLE_FACTOR if RERANKER_ENABLED else top_k
 
         with _otel_span("qdrant.search"):
-            results = await qdrant.search(
-                collection_name=collection, query_vector=vector,
+            results = await qdrant.query_points(
+                collection_name=collection, query=vector,
                 query_filter=qdrant_filter, limit=oversample_k, with_payload=True,
             )
 
         filtered = []
-        for hit in results:
+        for hit in results.points:
             classification = hit.payload.get("classification", "internal")
             policy = await check_opa_policy(agent_id, agent_role,
                                             f"{collection}/{hit.id}", classification)
@@ -748,7 +752,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
                             )
 
         await log_access(agent_id, agent_role, "search", collection, "search", "allow", {
-            "query": query, "qdrant_results": len(results),
+            "query": query, "qdrant_results": len(results.points),
             "after_policy": len(filtered), "after_rerank": len(reranked),
             "vault_access_requested": pii_token is not None,
         })
@@ -888,13 +892,13 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         qdrant_filter = Filter(must=filters_list) if filters_list else None
         oversample_k  = top_k * OVERSAMPLE_FACTOR if RERANKER_ENABLED else top_k
 
-        results = await qdrant.search(
-            collection_name="knowledge_code", query_vector=vector,
+        results = await qdrant.query_points(
+            collection_name="knowledge_code", query=vector,
             query_filter=qdrant_filter, limit=oversample_k, with_payload=True,
         )
 
         code_results = []
-        for hit in results:
+        for hit in results.points:
             classification = hit.payload.get("classification", "internal")
             policy = await check_opa_policy(agent_id, agent_role, f"code/{hit.id}", classification)
             if policy["allowed"]:
@@ -1172,10 +1176,21 @@ if __name__ == "__main__":
     prom_start_http_server(METRICS_PORT)
     log.info(f"Prometheus /metrics auf Port {METRICS_PORT}")
 
-    app = server.streamable_http_app(
-        streamable_http_path=MCP_PATH,
-        stateless_http=True,
+    session_manager = StreamableHTTPSessionManager(
+        app=server,
         json_response=True,
+        stateless=True,
+    )
+
+    # Must be a class instance (not async def) so Starlette treats it
+    # as a raw ASGI app instead of wrapping it with request_response().
+    class MCPTransport:
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            await session_manager.handle_request(scope, receive, send)
+
+    app = Starlette(
+        routes=[Route(MCP_PATH, endpoint=MCPTransport())],
+        lifespan=lambda app: session_manager.run(),
     )
 
     log.info("MCP Streamable HTTP auf %s:%s%s", MCP_HOST, MCP_PORT, MCP_PATH)
