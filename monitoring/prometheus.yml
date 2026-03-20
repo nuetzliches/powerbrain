@@ -7,10 +7,10 @@ rule_files:
   - "/etc/prometheus/alerting_rules.yml"
 
 scrape_configs:
-  # MCP-Server – Prometheus /metrics auf Port 8080
+  # MCP-Server – Prometheus /metrics auf Port 9091
   - job_name: mcp-server
     static_configs:
-      - targets: ['mcp-server:8080']
+      - targets: ['mcp-server:9091']
     metrics_path: /metrics
 
   # Reranker – /metrics auf Port 8082

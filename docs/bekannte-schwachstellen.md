@@ -270,3 +270,15 @@ Nach Behebung von P0-1 muss der Metrics-Port auf einen anderen Wert (z.B. 9091) 
 
 System ist erst nach Sprint 1 + Sprint 2 für **interne Tests** geeignet.
 Für **produktiven Einsatz** zusätzlich Sprint 3 + TLS + Secrets Management.
+
+---
+
+## Phase 2 nach dem Search-first MVP
+
+Die erste MVP-Iteration konzentriert sich bewusst nur auf den lauffaehigen Suchpfad.
+Folgende Themen bleiben danach priorisierte Phase-2-Arbeit:
+
+- Authentifizierung und vertraute Rollenweitergabe
+- SQL- und Cypher-Hardening ausserhalb des MVP-Suchpfads
+- vollstaendige Ingestion-API
+- Snapshot- und Evaluierungs-Nebenpfade

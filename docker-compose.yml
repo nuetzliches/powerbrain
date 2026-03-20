@@ -82,11 +82,14 @@ services:
     container_name: kb-opa
     ports:
       - "8181:8181"
+    volumes:
+      - ./opa-policies:/policies:ro
     command:
       - "run"
       - "--server"
       - "--addr=0.0.0.0:8181"
       - "--set=decision_logs.console=true"
+      - "/policies"
       # Bundle-Polling nach Setup aktivieren:
       # - "--set=services.forgejo.url=${FORGEJO_URL:-http://forgejo.local:3000}"
       # - "--set=services.forgejo.credentials.bearer.token=${FORGEJO_TOKEN}"
@@ -151,7 +154,8 @@ services:
       dockerfile: Dockerfile
     container_name: kb-mcp-server
     ports:
-      - "8080:8080"   # Prometheus /metrics
+      - "8080:8080"   # MCP Streamable HTTP
+      - "9091:9091"   # Prometheus /metrics
     environment:
       QDRANT_URL:      http://qdrant:6333
       POSTGRES_URL:    postgresql://kb_admin:${PG_PASSWORD:-changeme_in_production}@postgres:5432/knowledgebase
@@ -161,7 +165,10 @@ services:
       FORGEJO_TOKEN:   ${FORGEJO_TOKEN:-}
       RERANKER_URL:    http://reranker:8082
       RERANKER_ENABLED: "true"
-      METRICS_PORT:    "8080"
+      MCP_HOST:        0.0.0.0
+      MCP_PORT:        "8080"
+      MCP_PATH:        /mcp
+      METRICS_PORT:    "9091"
       OTEL_ENABLED:    ${OTEL_ENABLED:-false}
       OTLP_ENDPOINT:   http://tempo:4317
     depends_on:
@@ -170,8 +177,6 @@ services:
       postgres:
         condition: service_healthy
       opa:
-        condition: service_healthy
-      reranker:
         condition: service_healthy
     networks:
       - kb-net

@@ -14,7 +14,6 @@ import os
 import json
 import logging
 import time
-import threading
 from typing import Any
 
 import httpx
@@ -23,12 +22,11 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 from mcp.server import Server
 from mcp.types import Tool, TextContent
-from pydantic import BaseModel
 from prometheus_client import (
     Counter, Histogram, Gauge,
     start_http_server as prom_start_http_server,
-    REGISTRY,
 )
+import uvicorn
 
 import graph_service as graph
 
@@ -42,7 +40,10 @@ FORGEJO_TOKEN = os.getenv("FORGEJO_TOKEN", "")
 RERANKER_URL  = os.getenv("RERANKER_URL",  "http://reranker:8082")
 RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
 
-METRICS_PORT   = int(os.getenv("METRICS_PORT", "8080"))
+MCP_HOST       = os.getenv("MCP_HOST", "0.0.0.0")
+MCP_PORT       = int(os.getenv("MCP_PORT", "8080"))
+MCP_PATH       = os.getenv("MCP_PATH", "/mcp")
+METRICS_PORT   = int(os.getenv("METRICS_PORT", "9091"))
 OTEL_ENABLED   = os.getenv("OTEL_ENABLED", "false").lower() == "true"
 OTLP_ENDPOINT  = os.getenv("OTLP_ENDPOINT", "http://tempo:4317")
 
@@ -956,15 +957,14 @@ async def _dispatch(name: str, arguments: dict[str, Any],
 
 # ── Startup ──────────────────────────────────────────────────
 if __name__ == "__main__":
-    import asyncio
-    from mcp.server.stdio import stdio_server
-
-    # Prometheus HTTP-Server im Hintergrund-Thread starten
     prom_start_http_server(METRICS_PORT)
     log.info(f"Prometheus /metrics auf Port {METRICS_PORT}")
 
-    async def main():
-        async with stdio_server() as (read, write):
-            await server.run(read, write, server.create_initialization_options())
+    app = server.streamable_http_app(
+        streamable_http_path=MCP_PATH,
+        stateless_http=True,
+        json_response=True,
+    )
 
-    asyncio.run(main())
+    log.info("MCP Streamable HTTP auf %s:%s%s", MCP_HOST, MCP_PORT, MCP_PATH)
+    uvicorn.run(app, host=MCP_HOST, port=MCP_PORT)
