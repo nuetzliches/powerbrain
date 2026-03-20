@@ -35,7 +35,7 @@ log = logging.getLogger("kb-graph")
 
 # ── Cypher-Query-Hilfsfunktionen ────────────────────────────
 
-GRAPH_NAME = "knowledge_graph"
+GRAPH_NAME = "knowledge"
 
 # AGE benötigt diese Initialisierung pro Connection
 AGE_INIT = """

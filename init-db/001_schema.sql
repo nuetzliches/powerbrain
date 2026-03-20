@@ -24,6 +24,7 @@ CREATE TABLE datasets (
     description      TEXT,
     schema_def       JSONB,                  -- JSON-Schema des Datensatzes
     source           VARCHAR(500),           -- Herkunft (Dateipfad, URL, etc.)
+    source_type      VARCHAR(50),            -- csv, json, sql_dump, git_repo
     classification   VARCHAR(50) REFERENCES classifications(name) DEFAULT 'internal',
     project          VARCHAR(100),
     created_at       TIMESTAMPTZ DEFAULT now(),

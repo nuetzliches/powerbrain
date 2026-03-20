@@ -1,0 +1,212 @@
+[
+  {
+    "id": "novatech-onboarding-checklist",
+    "collection": "knowledge_general",
+    "classification": "public",
+    "title": "Onboarding-Checkliste für neue Mitarbeitende",
+    "source": "hr-wiki",
+    "project": "novatech-hr",
+    "type": "doc",
+    "content": "Onboarding-Checkliste NovaTech GmbH. Tag 1: Laptop und Zugänge erhalten (IT-Helpdesk, Raum 2.04). Willkommensgespräch mit Teamleitung. Rundgang durch das Büro. Tag 2-5: Einführung in Confluence, Jira, GitLab. Pflichtschulungen: Datenschutz (DSGVO), Informationssicherheit, Arbeitssicherheit. Buddy-Programm: Jeder Neue bekommt einen Buddy für die ersten 3 Monate. Feedback-Gespräch nach 2 Wochen, dann monatlich im ersten Halbjahr."
+  },
+  {
+    "id": "novatech-homeoffice-policy",
+    "collection": "knowledge_general",
+    "classification": "internal",
+    "title": "Homeoffice-Regelung und hybrides Arbeiten",
+    "source": "hr-wiki",
+    "project": "novatech-hr",
+    "type": "doc",
+    "content": "Hybrides Arbeitsmodell der NovaTech GmbH (gültig ab 01.01.2025). Alle Mitarbeitenden können bis zu 3 Tage pro Woche im Homeoffice arbeiten. Kernarbeitszeit: 10:00-15:00 Uhr (Mo-Do), Freitag flexibel. Anwesenheitspflicht im Büro: mindestens 2 Tage pro Woche. Team-Tage werden quartalsweise vom Teamlead festgelegt. Ergonomie-Zuschuss: 500 EUR einmalig für Homeoffice-Ausstattung. VPN-Pflicht bei Zugriff auf interne Systeme. Dokumentation der Arbeitszeit über das Zeiterfassungssystem TimePro."
+  },
+  {
+    "id": "novatech-reisekostenrichtlinie",
+    "collection": "knowledge_general",
+    "classification": "internal",
+    "title": "Reisekostenrichtlinie",
+    "source": "finance-wiki",
+    "project": "novatech-finance",
+    "type": "doc",
+    "content": "Reisekostenrichtlinie NovaTech GmbH. Bahnreisen: 2. Klasse, BahnCard 50 wird gestellt (ab 4 Reisen/Jahr). Flüge: Economy innerhalb Europas, Business erst ab 6 Stunden Flugzeit. Hotel: max. 120 EUR/Nacht (150 EUR in München, Frankfurt, Hamburg). Verpflegungspauschale: 14 EUR (8-24h), 28 EUR (>24h). Taxi nur bei fehlenden ÖPNV-Verbindungen oder nach 22:00 Uhr. Abrechnung über SAP Concur, Belege als Scan innerhalb von 14 Tagen. Genehmigung ab 500 EUR durch Teamleitung, ab 2.000 EUR durch Bereichsleitung."
+  },
+  {
+    "id": "novatech-gehaltsbaender",
+    "collection": "knowledge_general",
+    "classification": "confidential",
+    "title": "Gehaltsbänder und Vergütungsstruktur 2025",
+    "source": "hr-compensation",
+    "project": "novatech-hr",
+    "type": "doc",
+    "content": "Vertraulich — Gehaltsbänder NovaTech GmbH 2025. Junior Developer: 45.000-55.000 EUR. Senior Developer: 65.000-82.000 EUR. Staff Engineer: 85.000-105.000 EUR. Engineering Manager: 90.000-115.000 EUR. VP Engineering: 120.000-150.000 EUR. Bonus-Anteil: 5% (Individual Contributors), 10-15% (Management). Gehaltsanpassung: jährlich im April, Orientierung am Marktmedian (Glassdoor, Levels.fyi). Equity: Virtuelle Anteile (VSOP) ab Staff-Level, Vesting über 4 Jahre mit 1 Jahr Cliff."
+  },
+  {
+    "id": "novatech-datenschutz-mitarbeiter",
+    "collection": "knowledge_general",
+    "classification": "internal",
+    "title": "Datenschutz-Leitfaden für Mitarbeitende",
+    "source": "compliance-wiki",
+    "project": "novatech-compliance",
+    "type": "doc",
+    "content": "DSGVO-Leitfaden für alle Mitarbeitenden der NovaTech GmbH. Personenbezogene Daten dürfen nur zweckgebunden verarbeitet werden. Weitergabe an Dritte nur mit Auftragsverarbeitungsvertrag (AVV). Datenminimierung: Nur so viele Daten erheben wie nötig. Löschfristen: Bewerberdaten nach 6 Monaten, Kundendaten 10 Jahre (HGB). Meldepflicht bei Datenpannen: innerhalb von 72 Stunden an den DSB (datenschutz@novatech-gmbh.example). Jährliche Pflichtschulung über das LMS (Deadline: 31. März). Datenschutzbeauftragter: Dr. Maria Schneider, Raum 3.12."
+  },
+  {
+    "id": "novatech-meeting-kultur",
+    "collection": "knowledge_general",
+    "classification": "public",
+    "title": "Meeting-Kultur und Kommunikationsrichtlinien",
+    "source": "culture-wiki",
+    "project": "novatech-culture",
+    "type": "doc",
+    "content": "Meeting-Richtlinien NovaTech GmbH. Jedes Meeting braucht eine Agenda (vorab im Kalender-Event). Meetings maximal 50 Minuten (statt 60) — Puffer für Übergänge. Meeting-freie Blöcke: Dienstag und Donnerstag Vormittag (Deep Work). Entscheidungen werden im Meeting-Protokoll festgehalten (Confluence). Kamera-Pflicht bei Remote-Meetings mit weniger als 8 Teilnehmenden. Async-first: Prüfe, ob eine Slack-Nachricht oder ein Loom-Video reicht. Retrospektiven: alle 2 Wochen im Sprint-Rhythmus."
+  },
+  {
+    "id": "novatech-incident-management",
+    "collection": "knowledge_general",
+    "classification": "internal",
+    "title": "Incident-Management-Prozess",
+    "source": "ops-wiki",
+    "project": "novatech-platform",
+    "type": "doc",
+    "content": "Incident-Management bei NovaTech GmbH (SRE-Handbuch). Severity-Stufen: SEV1 (Totalausfall, Reaktion <15min), SEV2 (Teilausfall, Reaktion <30min), SEV3 (Degradierung, <2h). On-Call-Rotation: wöchentlich, 2-Personen-Team (Primary + Secondary). Eskalation: PagerDuty \u2192 Slack #incidents \u2192 War-Room (bei SEV1). Kommunikation: Statuspage-Update alle 30 Minuten bei SEV1/SEV2. Post-Mortem: innerhalb von 48h, blameless, im Confluence-Space 'Incidents'. RCA-Vorlage: Was passiert? Zeitleiste. Root Cause. Action Items mit Owner und Deadline."
+  },
+  {
+    "id": "novatech-kundendaten-vertrag",
+    "collection": "knowledge_general",
+    "classification": "confidential",
+    "title": "Rahmenvertrag Kundendaten-Verarbeitung (AVV)",
+    "source": "legal-docs",
+    "project": "novatech-legal",
+    "type": "doc",
+    "content": "Auftragsverarbeitungsvertrag (AVV) gem. Art. 28 DSGVO. Auftraggeber: Kunden der NovaTech GmbH. Auftragnehmer: NovaTech GmbH, Musterstra\u00dfe 42, 80331 M\u00fcnchen. Verarbeitungszweck: Bereitstellung der SaaS-Plattform 'NovaSuite'. Kategorien betroffener Personen: Endnutzer der Kundenplattform. Datenkategorien: Name, E-Mail, Nutzungsdaten, IP-Adressen. Unterauftragnehmer: AWS Frankfurt (Hosting), Hetzner (Backup). Technische Ma\u00dfnahmen: AES-256 Verschl\u00fcsselung, TLS 1.3, rollenbasierte Zugangskontrolle, automatisierte Penetrationstests. L\u00f6schfrist: 30 Tage nach Vertragsende."
+  },
+  {
+    "id": "novatech-urlaubsregelung",
+    "collection": "knowledge_general",
+    "classification": "public",
+    "title": "Urlaubsregelung und Abwesenheitsmanagement",
+    "source": "hr-wiki",
+    "project": "novatech-hr",
+    "type": "doc",
+    "content": "Urlaubsregelung NovaTech GmbH. Urlaubsanspruch: 30 Tage pro Kalenderjahr (Vollzeit). Beantragung über Personio, Genehmigung durch Teamlead. Resturlaub: Übertrag bis 31. März des Folgejahres möglich. Brückentage: Firmenweite freie Tage werden im Januar bekanntgegeben. Sonderurlaub: Umzug (1 Tag), Hochzeit (2 Tage), Geburt Kind (2 Tage). Krankmeldung: ab dem 1. Tag telefonisch/Slack, AU ab dem 3. Tag. Sabbatical: nach 3 Jahren Betriebszugehörigkeit, max. 3 Monate unbezahlt."
+  },
+  {
+    "id": "novatech-buerohund-policy",
+    "collection": "knowledge_general",
+    "classification": "public",
+    "title": "Bürohund-Regelung",
+    "source": "culture-wiki",
+    "project": "novatech-culture",
+    "type": "doc",
+    "content": "Bürohund-Policy der NovaTech GmbH. Hunde sind im Büro willkommen nach Anmeldung beim Office Management. Voraussetzungen: Hund ist sozialverträglich, stubenrein, geimpft. Maximale Anzahl: 3 Hunde pro Stockwerk (Anmeldeliste im Intranet). Hundefreie Zonen: Küche, Meetingräume, Serverraum. Rücksicht auf Kolleg:innen mit Allergien oder Ängsten — bei Konflikten entscheidet das Office Management. Jeder Hundebesitzer haftet für Schäden und Reinigung."
+  },
+  {
+    "id": "novatech-coding-standards",
+    "collection": "knowledge_code",
+    "classification": "internal",
+    "title": "Coding Standards und Style Guide",
+    "source": "dev-wiki",
+    "project": "novatech-platform",
+    "type": "code-doc",
+    "content": "Coding Standards NovaTech GmbH — Backend (Python). Python 3.12+, Type Hints überall (mypy --strict). Formatter: Black (120 Zeichen Zeilenlänge). Linter: Ruff. Docstrings: Google-Style, mindestens für public Functions. Tests: pytest, Minimum 80% Code Coverage (gemessen mit coverage.py). Branching: GitFlow — feature/*, bugfix/*, release/*. Commit Messages: Conventional Commits (feat:, fix:, docs:, chore:). Code Review: mindestens 1 Approval vor Merge, max. 400 Zeilen pro MR. CI/CD: GitLab CI, alle Pipelines müssen grün sein vor Merge."
+  },
+  {
+    "id": "novatech-api-design-guide",
+    "collection": "knowledge_code",
+    "classification": "internal",
+    "title": "REST API Design Guidelines",
+    "source": "dev-wiki",
+    "project": "novatech-platform",
+    "type": "code-doc",
+    "content": "API Design Guidelines für NovaSuite-Plattform. Alle APIs folgen REST-Prinzipien mit JSON als Austauschformat. Versionierung: URL-basiert (/api/v1/..., /api/v2/...). Authentifizierung: OAuth 2.0 mit JWT (RS256). Token-Laufzeit: 15 Minuten. Rate Limiting: 100 Requests/Minute pro API-Key (konfigurierbar per Tenant). Pagination: Cursor-basiert (nicht offset-basiert) für konsistente Ergebnisse. Fehler-Format: RFC 7807 Problem Details (type, title, status, detail). HATEOAS: Links in Responses für verwandte Ressourcen. Breaking Changes: 6 Monate Deprecation-Notice, Sunset-Header."
+  },
+  {
+    "id": "novatech-deployment-pipeline",
+    "collection": "knowledge_code",
+    "classification": "internal",
+    "title": "Deployment-Pipeline und Release-Prozess",
+    "source": "dev-wiki",
+    "project": "novatech-platform",
+    "type": "code-doc",
+    "content": "Deployment-Pipeline NovaSuite (GitLab CI/CD). Stages: lint \u2192 test \u2192 build \u2192 deploy-staging \u2192 e2e-tests \u2192 deploy-prod. Container-Registry: Harbor (harbor.novatech-gmbh.example). Kubernetes: 3 Cluster (dev, staging, prod) auf AWS EKS. Helm Charts: pro Service ein Chart, Values per Environment. Feature Flags: LaunchDarkly für schrittweise Rollouts. Canary Deployments: 10% Traffic für 30min, dann 50%, dann 100%. Rollback: automatisch bei Error-Rate >1% oder Latenz p99 >2s. Release-Zyklus: alle 2 Wochen (Donnerstag, 10:00 Uhr), Hotfixes jederzeit."
+  },
+  {
+    "id": "novatech-datenbank-richtlinien",
+    "collection": "knowledge_code",
+    "classification": "internal",
+    "title": "Datenbank-Richtlinien und Migration",
+    "source": "dev-wiki",
+    "project": "novatech-platform",
+    "type": "code-doc",
+    "content": "Datenbank-Standards NovaTech (PostgreSQL 16). Schema-Migrationen: Alembic, nummerierte Versionen, immer reversibel. Naming: snake_case für Tabellen und Spalten, Plural für Tabellennamen. Indizes: EXPLAIN ANALYZE vor jedem neuen Index in Produktion. Partitionierung: ab 10 Mio Zeilen erwägen (nach Datum oder Tenant). Connection Pooling: PgBouncer (transaction mode), max 200 Connections. Backups: pg_dump stündlich, WAL-Archivierung nach S3, Point-in-Time Recovery. Sensible Daten: Spalten mit PII als 'pii=true' kommentieren. Read Replicas: 2 Replicas für Analytics-Queries, nie auf Primary schreiben."
+  },
+  {
+    "id": "novatech-frontend-architektur",
+    "collection": "knowledge_code",
+    "classification": "internal",
+    "title": "Frontend-Architektur NovaSuite",
+    "source": "dev-wiki",
+    "project": "novatech-platform",
+    "type": "code-doc",
+    "content": "Frontend-Architektur NovaSuite. Framework: React 18 + TypeScript (strict mode). State Management: Zustand für Client-State, TanStack Query für Server-State. Routing: React Router v6 mit Lazy Loading. UI-Bibliothek: Radix UI Primitives + Tailwind CSS. Design Tokens: CSS Custom Properties, generiert aus Figma via Style Dictionary. Testing: Vitest (Unit), Playwright (E2E), Storybook (Visual Regression). Bundle Size Budget: <200KB gzipped für Initial Load. i18n: react-i18next, Übersetzungen in Lokalazy. Accessibility: WCAG 2.1 AA, automatisiert geprüft mit axe-core in CI."
+  },
+  {
+    "id": "novatech-security-secrets",
+    "collection": "knowledge_code",
+    "classification": "confidential",
+    "title": "Security-Architektur und Secrets Management",
+    "source": "security-docs",
+    "project": "novatech-security",
+    "type": "code-doc",
+    "content": "Security-Architektur NovaTech (vertraulich). Secrets Management: HashiCorp Vault (self-hosted, HA-Cluster). Zugriff auf Vault: AppRole-Auth für Services, OIDC für Entwickler. Rotation: Datenbank-Credentials alle 24h, API-Keys alle 90 Tage. Encryption at Rest: AES-256-GCM, Keys in AWS KMS (eu-central-1). Encryption in Transit: TLS 1.3, mTLS zwischen internen Services. WAF: AWS WAF mit OWASP Core Rule Set. Penetration Testing: halbjährlich durch externe Firma (zuletzt: CyberSec AG). Bug Bounty: über HackerOne, Scope: *.novasuite.example."
+  },
+  {
+    "id": "novatech-datenklassifizierung",
+    "collection": "knowledge_rules",
+    "classification": "internal",
+    "title": "Datenklassifizierungs-Richtlinie",
+    "source": "governance-wiki",
+    "project": "novatech-governance",
+    "type": "rule",
+    "content": "Datenklassifizierung NovaTech GmbH — 4 Stufen. PUBLIC: Öffentlich zugängliche Informationen (Website, Blog, Pressemitteilungen). INTERNAL: Interne Informationen, kein Schaden bei Verlust (Prozessdoku, Wiki). CONFIDENTIAL: Geschäftskritisch, Schaden bei Verlust (Gehaltsdaten, Verträge, Kundenlisten). RESTRICTED: Höchste Schutzstufe, schwerer Schaden bei Verlust (Geschäftsgeheimnisse, M&A-Daten, Sicherheitsarchitektur). Jedes Dokument MUSS klassifiziert werden. Default: INTERNAL. Verantwortlich: Data Owner (= Fachbereich). Überprüfung: jährlich."
+  },
+  {
+    "id": "novatech-zugriffskontrolle",
+    "collection": "knowledge_rules",
+    "classification": "internal",
+    "title": "Zugriffskontroll-Policy (RBAC)",
+    "source": "governance-wiki",
+    "project": "novatech-governance",
+    "type": "rule",
+    "content": "Rollenbasierte Zugriffskontrolle (RBAC) der NovaTech GmbH. Rollen: viewer, editor, analyst, developer, admin. Viewer: Lesezugriff auf PUBLIC-Daten. Editor: Lese- und Schreibzugriff auf PUBLIC und INTERNAL. Analyst: Lesezugriff auf PUBLIC und INTERNAL. Developer: Wie Analyst + Code-Repositories + Graph-Mutationen. Admin: Vollzugriff inkl. CONFIDENTIAL, RESTRICTED + Vault + Nutzerverwaltung. Least Privilege: Jeder bekommt nur die minimal nötige Rolle. Access Reviews: quartalsweise durch die Teamleitung. Deprovisioning: Entzug aller Zugänge innerhalb von 24h nach Austritt."
+  },
+  {
+    "id": "novatech-aufbewahrungsfristen",
+    "collection": "knowledge_rules",
+    "classification": "internal",
+    "title": "Aufbewahrungsfristen und Löschkonzept",
+    "source": "governance-wiki",
+    "project": "novatech-compliance",
+    "type": "rule",
+    "content": "Aufbewahrungsfristen NovaTech GmbH (DSGVO + HGB). Bewerbungsunterlagen: 6 Monate nach Absage (AGG-Frist). Personalakten: 3 Jahre nach Austritt (Verjährungsfrist). Rechnungen und Buchhaltung: 10 Jahre (§257 HGB). Verträge: 6 Jahre nach Vertragsende (§257 HGB). Kundendaten: 30 Tage nach Vertragsende (AVV). Log-Daten (Audit): 1 Jahr, dann Anonymisierung. Wissensdatenbank: kein automatisches Löschen, jährliches Review. Löschprozess: automatisiert via Cronjob (retention_cleanup.py), Protokollierung in audit_log."
+  },
+  {
+    "id": "novatech-change-management",
+    "collection": "knowledge_rules",
+    "classification": "internal",
+    "title": "Change-Management-Prozess",
+    "source": "governance-wiki",
+    "project": "novatech-governance",
+    "type": "rule",
+    "content": "Change-Management-Prozess für Produktionsänderungen (NovaSuite). Change-Typen: Standard (pre-approved), Normal (CAB-Approval), Emergency. Standard Changes: Dependency-Updates, Config-Änderungen (kein CAB nötig). Normal Changes: Feature-Releases, Infrastruktur-Änderungen. CAB (Change Advisory Board): Mittwoch 14:00 Uhr, CTO + Lead Engineers. Emergency Changes: sofortige Durchführung, Dokumentation innerhalb 24h. Rollback-Plan: Pflicht für jeden Change, getestet vor Durchführung. Change-Fenster: Donnerstag 10:00-16:00 (außer Feiertage, Monatsletzter). Freeze-Perioden: 15.12.-05.01. (Weihnachten), Quartalsende (letzter Tag)."
+  },
+  {
+    "id": "novatech-ai-usage-policy",
+    "collection": "knowledge_rules",
+    "classification": "internal",
+    "title": "KI-Nutzungsrichtlinie",
+    "source": "governance-wiki",
+    "project": "novatech-governance",
+    "type": "rule",
+    "content": "Richtlinie zur Nutzung von KI-Tools bei NovaTech GmbH. Erlaubt: GitHub Copilot (Business-Lizenz), ChatGPT Team (über Firmen-Account). Verboten: Eingabe von CONFIDENTIAL/RESTRICTED Daten in externe KI-Dienste. Code-Generierung: Review-Pflicht wie bei manuell geschriebenem Code. KI-generierte Inhalte: Kennzeichnungspflicht in Dokumentation. Training eigener Modelle: nur auf INTERNAL/PUBLIC Daten, genehmigt durch CTO. Verantwortung: Der Mensch bleibt verantwortlich für KI-Output. Evaluierung neuer KI-Tools: Security-Review durch CISO vor Freigabe. Schulung: Pflicht-Workshop 'Responsible AI' für alle Entwickler (jährlich)."
+  }
+]

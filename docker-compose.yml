@@ -116,7 +116,7 @@ services:
     networks:
       - kb-net
     restart: unless-stopped
-    # GPU-Support (auskommentieren wenn NVIDIA GPU verfügbar):
+    # GPU-Support (deaktiviert – NVIDIA Container Toolkit nicht verfügbar)
     # deploy:
     #   resources:
     #     reservations:
@@ -260,3 +260,32 @@ services:
     networks:
       - kb-net
     restart: unless-stopped
+
+  # ── Testdata Seed (nur mit --profile seed) ────────────────
+  seed:
+    profiles: ["seed"]
+    build:
+      context: ./testdata
+      dockerfile: Dockerfile
+    container_name: kb-seed
+    environment:
+      INGESTION_URL:   http://ingestion:8081
+      OLLAMA_URL:      http://ollama:11434
+      QDRANT_URL:      http://qdrant:6333
+      MCP_URL:         http://mcp-server:8080
+      EMBEDDING_MODEL: nomic-embed-text
+      MAX_WAIT_SECONDS: "180"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+      ingestion:
+        condition: service_started
+      ollama:
+        condition: service_started
+    networks:
+      - kb-net
+    restart: "no"

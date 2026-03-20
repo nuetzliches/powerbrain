@@ -84,6 +84,7 @@ async def shutdown():
 class IngestRequest(BaseModel):
     source: str = Field(description="Quelle: Pfad, URL oder Inline-Daten")
     source_type: str = Field(description="csv, json, sql_dump, git_repo")
+    collection: str | None = Field(default=None, description="Qdrant-Collection (Override, sonst via source_type)")
     project: str | None = Field(default=None, description="Projekt-Zuordnung")
     classification: str = Field(default="internal", description="Datenklassifizierung")
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -468,7 +469,7 @@ async def ingest(req: IngestRequest):
     Aktuell unterstützt: Inline-Text über das 'source'-Feld.
     CSV/JSON/git_repo: Stub mit Platzhalter-Logik.
     """
-    collection = COLLECTION_MAP.get(req.source_type, "knowledge_general")
+    collection = req.collection or COLLECTION_MAP.get(req.source_type, "knowledge_general")
 
     if req.source_type in ("csv", "json"):
         # Für CSV/JSON: source als Inline-Daten oder Pfad behandeln
