@@ -127,3 +127,87 @@ class TestLogAccessPiiScanning(unittest.TestCase):
         has_query = any("query" in call for call in log_calls)
         self.assertTrue(has_query,
             "get_code_context log_access must include query in context")
+
+
+class TestAuditRlsMigration(unittest.TestCase):
+    """Migration 008 must enable RLS on agent_access_log."""
+
+    @classmethod
+    def setUpClass(cls):
+        path = os.path.join(os.path.dirname(__file__),
+                            "..", "init-db", "008_audit_rls.sql")
+        if os.path.exists(path):
+            with open(path) as f:
+                cls.source = f.read().lower()
+        else:
+            cls.source = ""
+
+    def test_migration_file_exists(self):
+        """008_audit_rls.sql must exist."""
+        self.assertTrue(len(self.source) > 0, "008_audit_rls.sql does not exist or is empty")
+
+    def test_enables_rls(self):
+        """Must enable RLS on agent_access_log."""
+        self.assertIn("enable row level security", self.source)
+        self.assertIn("agent_access_log", self.source)
+
+    def test_forces_rls(self):
+        """Must FORCE RLS (even table owner cannot bypass)."""
+        self.assertIn("force row level security", self.source)
+
+    def test_insert_policy_for_app(self):
+        """Must have INSERT policy for mcp_app role."""
+        self.assertIn("for insert", self.source)
+        self.assertIn("mcp_app", self.source)
+
+    def test_select_policy_for_auditor(self):
+        """Must have SELECT policy for mcp_auditor role."""
+        self.assertIn("for select", self.source)
+        self.assertIn("mcp_auditor", self.source)
+
+    def test_creates_auditor_role(self):
+        """Must create mcp_auditor role if not exists."""
+        self.assertIn("mcp_auditor", self.source)
+        self.assertIn("create role", self.source)
+
+
+class TestRetentionAnonymization(unittest.TestCase):
+    """retention_cleanup.py must have time-based audit log anonymization."""
+
+    @classmethod
+    def setUpClass(cls):
+        path = os.path.join(os.path.dirname(__file__),
+                            "..", "ingestion", "retention_cleanup.py")
+        with open(path) as f:
+            cls.source = f.read()
+
+    def test_anonymize_function_exists(self):
+        """anonymize_old_audit_logs function must exist."""
+        self.assertIn("async def anonymize_old_audit_logs", self.source)
+
+    def test_uses_retention_days_config(self):
+        """Must use configurable retention days (env var or parameter)."""
+        self.assertIn("AUDIT_RETENTION_DAYS", self.source)
+
+    def test_anonymizes_request_context(self):
+        """Must set request_context to anonymized marker."""
+        self.assertIn('{"anonymized": true}', self.source)
+
+    def test_time_based_filter(self):
+        """Must filter by created_at age, not just by resource_id."""
+        match = re.search(
+            r'async def anonymize_old_audit_logs.*?(?=\nasync def |\nclass |\Z)',
+            self.source, re.DOTALL
+        )
+        self.assertIsNotNone(match, "Function not found")
+        func_body = match.group()
+        self.assertIn("created_at", func_body)
+        self.assertIn("interval", func_body)
+
+    def test_called_in_main(self):
+        """anonymize_old_audit_logs must be called from main()."""
+        main_match = re.search(
+            r'async def main\(.*?\Z', self.source, re.DOTALL
+        )
+        self.assertIsNotNone(main_match, "main() not found")
+        self.assertIn("anonymize_old_audit_logs", main_match.group())
