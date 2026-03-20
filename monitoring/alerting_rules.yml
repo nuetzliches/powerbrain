@@ -1,0 +1,92 @@
+groups:
+  - name: kb-alerts
+    rules:
+
+      # ── MCP-Server ──────────────────────────────────────────
+
+      - alert: HighErrorRate
+        expr: rate(kb_mcp_requests_total{status="error"}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MCP-Server Error-Rate über 5%"
+          description: "Error-Rate: {{ $value | humanizePercentage }}"
+
+      - alert: HighSearchLatency
+        expr: >
+          histogram_quantile(0.95,
+            rate(kb_mcp_request_duration_seconds_bucket{tool="search_knowledge"}[10m])
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "search_knowledge Latenz p95 über 2 Sekunden"
+          description: "p95-Latenz: {{ $value | humanizeDuration }}"
+
+      - alert: MostToolsDown
+        expr: absent(kb_mcp_requests_total)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MCP-Server sendet keine Metriken"
+
+      # ── Reranker ────────────────────────────────────────────
+
+      - alert: RerankerDown
+        expr: up{job="reranker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Reranker nicht erreichbar"
+
+      - alert: HighRerankerFallbackRate
+        expr: rate(kb_mcp_rerank_fallback_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reranker-Fallback-Rate erhöht (>10% der Requests)"
+
+      # ── Retrieval-Qualität ───────────────────────────────────
+
+      - alert: LowSearchQuality
+        expr: kb_feedback_avg_rating < 2.5
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Durchschnittliches Feedback-Rating unter 2.5"
+          description: "Aktueller Wert: {{ $value }}"
+
+      # ── Infrastruktur ────────────────────────────────────────
+
+      - alert: QdrantDown
+        expr: up{job="qdrant"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Qdrant nicht erreichbar"
+
+      - alert: PostgresDown
+        expr: up{job="postgres"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL nicht erreichbar"
+
+      - alert: HighRerankerLatency
+        expr: >
+          histogram_quantile(0.95,
+            rate(kb_reranker_duration_seconds_bucket[5m])
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reranker Latenz p95 über 1 Sekunde"

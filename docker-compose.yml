@@ -1,0 +1,257 @@
+version: "3.9"
+
+# ============================================================
+#  Self-Hosted Wissensdatenbank – Docker Compose
+#  Komponenten: Qdrant, PostgreSQL, OPA, Ollama, MCP-Server,
+#               Ingestion, Reranker, Prometheus, Grafana,
+#               Grafana Tempo (Tracing), postgres-exporter
+# ============================================================
+
+networks:
+  kb-net:
+    driver: bridge
+
+volumes:
+  qdrant_data:
+  pg_data:
+  ollama_data:
+  prometheus_data:
+  grafana_data:
+  tempo_data:
+
+services:
+
+  # ── Qdrant (Vektordatenbank) ──────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: kb-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    networks:
+      - kb-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── PostgreSQL + Apache AGE ───────────────────────────────
+  postgres:
+    image: apache/age:latest
+    container_name: kb-postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d
+    environment:
+      POSTGRES_DB: knowledgebase
+      POSTGRES_USER: kb_admin
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-changeme_in_production}
+    networks:
+      - kb-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kb_admin -d knowledgebase"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── postgres-exporter (Prometheus Metriken für PG) ────────
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: kb-postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: "postgresql://kb_admin:${PG_PASSWORD:-changeme_in_production}@postgres:5432/knowledgebase?sslmode=disable"
+    networks:
+      - kb-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Open Policy Agent ─────────────────────────────────────
+  opa:
+    image: openpolicyagent/opa:latest
+    container_name: kb-opa
+    ports:
+      - "8181:8181"
+    command:
+      - "run"
+      - "--server"
+      - "--addr=0.0.0.0:8181"
+      - "--set=decision_logs.console=true"
+      # Bundle-Polling nach Setup aktivieren:
+      # - "--set=services.forgejo.url=${FORGEJO_URL:-http://forgejo.local:3000}"
+      # - "--set=services.forgejo.credentials.bearer.token=${FORGEJO_TOKEN}"
+      # - "--set=bundles.kb.service=forgejo"
+      # - "--set=bundles.kb.resource=/api/v1/repos/kb-org/kb-policies/raw/bundle.tar.gz"
+      # - "--set=bundles.kb.polling.min_delay_seconds=10"
+    networks:
+      - kb-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8181/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Ollama (Embeddings) ───────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: kb-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - kb-net
+    restart: unless-stopped
+    # GPU-Support (auskommentieren wenn NVIDIA GPU verfügbar):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ── Reranker (Cross-Encoder) ──────────────────────────────
+  reranker:
+    build:
+      context: ./reranker
+      dockerfile: Dockerfile
+    container_name: kb-reranker
+    ports:
+      - "8082:8082"
+    environment:
+      RERANKER_MODEL: cross-encoder/ms-marco-MiniLM-L-6-v2
+      RERANKER_MAX_BATCH: "128"
+      RERANKER_DEFAULT_TOP_N: "10"
+    networks:
+      - kb-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── MCP-Server (Agenten-Schnittstelle) ────────────────────
+  mcp-server:
+    build:
+      context: ./mcp-server
+      dockerfile: Dockerfile
+    container_name: kb-mcp-server
+    ports:
+      - "8080:8080"   # Prometheus /metrics
+    environment:
+      QDRANT_URL:      http://qdrant:6333
+      POSTGRES_URL:    postgresql://kb_admin:${PG_PASSWORD:-changeme_in_production}@postgres:5432/knowledgebase
+      OPA_URL:         http://opa:8181
+      OLLAMA_URL:      http://ollama:11434
+      FORGEJO_URL:     ${FORGEJO_URL:-http://forgejo.local:3000}
+      FORGEJO_TOKEN:   ${FORGEJO_TOKEN:-}
+      RERANKER_URL:    http://reranker:8082
+      RERANKER_ENABLED: "true"
+      METRICS_PORT:    "8080"
+      OTEL_ENABLED:    ${OTEL_ENABLED:-false}
+      OTLP_ENDPOINT:   http://tempo:4317
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+      reranker:
+        condition: service_healthy
+    networks:
+      - kb-net
+    restart: unless-stopped
+
+  # ── Ingestion Pipeline ────────────────────────────────────
+  ingestion:
+    build:
+      context: ./ingestion
+      dockerfile: Dockerfile
+    container_name: kb-ingestion
+    ports:
+      - "8081:8081"
+    environment:
+      QDRANT_URL:    http://qdrant:6333
+      POSTGRES_URL:  postgresql://kb_admin:${PG_PASSWORD:-changeme_in_production}@postgres:5432/knowledgebase
+      OPA_URL:       http://opa:8181
+      OLLAMA_URL:    http://ollama:11434
+      FORGEJO_URL:   ${FORGEJO_URL:-http://forgejo.local:3000}
+      FORGEJO_TOKEN: ${FORGEJO_TOKEN:-}
+      RERANKER_URL:  http://reranker:8082
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - kb-net
+    restart: unless-stopped
+
+  # ── Prometheus ────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: kb-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerting_rules.yml:/etc/prometheus/alerting_rules.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    networks:
+      - kb-net
+    restart: unless-stopped
+
+  # ── Grafana ───────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: kb-grafana
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana-datasources:/etc/grafana/provisioning/datasources:ro
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    networks:
+      - kb-net
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  # ── Grafana Tempo (Distributed Tracing) ──────────────────
+  tempo:
+    image: grafana/tempo:latest
+    container_name: kb-tempo
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    volumes:
+      - ./monitoring/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "4317:4317"   # OTLP gRPC (von Services genutzt)
+      - "3200:3200"   # Tempo HTTP API (Grafana Query)
+    networks:
+      - kb-net
+    restart: unless-stopped

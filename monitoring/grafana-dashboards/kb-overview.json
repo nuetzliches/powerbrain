@@ -1,0 +1,113 @@
+{
+  "title": "KB Overview",
+  "uid": "kb-overview",
+  "tags": ["kb", "mcp"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Requests/min (alle Tools)",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "sum(rate(kb_mcp_requests_total[1m])) * 60",
+        "legendFormat": "req/min"
+      }]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Error-Rate",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "sum(rate(kb_mcp_requests_total{status=\"error\"}[5m])) / sum(rate(kb_mcp_requests_total[5m]))",
+        "legendFormat": "Error-Rate"
+      }],
+      "options": { "unit": "percentunit" }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Feedback avg_rating (24h)",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "kb_feedback_avg_rating",
+        "legendFormat": "avg rating"
+      }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Reranker-Fallbacks",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "increase(kb_mcp_rerank_fallback_total[1h])",
+        "legendFormat": "Fallbacks/h"
+      }]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Latenz p50 / p95 / p99 – search_knowledge",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.50, rate(kb_mcp_request_duration_seconds_bucket{tool=\"search_knowledge\"}[5m]))",
+          "legendFormat": "p50"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.95, rate(kb_mcp_request_duration_seconds_bucket{tool=\"search_knowledge\"}[5m]))",
+          "legendFormat": "p95"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.99, rate(kb_mcp_request_duration_seconds_bucket{tool=\"search_knowledge\"}[5m]))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Requests/s pro Tool",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "sum by(tool) (rate(kb_mcp_requests_total[1m]))",
+        "legendFormat": "{{tool}}"
+      }]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "OPA Policy-Entscheidungen",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 6 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "sum by(result) (rate(kb_mcp_policy_decisions_total[1m]))",
+        "legendFormat": "{{result}}"
+      }]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Reranker Batch-Size (p95)",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 6 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "histogram_quantile(0.95, rate(kb_reranker_batch_size_bucket[5m]))",
+        "legendFormat": "batch p95"
+      }]
+    }
+  ]
+}

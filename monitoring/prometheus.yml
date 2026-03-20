@@ -1,0 +1,42 @@
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  scrape_timeout:      10s
+
+rule_files:
+  - "/etc/prometheus/alerting_rules.yml"
+
+scrape_configs:
+  # MCP-Server – Prometheus /metrics auf Port 8080
+  - job_name: mcp-server
+    static_configs:
+      - targets: ['mcp-server:8080']
+    metrics_path: /metrics
+
+  # Reranker – /metrics auf Port 8082
+  - job_name: reranker
+    static_configs:
+      - targets: ['reranker:8082']
+    metrics_path: /metrics
+
+  # Ingestion – /metrics auf Port 8081
+  - job_name: ingestion
+    static_configs:
+      - targets: ['ingestion:8081']
+    metrics_path: /metrics
+
+  # Qdrant – native Prometheus-Metriken
+  - job_name: qdrant
+    static_configs:
+      - targets: ['qdrant:6333']
+    metrics_path: /metrics
+
+  # PostgreSQL via postgres-exporter
+  - job_name: postgres
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  # Prometheus selbst
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']

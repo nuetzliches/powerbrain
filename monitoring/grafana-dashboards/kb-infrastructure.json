@@ -1,0 +1,68 @@
+{
+  "title": "KB Infrastructure",
+  "uid": "kb-infrastructure",
+  "tags": ["kb", "infrastructure"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Service Health",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 4 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "up",
+        "legendFormat": "{{job}}"
+      }],
+      "options": { "orientation": "horizontal" }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "PostgreSQL Connections",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "pg_stat_activity_count{datname=\"knowledgebase\"}",
+        "legendFormat": "{{state}}"
+      }]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Reranker Modell-Ladezeit",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "kb_reranker_model_load_seconds_sum / kb_reranker_model_load_seconds_count",
+        "legendFormat": "avg Ladezeit"
+      }],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "OPA Policy-Entscheidungen/min",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 6 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "sum by(result) (rate(kb_mcp_policy_decisions_total[1m])) * 60",
+        "legendFormat": "{{result}}"
+      }]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "MCP Request-Volumen pro Tool",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 6 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "sum by(tool) (increase(kb_mcp_requests_total[1h]))",
+        "legendFormat": "{{tool}}"
+      }]
+    }
+  ]
+}

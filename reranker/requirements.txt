@@ -1,0 +1,6 @@
+fastapi>=0.115
+uvicorn[standard]>=0.34
+sentence-transformers>=3.3
+torch>=2.5
+pydantic>=2.0
+prometheus-client>=0.21
