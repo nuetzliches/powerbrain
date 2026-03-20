@@ -310,3 +310,41 @@ eindeutigen, aber deterministischen Pseudonym-Wert erhält.
 **Status:** RESOLVED — Der Vault-Pfad befüllt nun die relevanten Felder:
 `data_subjects` werden bei PII-Ingestion mit den erkannten Subjekt-Referenzen
 verknüpft, und der Pseudonymisierungsstatus wird korrekt nachgehalten.
+
+---
+
+## Resolved — Audit-Log PII-Schutz
+
+Die folgenden Lücken im Audit-Log wurden behoben:
+
+### RESOLVED: PII in Audit-Log-Query-Text gespeichert
+
+**Status:** RESOLVED — `log_access()` ruft vor dem Speichern den `/scan`-Endpoint
+des Ingestion-Service auf. Query-Texte werden durch maskierte Versionen ersetzt
+(`"Max Mustermann"` → `"<PERSON>"`). `contains_pii` wird korrekt gesetzt.
+`get_code_context` loggt nun ebenfalls konsistent Query-Text (maskiert).
+
+### RESOLVED: `contains_pii` nie gesetzt — Anonymisierung greift nicht
+
+**Status:** RESOLVED — `log_access()` setzt `contains_pii` basierend auf dem
+PII-Scan-Ergebnis. Die bestehende Anonymisierung in `retention_cleanup.py`
+greift damit korrekt für datensatz-spezifische Löschungen.
+
+### RESOLVED: Keine Zugriffskontrolle auf Audit-Logs
+
+**Status:** RESOLVED — Migration `008_audit_rls.sql` aktiviert Row-Level Security
+(mit FORCE) auf `agent_access_log`. `mcp_app` kann nur INSERT, neue Rolle
+`mcp_auditor` kann nur SELECT. Kein MCP-Tool exponiert die Logs.
+
+### RESOLVED: Keine zeitbasierte Audit-Log-Retention
+
+**Status:** RESOLVED — Neue Funktion `anonymize_old_audit_logs()` in
+`retention_cleanup.py` anonymisiert `request_context` nach `AUDIT_RETENTION_DAYS`
+(Default: 365 Tage, konfigurierbar per Env-Var). Integriert als Phase 4 im
+Retention-Cleanup-Flow.
+
+### RESOLVED: Hardcoded Ingestion-URL im MCP-Server
+
+**Status:** RESOLVED — `INGESTION_URL` wird nun aus Umgebungsvariable gelesen
+(Default: `http://ingestion:8081`). Alle Ingestion-Aufrufe in `server.py`
+verwenden die konfigurierbare URL.
