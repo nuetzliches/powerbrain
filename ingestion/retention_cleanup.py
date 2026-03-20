@@ -158,6 +158,73 @@ async def process_deletion_requests(pool: asyncpg.Pool, qdrant: AsyncQdrantClien
     return reports
 
 
+async def clean_expired_vault(conn, dry_run: bool = True) -> dict:
+    """
+    Löscht abgelaufene Vault-Einträge und zugehörige Mappings.
+    Gibt Statistiken zurück.
+    """
+    stats = {"expired_content": 0, "expired_mappings": 0, "orphaned": 0}
+
+    # 1. Abgelaufene Vault-Einträge finden
+    expired = await conn.fetch("""
+        SELECT id, document_id, chunk_index
+        FROM pii_vault.original_content
+        WHERE retention_expires_at <= now()
+    """)
+    stats["expired_content"] = len(expired)
+
+    if expired and not dry_run:
+        expired_ids = [r["id"] for r in expired]
+        expired_doc_chunks = [(r["document_id"], r["chunk_index"]) for r in expired]
+
+        # Mappings löschen
+        for doc_id, chunk_idx in expired_doc_chunks:
+            deleted = await conn.execute("""
+                DELETE FROM pii_vault.pseudonym_mapping
+                WHERE document_id = $1 AND chunk_index = $2
+            """, doc_id, chunk_idx)
+            stats["expired_mappings"] += int(deleted.split()[-1]) if deleted else 0
+
+        # Original-Content löschen
+        await conn.execute("""
+            DELETE FROM pii_vault.original_content
+            WHERE id = ANY($1::uuid[])
+        """, expired_ids)
+
+        log.info(
+            f"Vault Cleanup: {stats['expired_content']} expired entries deleted, "
+            f"{stats['expired_mappings']} mappings removed"
+        )
+
+    # 2. Verwaiste Vault-Einträge (document_meta gelöscht, Vault noch da)
+    orphaned = await conn.fetch("""
+        SELECT oc.id, oc.document_id
+        FROM pii_vault.original_content oc
+        LEFT JOIN documents_meta dm ON dm.id = oc.document_id
+        WHERE dm.id IS NULL
+    """)
+    stats["orphaned"] = len(orphaned)
+
+    if orphaned and not dry_run:
+        orphan_ids = [r["id"] for r in orphaned]
+        orphan_doc_ids = list({r["document_id"] for r in orphaned})
+
+        for doc_id in orphan_doc_ids:
+            await conn.execute("""
+                DELETE FROM pii_vault.pseudonym_mapping
+                WHERE document_id = $1
+            """, doc_id)
+
+        await conn.execute("""
+            DELETE FROM pii_vault.original_content
+            WHERE id = ANY($1::uuid[])
+        """, orphan_ids)
+
+        log.info(f"Vault Cleanup: {stats['orphaned']} orphaned entries removed")
+
+    return stats
+
+
 async def main():
     parser = argparse.ArgumentParser(description="Retention Cleanup Service")
     parser.add_argument("--execute", action="store_true", help="Tatsächlich löschen (ohne: Dry-Run)")
@@ -191,6 +258,16 @@ async def main():
         log.info(f"  → Betroffene Person: {report['subject']}")
         for action in report["actions"]:
             log.info(f"    {action}")
+
+    # 3. Vault-Cleanup: Abgelaufene + verwaiste Einträge
+    log.info("=== Phase 3: Vault Retention + Orphan Cleanup ===")
+    async with pool.acquire() as conn:
+        vault_stats = await clean_expired_vault(conn, dry_run=not args.execute)
+    log.info(
+        f"  Vault: {vault_stats['expired_content']} expired, "
+        f"{vault_stats['orphaned']} orphaned"
+        f"{' (dry-run)' if not args.execute else ' → gelöscht'}"
+    )
 
     await pool.close()
     log.info(f"Retention Cleanup abgeschlossen [{mode}]")
