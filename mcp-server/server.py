@@ -204,6 +204,157 @@ async def log_access(agent_id: str, agent_role: str,
        action, policy_result, json.dumps(context or {}))
 
 
+# ── Vault Access ────────────────────────────────────────────
+
+VAULT_HMAC_SECRET = os.getenv("VAULT_HMAC_SECRET", "change-me-in-production")
+
+
+def validate_pii_access_token(token: dict) -> dict:
+    """
+    Validiert einen PII Access Token (HMAC-signiert, kurzlebig).
+    Returns: {"valid": bool, "reason": str, "payload": dict}
+    """
+    import hmac as hmac_mod
+    import hashlib
+    from datetime import datetime, timezone
+
+    signature = token.get("signature", "")
+    payload = {k: v for k, v in token.items() if k != "signature"}
+
+    # HMAC-Signatur prüfen
+    expected = hmac_mod.new(
+        VAULT_HMAC_SECRET.encode(),
+        json.dumps(payload, sort_keys=True).encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+    if not hmac_mod.compare_digest(signature, expected):
+        return {"valid": False, "reason": "Invalid token signature", "payload": payload}
+
+    # Ablauf prüfen
+    expires_at = token.get("expires_at", "")
+    try:
+        exp = datetime.fromisoformat(expires_at)
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > exp:
+            return {"valid": False, "reason": "Token expired", "payload": payload}
+    except (ValueError, TypeError):
+        return {"valid": False, "reason": "Invalid expires_at format", "payload": payload}
+
+    return {"valid": True, "reason": "ok", "payload": payload}
+
+
+async def check_opa_vault_access(
+    agent_role: str, purpose: str, classification: str,
+    data_category: str, token_valid: bool, token_expired: bool,
+) -> dict:
+    """Prüft via OPA ob Vault-Zugriff erlaubt ist."""
+    input_data = {
+        "agent_role": agent_role,
+        "purpose": purpose,
+        "classification": classification,
+        "data_category": data_category,
+        "token_valid": token_valid,
+        "token_expired": token_expired,
+    }
+    try:
+        resp = await http.post(
+            f"{OPA_URL}/v1/data/kb/privacy/vault_access_allowed",
+            json={"input": input_data},
+        )
+        resp.raise_for_status()
+        allowed = resp.json().get("result", False)
+        fields_resp = await http.post(
+            f"{OPA_URL}/v1/data/kb/privacy/vault_fields_to_redact",
+            json={"input": input_data},
+        )
+        fields_resp.raise_for_status()
+        fields_to_redact = list(fields_resp.json().get("result", []))
+    except Exception as e:
+        log.warning(f"OPA vault access check failed: {e}")
+        allowed = False
+        fields_to_redact = []
+    return {
+        "allowed": allowed,
+        "fields_to_redact": fields_to_redact,
+    }
+
+
+def redact_fields(text: str, pii_entities: list[dict], fields_to_redact: set[str]) -> str:
+    """Redaktiert bestimmte PII-Entity-Typen im Text basierend auf OPA-Policy."""
+    # Mapping von OPA-Feldnamen zu Presidio-Entity-Typen
+    field_to_entity = {
+        "email": "EMAIL_ADDRESS",
+        "phone": "PHONE_NUMBER",
+        "iban": "IBAN_CODE",
+        "birthdate": "DATE_OF_BIRTH",
+        "address": "LOCATION",
+    }
+    entities_to_redact = {
+        field_to_entity[f] for f in fields_to_redact if f in field_to_entity
+    }
+
+    if not entities_to_redact:
+        return text
+
+    # Sortiere nach Position absteigend für stabile Offsets
+    sorted_entities = sorted(pii_entities, key=lambda e: e.get("start", 0), reverse=True)
+    result = text
+    for entity in sorted_entities:
+        if entity.get("type") in entities_to_redact:
+            start = entity.get("start", 0)
+            end = entity.get("end", 0)
+            if 0 <= start < end <= len(result):
+                result = result[:start] + f"<{entity['type']}>" + result[end:]
+    return result
+
+
+async def vault_lookup(
+    document_id: str, chunk_indices: list[int] | None = None
+) -> list[dict]:
+    """Holt Original-Daten aus dem Vault."""
+    pool = await get_pg_pool()
+    if chunk_indices:
+        rows = await pool.fetch("""
+            SELECT id, chunk_index, original_text, pii_entities
+            FROM pii_vault.original_content
+            WHERE document_id = $1 AND chunk_index = ANY($2)
+            ORDER BY chunk_index
+        """, document_id, chunk_indices)
+    else:
+        rows = await pool.fetch("""
+            SELECT id, chunk_index, original_text, pii_entities
+            FROM pii_vault.original_content
+            WHERE document_id = $1
+            ORDER BY chunk_index
+        """, document_id)
+    return [
+        {
+            "vault_id": str(r["id"]),
+            "chunk_index": r["chunk_index"],
+            "original_text": r["original_text"],
+            "pii_entities": json.loads(r["pii_entities"])
+                if isinstance(r["pii_entities"], str)
+                else r["pii_entities"],
+        }
+        for r in rows
+    ]
+
+
+async def log_vault_access(
+    agent_id: str, document_id: str, chunk_index: int | None,
+    purpose: str, token_hash: str,
+):
+    """Loggt Vault-Zugriff in separates Audit-Log."""
+    pool = await get_pg_pool()
+    await pool.execute("""
+        INSERT INTO pii_vault.vault_access_log
+            (agent_id, document_id, chunk_index, purpose, token_hash)
+        VALUES ($1, $2, $3, $4, $5)
+    """, agent_id, document_id, chunk_index, purpose, token_hash)
+
+
 async def check_feedback_warning(query: str, pool: asyncpg.Pool):
     """Warnt wenn eine Query häufig schlecht bewertet wird (Feedback-Loop)."""
     row = await pool.fetchrow("""
@@ -240,6 +391,14 @@ async def list_tools() -> list[Tool]:
                                    "default": "knowledge_general"},
                     "filters":    {"type": "object"},
                     "top_k":      {"type": "integer", "default": 10},
+                    "pii_access_token": {
+                        "type": "object",
+                        "description": "Optional: HMAC-signed token for accessing original PII data from vault",
+                    },
+                    "purpose": {
+                        "type": "string",
+                        "description": "Required with pii_access_token: purpose for accessing PII data",
+                    },
                     "agent_id":   {"type": "string"},
                     "agent_role": {"type": "string"},
                 },
@@ -503,6 +662,8 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         query      = arguments["query"]
         top_k      = arguments.get("top_k", DEFAULT_TOP_K)
         filters    = arguments.get("filters", {})
+        pii_token  = arguments.get("pii_access_token")
+        purpose    = arguments.get("purpose", "")
 
         vector = await embed_text(query)
 
@@ -526,8 +687,9 @@ async def _dispatch(name: str, arguments: dict[str, Any],
             if policy["allowed"]:
                 filtered.append({
                     "id": str(hit.id), "score": round(hit.score, 4),
-                    "content": hit.payload.get("content", ""),
-                    "metadata": {k: v for k, v in hit.payload.items() if k != "content"},
+                    "content": hit.payload.get("text", hit.payload.get("content", "")),
+                    "metadata": {k: v for k, v in hit.payload.items()
+                                 if k not in ("content", "text")},
                 })
 
         reranked = await rerank_results(query, filtered, top_n=top_k)
@@ -536,9 +698,59 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         pool = await get_pg_pool()
         await check_feedback_warning(query, pool)
 
+        # Vault resolution: if token provided, try to resolve originals
+        if pii_token and purpose:
+            token_result = validate_pii_access_token(pii_token)
+            if token_result["valid"]:
+                import hashlib as _hl
+                token_hash = _hl.sha256(
+                    json.dumps(pii_token, sort_keys=True).encode()
+                ).hexdigest()[:16]
+
+                for item in reranked:
+                    vault_ref = item.get("metadata", {}).get("vault_ref")
+                    if not vault_ref:
+                        continue
+                    doc_id = item.get("metadata", {}).get("document_id")
+                    if not doc_id:
+                        # Try to find doc_id from vault_ref
+                        doc_row = await pool.fetchrow(
+                            "SELECT document_id FROM pii_vault.original_content WHERE id = $1",
+                            vault_ref,
+                        )
+                        doc_id = str(doc_row["document_id"]) if doc_row else None
+                    if not doc_id:
+                        continue
+
+                    classification = item.get("metadata", {}).get("classification", "internal")
+                    data_category = item.get("metadata", {}).get("data_category", "")
+
+                    vault_policy = await check_opa_vault_access(
+                        agent_role, purpose, classification,
+                        data_category, True, False,
+                    )
+                    if vault_policy["allowed"]:
+                        vault_data = await vault_lookup(doc_id, [item.get("metadata", {}).get("chunk_index", 0)])
+                        if vault_data:
+                            original = vault_data[0]
+                            redacted_text = redact_fields(
+                                original["original_text"],
+                                original["pii_entities"],
+                                set(vault_policy["fields_to_redact"]),
+                            )
+                            item["original_content"] = redacted_text
+                            item["vault_access"] = True
+
+                            await log_vault_access(
+                                agent_id, doc_id,
+                                item.get("metadata", {}).get("chunk_index"),
+                                purpose, token_hash,
+                            )
+
         await log_access(agent_id, agent_role, "search", collection, "search", "allow", {
             "query": query, "qdrant_results": len(results),
             "after_policy": len(filtered), "after_rerank": len(reranked),
+            "vault_access_requested": pii_token is not None,
         })
         return [TextContent(type="text",
             text=json.dumps({"results": reranked, "total": len(reranked)}, ensure_ascii=False, indent=2))]
