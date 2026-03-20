@@ -5,6 +5,7 @@ HTTP-Schnittstelle für die Ingestion-Pipeline.
 Wird vom MCP-Server über das Docker-Netzwerk aufgerufen.
 
 Endpoints:
+  POST /scan              — Text auf PII scannen (ohne Ingestion)
   POST /ingest            — Daten einspeisen (CSV, JSON, SQL-Dump, Git-Repo)
   POST /snapshots/create  — Wissens-Snapshot erstellen
   GET  /health            — Healthcheck
@@ -94,6 +95,17 @@ class SnapshotRequest(BaseModel):
     name: str = Field(description="Name des Snapshots")
     description: str = Field(default="", description="Beschreibung")
     created_by: str = Field(default="system", description="Erstellt von")
+
+
+class ScanRequest(BaseModel):
+    text: str = Field(min_length=1, description="Text der auf PII gescannt werden soll")
+    language: str = Field(default="de", description="Sprache des Textes (de, en)")
+
+
+class ScanResponse(BaseModel):
+    contains_pii: bool = Field(description="Ob PII erkannt wurde")
+    masked_text: str = Field(description="Text mit maskierten PII-Entitäten")
+    entity_types: list[str] = Field(description="Liste erkannter PII-Typen")
 
 
 # ── Hilfsfunktionen ─────────────────────────────────────────
@@ -430,6 +442,30 @@ async def ingest_text_chunks(
 
 
 # ── Endpoints ────────────────────────────────────────────────
+
+@app.post("/scan")
+async def scan(req: ScanRequest) -> ScanResponse:
+    """Scannt Text auf PII ohne Ingestion.
+
+    Wird vom MCP-Server aufgerufen, bevor Audit-Log-Einträge
+    mit Query-Text geschrieben werden.
+    """
+    scanner = get_scanner()
+    scan_result = scanner.scan_text(req.text, language=req.language)
+
+    if scan_result.contains_pii:
+        masked = scanner.mask_text(req.text, language=req.language)
+        entity_types = list(scan_result.entity_counts.keys())
+    else:
+        masked = req.text
+        entity_types = []
+
+    return ScanResponse(
+        contains_pii=scan_result.contains_pii,
+        masked_text=masked,
+        entity_types=entity_types,
+    )
+
 
 @app.get("/health")
 async def health():
