@@ -282,3 +282,46 @@ Folgende Themen bleiben danach priorisierte Phase-2-Arbeit:
 - SQL- und Cypher-Hardening ausserhalb des MVP-Suchpfads
 - vollstaendige Ingestion-API
 - Snapshot- und Evaluierungs-Nebenpfade
+
+---
+
+## Resolved — Sealed Vault (Dual Storage)
+
+Die folgenden Issues wurden im Rahmen der Sealed-Vault-Implementierung behoben:
+
+### RESOLVED: OPA `kb.privacy.pii_action` nie aufgerufen
+
+**Status:** RESOLVED — Die Ingestion-Pipeline ruft nun `kb.privacy.pii_action` auf,
+um bei PII-haltigen Daten die korrekte Aktion (pseudonymize, redact, block) zu bestimmen.
+Der dual_storage-Pfad nutzt das Ergebnis zur Steuerung der Vault-Einlagerung.
+
+### RESOLVED: `pseudonymize_text()` nie aufgerufen
+
+**Status:** RESOLVED — `pseudonymize_text()` wird jetzt im Dual-Storage-Pfad der
+Ingestion-Pipeline aufgerufen, um PII-Texte deterministisch zu pseudonymisieren
+bevor sie in Qdrant gespeichert werden. Originale gehen in den Sealed Vault.
+
+### RESOLVED: `pii_scan_log` nie geschrieben
+
+**Status:** RESOLVED — Die Ingestion-Pipeline schreibt nun bei jedem PII-Scan
+einen Eintrag in `pii_scan_log` mit Scan-Ergebnis, gefundenen Entity-Typen
+und der gewählten Aktion (pseudonymize/redact/block).
+
+### RESOLVED: `fields_to_redact` nie angewendet
+
+**Status:** RESOLVED — Der MCP-Server wendet `vault_fields_to_redact` aus der
+OPA-Policy an, wenn Vault-Originale abgerufen werden. Felder werden nach
+Purpose redaktiert, sodass nur zweckgebundene Informationen sichtbar sind.
+
+### RESOLVED: Bug in `pseudonymize_text()` — gleicher Pseudonym für alle Entities desselben Typs
+
+**Status:** RESOLVED — Der Bug, bei dem alle Entities desselben Typs (z.B. mehrere
+PERSON-Entities) den gleichen Pseudonym-Wert erhielten, wurde behoben. Die Funktion
+verwendet nun den Entity-Text als Teil des HMAC-Inputs, sodass jede Entity einen
+eindeutigen, aber deterministischen Pseudonym-Wert erhält.
+
+### RESOLVED: `data_subjects`, `datasets.pseudonymized` nie befüllt
+
+**Status:** RESOLVED — Der Vault-Pfad befüllt nun die relevanten Felder:
+`data_subjects` werden bei PII-Ingestion mit den erkannten Subjekt-Referenzen
+verknüpft, und der Pseudonymisierungsstatus wird korrekt nachgehalten.

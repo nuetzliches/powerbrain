@@ -23,7 +23,7 @@ Agent/Skill
     │           │           │           │
     ▼           ▼           ▼           ▼
  Qdrant    PostgreSQL     OPA       Reranker
- (Vektoren) (Daten+Meta) (Regeln)  (Cross-Enc.)
+ (Vektoren) (Daten+Meta+Vault) (Regeln)  (Cross-Enc.)
     │           │
     ▼           ▼
  Ollama     Forgejo (extern, bestehendes Setup)
@@ -55,7 +55,8 @@ kb-project/
 ├── init-db/
 │   ├── 001_schema.sql     ← Basis-Schema
 │   ├── 002_privacy.sql    ← Datenschutz-Erweiterung
-│   └── 003_knowledge_graph.sql ← Apache AGE Graph-Setup
+│   ├── 003_knowledge_graph.sql ← Apache AGE Graph-Setup
+│   └── 007_pii_vault.sql       ← Sealed Vault (PII-Originale + Mappings)
 ├── opa-policies/kb/
 │   ├── access.rego         ← Zugriffskontrolle
 │   ├── rules.rego          ← Business Rules
@@ -99,8 +100,21 @@ OPA prüft bei **jedem** MCP-Request die Klassifizierung.
 
 Wenn der Reranker ausfällt → Graceful Fallback auf Qdrant-Reihenfolge.
 
+### Sealed Vault (Dual Storage)
+PII-Daten werden in zwei Stufen gespeichert:
+1. **Qdrant** enthält nur pseudonymisierte Texte (deterministisch, per-Projekt-Salt)
+2. **pii_vault Schema** (PostgreSQL, RLS) speichert Originale + Mapping
+
+Zugriff auf Originale erfordert:
+- HMAC-signiertes Token mit Ablaufzeit
+- OPA-Policy-Check (`vault_access_allowed`)
+- Zweckbindung (nur erlaubte Purposes)
+- Felder werden nach Purpose redaktiert (`vault_fields_to_redact`)
+
+Art. 17 Löschung: Vault-Mapping löschen → Pseudonyme werden irreversibel (restrict-Stufe).
+
 ### MCP-Tools (10 Stück)
-- `search_knowledge` — Semantische Suche (Qdrant + Reranking)
+- `search_knowledge` — Semantische Suche (Qdrant + Reranking); optional: Original-PII via Vault-Token
 - `query_data` — Strukturierte Abfragen (PostgreSQL)
 - `get_rules` — Business Rules für Kontext abrufen
 - `check_policy` — OPA-Policy evaluieren
@@ -117,6 +131,9 @@ Wenn der Reranker ausfällt → Graceful Fallback auf Qdrant-Reihenfolge.
 - **Aufbewahrungsfristen** mit automatischer Löschung
 - **Recht auf Löschung** (Art. 17) mit Tracking-Tabelle
 - **Audit-Log** für jeden Zugriff auf PII-Daten
+- **Sealed Vault** für reversible Pseudonymisierung (Original im Vault, Pseudonym in Qdrant)
+- **HMAC-Token** für zeitlich begrenzten Vault-Zugriff
+- **2-Tier Löschung** (Art. 17): Vault löschen = Pseudonyme irreversibel
 
 ### Forgejo-Integration
 Kein eigener Git-Container — nutzt bestehendes Forgejo:
@@ -206,3 +223,4 @@ Details zu allen Bausteinen (Architektur, Metriken, Alerting, Tracing): siehe `d
 | PII-Scanner | Presidio | spaCy NER | Breite Entity-Erkennung + erweiterbar |
 | Git-Server | Forgejo (extern) | Gitea | Bereits vorhanden, API-kompatibel |
 | Relationale DB | PostgreSQL 16 | MySQL, SQLite | JSONB, GIN-Index, Extensions |
+| PII-Speicherung | Sealed Vault (Dual) | Destructive Masking, Full Encryption | Reversibel, suchbar, DSGVO-konform |
