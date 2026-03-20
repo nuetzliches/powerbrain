@@ -3,10 +3,11 @@ FROM python:3.12-slim
 WORKDIR /app
 
 RUN pip install --no-cache-dir \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
     fastapi \
     "uvicorn[standard]" \
     sentence-transformers \
-    torch --index-url https://download.pytorch.org/whl/cpu
+    torch
 
 COPY service.py .
 
