@@ -70,6 +70,40 @@ Der Seed ist in `docs/plans/2026-03-20-search-seed-notes.md` dokumentiert.
 Siehe `CLAUDE.md` für das vollständige Architekturkonzept,
 `docs/architektur.md` für die detaillierte technische Dokumentation.
 
+## Für Agenten
+
+Agenten greifen auf die Wissensdatenbank ausschließlich über den MCP-Server zu.
+Die vollständige Tool-Referenz mit Beispielen, Zugriffslogik und Troubleshooting liegt in:
+
+```
+skills/querying-knowledge-base/SKILL.md
+```
+
+### Nativer MCP-Zugang (empfohlen)
+
+MCP-Server in der Agent-Konfiguration registrieren:
+
+```json
+{
+  "mcpServers": {
+    "wissensdatenbank": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp"
+    }
+  }
+}
+```
+
+Danach stehen alle 14 KB-Tools direkt zur Verfügung (`search_knowledge`, `graph_query`, `check_policy`, etc.).
+
+### Als Skill installieren
+
+Für Agenten ohne nativen MCP-Zugang beschreibt der Skill den HTTP/curl-Zugriff.
+
+- **OpenCode**: `SKILL.md` nach `~/.config/opencode/skills/querying-knowledge-base/` kopieren
+- **Claude Code**: Als Custom Command in `.claude/commands/` ablegen
+- **Andere**: `SKILL.md` direkt lesen (z.B. via Raw-URL im Git-Repository)
+
 ## Lizenz
 
 Alle Eigenentwicklungen: MIT. Abhängigkeiten unter ihren jeweiligen Lizenzen.
