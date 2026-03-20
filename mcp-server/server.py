@@ -44,6 +44,7 @@ FORGEJO_URL   = os.getenv("FORGEJO_URL",   "http://forgejo.local:3000")
 FORGEJO_TOKEN = os.getenv("FORGEJO_TOKEN", "")
 RERANKER_URL  = os.getenv("RERANKER_URL",  "http://reranker:8082")
 RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
+INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8081")
 
 MCP_HOST       = os.getenv("MCP_HOST", "0.0.0.0")
 MCP_PORT       = int(os.getenv("MCP_PORT", "8080"))
@@ -200,13 +201,30 @@ async def log_access(agent_id: str, agent_role: str,
                      resource_type: str, resource_id: str,
                      action: str, policy_result: str,
                      context: dict | None = None):
+    contains_pii = False
+
+    if context and "query" in context:
+        # Scan query text for PII before storing
+        scan_resp = await http.post(f"{INGESTION_URL}/scan", json={
+            "text": context["query"],
+        })
+        scan_resp.raise_for_status()
+        scan_data = scan_resp.json()
+
+        contains_pii = scan_data["contains_pii"]
+        context["query"] = scan_data["masked_text"]
+        if contains_pii:
+            context["query_contains_pii"] = True
+            context["pii_entity_types"] = scan_data["entity_types"]
+
     pool = await get_pg_pool()
     await pool.execute("""
         INSERT INTO agent_access_log
-            (agent_id, agent_role, resource_type, resource_id, action, policy_result, request_context)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+            (agent_id, agent_role, resource_type, resource_id,
+             action, policy_result, request_context, contains_pii)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     """, agent_id, agent_role, resource_type, resource_id,
-       action, policy_result, json.dumps(context or {}))
+       action, policy_result, json.dumps(context or {}), contains_pii)
 
 
 # ── Vault Access ────────────────────────────────────────────
@@ -753,7 +771,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
                             )
 
         await log_access(agent_id, agent_role, "search", collection, "search", "allow", {
-            "query": query, "qdrant_results": len(results.points),
+            "query": arguments["query"], "qdrant_results": len(results.points),
             "after_policy": len(filtered), "after_rerank": len(reranked),
             "vault_access_requested": pii_token is not None,
         })
@@ -833,7 +851,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
     # ── ingest_data ──────────────────────────────────────────
     elif name == "ingest_data":
         try:
-            resp = await http.post("http://ingestion:8081/ingest", json={
+            resp = await http.post(f"{INGESTION_URL}/ingest", json={
                 "source": arguments["source"],
                 "source_type": arguments["source_type"],
                 "project": arguments.get("project"),
@@ -916,7 +934,10 @@ async def _dispatch(name: str, arguments: dict[str, Any],
                 })
 
         reranked = await rerank_results(query, code_results, top_n=top_k)
-        await log_access(agent_id, agent_role, "code", "knowledge_code", "search", "allow")
+        await log_access(agent_id, agent_role, "code", "knowledge_code", "search", "allow", {
+            "query": query, "qdrant_results": len(results.points),
+            "after_policy": len(code_results), "after_rerank": len(reranked),
+        })
         return [TextContent(type="text",
             text=json.dumps({"results": reranked, "total": len(reranked)}, ensure_ascii=False, indent=2))]
 
@@ -1130,7 +1151,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         description   = arguments.get("description", "")
 
         try:
-            resp = await http.post("http://ingestion:8081/snapshots/create", json={
+            resp = await http.post(f"{INGESTION_URL}/snapshots/create", json={
                 "name": snapshot_name, "description": description,
                 "created_by": agent_id,
             })
