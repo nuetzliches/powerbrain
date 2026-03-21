@@ -172,6 +172,8 @@ services:
       METRICS_PORT:    "9091"
       OTEL_ENABLED:    ${OTEL_ENABLED:-false}
       OTLP_ENDPOINT:   http://tempo:4317
+      SUMMARIZATION_MODEL:   ${SUMMARIZATION_MODEL:-qwen2.5:3b}
+      SUMMARIZATION_ENABLED: ${SUMMARIZATION_ENABLED:-true}
     depends_on:
       qdrant:
         condition: service_healthy

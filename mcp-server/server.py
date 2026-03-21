@@ -718,6 +718,17 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Required with pii_access_token: purpose for accessing PII data",
                     },
+                    "summarize": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Request a summary of results instead of raw chunks",
+                    },
+                    "summary_detail": {
+                        "type": "string",
+                        "enum": ["brief", "standard", "detailed"],
+                        "default": "standard",
+                        "description": "Summary detail level (only used when summarize=true)",
+                    },
                 },
                 "required": ["query"]
             }
@@ -810,6 +821,17 @@ async def list_tools() -> list[Tool]:
                     "repo":       {"type": "string"},
                     "language":   {"type": "string"},
                     "top_k":      {"type": "integer", "default": 5},
+                    "summarize": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Request a summary of results instead of raw chunks",
+                    },
+                    "summary_detail": {
+                        "type": "string",
+                        "enum": ["brief", "standard", "detailed"],
+                        "default": "standard",
+                        "description": "Summary detail level",
+                    },
                 },
                 "required": ["query"]
             }
@@ -1055,8 +1077,43 @@ async def _dispatch(name: str, arguments: dict[str, Any],
             "after_policy": len(filtered), "after_rerank": len(reranked),
             "vault_access_requested": pii_token is not None,
         })
+
+        # ── Summarization (policy-controlled) ──
+        summarize_requested = arguments.get("summarize", False)
+        summary_detail = arguments.get("summary_detail", "standard")
+        summary = None
+        summary_policy = "not_requested"
+
+        if SUMMARIZATION_ENABLED:
+            result_classification = "internal"
+            if reranked:
+                result_classification = reranked[0].get("metadata", {}).get("classification", "internal")
+
+            sum_policy = await check_opa_summarization_policy(agent_role, result_classification)
+
+            if sum_policy["required"]:
+                summary_detail = sum_policy["detail"]
+                chunks = [r["content"] for r in reranked if r.get("content")]
+                summary = await summarize_text(chunks, query, summary_detail)
+                summary_policy = "enforced"
+                if summary:
+                    for item in reranked:
+                        item.pop("content", None)
+            elif summarize_requested and sum_policy["allowed"]:
+                detail = sum_policy["detail"] if sum_policy["detail"] != "standard" else summary_detail
+                chunks = [r["content"] for r in reranked if r.get("content")]
+                summary = await summarize_text(chunks, query, detail)
+                summary_policy = "requested"
+            elif summarize_requested and not sum_policy["allowed"]:
+                summary_policy = "denied"
+
+        response_data = {"results": reranked, "total": len(reranked)}
+        if summary is not None:
+            response_data["summary"] = summary
+        response_data["summary_policy"] = summary_policy
+
         return [TextContent(type="text",
-            text=json.dumps({"results": reranked, "total": len(reranked)}, ensure_ascii=False, indent=2))]
+            text=json.dumps(response_data, ensure_ascii=False, indent=2))]
 
     # ── query_data ───────────────────────────────────────────
     elif name == "query_data":
@@ -1232,8 +1289,43 @@ async def _dispatch(name: str, arguments: dict[str, Any],
             "query": query, "qdrant_results": len(results.points),
             "after_policy": len(code_results), "after_rerank": len(reranked),
         })
+
+        # ── Summarization ──
+        summarize_requested = arguments.get("summarize", False)
+        summary_detail = arguments.get("summary_detail", "standard")
+        summary = None
+        summary_policy = "not_requested"
+
+        if SUMMARIZATION_ENABLED:
+            result_classification = "internal"
+            if reranked:
+                result_classification = reranked[0].get("metadata", {}).get("classification", "internal")
+
+            sum_policy = await check_opa_summarization_policy(agent_role, result_classification)
+
+            if sum_policy["required"]:
+                summary_detail = sum_policy["detail"]
+                chunks = [r["content"] for r in reranked if r.get("content")]
+                summary = await summarize_text(chunks, query, summary_detail)
+                summary_policy = "enforced"
+                if summary:
+                    for item in reranked:
+                        item.pop("content", None)
+            elif summarize_requested and sum_policy["allowed"]:
+                detail = sum_policy["detail"] if sum_policy["detail"] != "standard" else summary_detail
+                chunks = [r["content"] for r in reranked if r.get("content")]
+                summary = await summarize_text(chunks, query, detail)
+                summary_policy = "requested"
+            elif summarize_requested and not sum_policy["allowed"]:
+                summary_policy = "denied"
+
+        response_data = {"results": reranked, "total": len(reranked)}
+        if summary is not None:
+            response_data["summary"] = summary
+        response_data["summary_policy"] = summary_policy
+
         return [TextContent(type="text",
-            text=json.dumps({"results": reranked, "total": len(reranked)}, ensure_ascii=False, indent=2))]
+            text=json.dumps(response_data, ensure_ascii=False, indent=2))]
 
     # ── get_classification ───────────────────────────────────
     elif name == "get_classification":
