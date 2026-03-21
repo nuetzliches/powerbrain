@@ -1,25 +1,36 @@
 # LiteLLM Model Configuration for Powerbrain AI Provider Proxy
 # Docs: https://docs.litellm.ai/docs/proxy/configs
 #
-# Configure your LLM providers here. Each entry maps a model_name
-# (used in API requests) to a provider-specific model + credentials.
+# Each entry maps a model_name (used in API requests) to a
+# provider-specific model identifier + credentials.
 #
-# Examples:
-#
-# model_list:
-#   - model_name: "gpt-4o"
-#     litellm_params:
-#       model: "openai/gpt-4o"
-#       api_key: "os.environ/OPENAI_API_KEY"
-#
-#   - model_name: "claude-sonnet"
-#     litellm_params:
-#       model: "anthropic/claude-sonnet-4-20250514"
-#       api_key: "os.environ/ANTHROPIC_API_KEY"
-#
-#   - model_name: "local-llama"
-#     litellm_params:
-#       model: "ollama/llama3.2"
-#       api_base: "http://ollama:11434"
+# The proxy loads this file at startup via LITELLM_CONFIG env var.
+# If model_list is empty, the proxy falls back to direct LiteLLM
+# routing (model name = provider/model, e.g. "openai/gpt-4o").
 
-model_list: []
+model_list:
+  # ── Local Ollama (works out of the box with Docker Compose) ──
+  # - model_name: "llama"
+  #   litellm_params:
+  #     model: "ollama/llama3.2"
+  #     api_base: "http://ollama:11434"
+
+  # ── OpenAI ─────────────────────────────────────────────────
+  # - model_name: "gpt-4o"
+  #   litellm_params:
+  #     model: "openai/gpt-4o"
+  #     api_key: "os.environ/OPENAI_API_KEY"
+
+  # ── Anthropic ──────────────────────────────────────────────
+  # - model_name: "claude-sonnet"
+  #   litellm_params:
+  #     model: "anthropic/claude-sonnet-4-20250514"
+  #     api_key: "os.environ/ANTHROPIC_API_KEY"
+
+  # ── Existing LiteLLM Proxy ─────────────────────────────────
+  # If you already run a LiteLLM Proxy, point at it:
+  # - model_name: "gpt-4o"
+  #   litellm_params:
+  #     model: "openai/gpt-4o"
+  #     api_base: "http://your-litellm-proxy:4000"
+  #     api_key: "os.environ/LITELLM_PROXY_KEY"
