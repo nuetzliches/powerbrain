@@ -23,7 +23,7 @@ from qdrant_client.models import Filter, FieldCondition, MatchValue
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import Tool, TextContent
-from mcp.server.auth.provider import AccessToken
+from mcp.server.auth.provider import TokenVerifier, AccessToken
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend, RequireAuthMiddleware
 from mcp.server.auth.middleware.auth_context import AuthContextMiddleware, get_access_token
 from starlette.applications import Starlette
@@ -144,7 +144,7 @@ async def get_pg_pool() -> asyncpg.Pool:
 
 # ── API-Key-Authentifizierung ────────────────────────────────
 
-class ApiKeyVerifier:
+class ApiKeyVerifier(TokenVerifier):
     """TokenVerifier implementation that validates API keys against PostgreSQL."""
 
     async def verify_token(self, token: str) -> AccessToken | None:

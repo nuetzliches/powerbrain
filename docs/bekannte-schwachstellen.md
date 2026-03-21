@@ -246,7 +246,7 @@ Nach Behebung von P0-1 muss der Metrics-Port auf einen anderen Wert (z.B. 9091) 
 | Priorität | Issues | Aufwand |
 |-----------|--------|---------|
 | Sprint 1 (Blocker) | P0-1, P0-2, P0-3, P0-4 | ~3–5 Tage |
-| Sprint 2 (Security) | P1-1, P1-2, P1-3 | ~3–4 Tage |
+| ~~Sprint 2 (Security)~~ | ~~P1-1, P1-2, P1-3~~ | ~~resolved~~ |
 | Sprint 3 (Korrektheit) | P2-1, P2-3, P2-5 | ~2–3 Tage |
 | Backlog | P2-2, P2-4, P2-6, P3-x | iterativ |
 
