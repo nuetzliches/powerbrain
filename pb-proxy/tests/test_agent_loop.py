@@ -1,5 +1,6 @@
 """Tests for the agent loop (tool-call execution cycle)."""
 
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from agent_loop import AgentLoop, AgentLoopResult
@@ -145,3 +146,85 @@ async def test_unknown_tool_returns_error(mock_tool_injector):
     # Tool was not called on the injector (it's unknown)
     mock_tool_injector.call_tool.assert_not_called()
     assert result.iterations == 2
+
+
+@pytest.mark.asyncio
+async def test_tool_call_timeout_feeds_error_to_llm(mock_tool_injector):
+    """Tool timeout returns error JSON to LLM, loop continues."""
+    mock_tool_injector.call_tool = AsyncMock(side_effect=asyncio.TimeoutError())
+
+    tool_call = MagicMock()
+    tool_call.id = "call_timeout"
+    tool_call.function.name = "search_knowledge"
+    tool_call.function.arguments = '{"query": "slow"}'
+
+    first_response = MagicMock()
+    first_response.choices = [MagicMock()]
+    first_response.choices[0].message.tool_calls = [tool_call]
+    first_response.choices[0].message.role = "assistant"
+    first_response.choices[0].message.content = None
+    first_response.choices[0].finish_reason = "tool_calls"
+
+    second_response = MagicMock()
+    second_response.choices = [MagicMock()]
+    second_response.choices[0].message.tool_calls = None
+    second_response.choices[0].finish_reason = "stop"
+    second_response.usage = MagicMock(prompt_tokens=30, completion_tokens=20, total_tokens=50)
+
+    with patch("agent_loop.litellm") as mock_litellm:
+        mock_litellm.acompletion = AsyncMock(
+            side_effect=[first_response, second_response]
+        )
+
+        loop = AgentLoop(mock_tool_injector, max_iterations=5)
+        result = await loop.run(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Slow query"}],
+            tools=[],
+        )
+
+    assert result.iterations == 2
+    # Tool call was attempted but timed out — not counted as executed
+    assert result.tool_calls_executed == 0
+
+
+@pytest.mark.asyncio
+async def test_tool_call_exception_feeds_error_to_llm(mock_tool_injector):
+    """Tool exception returns error JSON to LLM, loop continues."""
+    mock_tool_injector.call_tool = AsyncMock(
+        side_effect=RuntimeError("connection refused")
+    )
+
+    tool_call = MagicMock()
+    tool_call.id = "call_error"
+    tool_call.function.name = "search_knowledge"
+    tool_call.function.arguments = '{"query": "broken"}'
+
+    first_response = MagicMock()
+    first_response.choices = [MagicMock()]
+    first_response.choices[0].message.tool_calls = [tool_call]
+    first_response.choices[0].message.role = "assistant"
+    first_response.choices[0].message.content = None
+    first_response.choices[0].finish_reason = "tool_calls"
+
+    second_response = MagicMock()
+    second_response.choices = [MagicMock()]
+    second_response.choices[0].message.tool_calls = None
+    second_response.choices[0].finish_reason = "stop"
+    second_response.usage = MagicMock(prompt_tokens=30, completion_tokens=20, total_tokens=50)
+
+    with patch("agent_loop.litellm") as mock_litellm:
+        mock_litellm.acompletion = AsyncMock(
+            side_effect=[first_response, second_response]
+        )
+
+        loop = AgentLoop(mock_tool_injector, max_iterations=5)
+        result = await loop.run(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Broken query"}],
+            tools=[],
+        )
+
+    assert result.iterations == 2
+    # Tool call failed — not counted as executed
+    assert result.tool_calls_executed == 0

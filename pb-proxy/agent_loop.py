@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 import litellm
 from tool_injection import ToolInjector
+import config
 
 log = logging.getLogger("pb-proxy.loop")
 
@@ -28,9 +29,15 @@ class AgentLoopResult:
 class AgentLoop:
     """Executes the tool-call loop between LLM and MCP server."""
 
-    def __init__(self, tool_injector: ToolInjector, max_iterations: int = 10) -> None:
+    def __init__(
+        self,
+        tool_injector: ToolInjector,
+        max_iterations: int = 10,
+        tool_call_timeout: int | None = None,
+    ) -> None:
         self._injector = tool_injector
         self._max_iterations = max_iterations
+        self._tool_call_timeout = tool_call_timeout or config.TOOL_CALL_TIMEOUT
 
     async def run(
         self,
@@ -85,6 +92,8 @@ class AgentLoop:
                 try:
                     arguments = json.loads(tc.function.arguments)
                 except json.JSONDecodeError:
+                    log.warning("Invalid JSON in tool arguments for %s: %s",
+                                tool_name, tc.function.arguments)
                     arguments = {}
 
                 if tool_name in self._injector.tool_names:
@@ -92,13 +101,14 @@ class AgentLoop:
                     try:
                         tool_result = await asyncio.wait_for(
                             self._injector.call_tool(tool_name, arguments),
-                            timeout=30,
+                            timeout=self._tool_call_timeout,
                         )
                         result.tool_calls_executed += 1
                         result.tools_used.append(tool_name)
                     except asyncio.TimeoutError:
                         tool_result = json.dumps({
-                            "error": f"Tool '{tool_name}' timed out after 30s"
+                            "error": f"Tool '{tool_name}' timed out after "
+                                     f"{self._tool_call_timeout}s"
                         })
                         log.warning("Tool call timed out: %s", tool_name)
                     except Exception as e:
