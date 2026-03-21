@@ -74,6 +74,14 @@ powerbrain/
 │   ├── tempo.yml           ← Distributed tracing config
 │   ├── grafana-dashboards/ ← Provisioned dashboards
 │   └── grafana-datasources/← Provisioned data sources
+├── pb-proxy/
+│   ├── proxy.py           ← Main FastAPI application
+│   ├── tool_injection.py  ← MCP tool discovery + merge
+│   ├── agent_loop.py      ← Tool-call execution loop
+│   ├── config.py          ← Configuration
+│   ├── litellm_config.yaml← LLM provider config
+│   ├── Dockerfile
+│   └── requirements.txt
 └── docs/
     ├── what-is-powerbrain.md       ← Detailed overview and positioning
     ├── deployment.md               ← Dev, prod, TLS, Docker Secrets guide
@@ -100,6 +108,7 @@ powerbrain/
 | prometheus    | 9090  | Prometheus                         | Metrics collection               |
 | grafana       | 3001  | Grafana                            | Dashboards + visualization       |
 | tempo         | 4317  | Grafana Tempo                      | Distributed tracing              |
+| pb-proxy      | 8090  | Python, FastAPI, LiteLLM, MCP SDK    | AI Provider Proxy (optional)     |
 
 ## Key Concepts
 
@@ -181,6 +190,18 @@ No separate git container — uses existing Forgejo:
 - `kb-schemas` repo → JSON schema validation
 - `kb-docs` + project repos → Ingestion pipeline
 
+### AI Provider Proxy (optional)
+Optional gateway activated via `docker compose --profile proxy up`.
+Sits between AI consumers and LLM providers:
+1. Client sends OpenAI-compatible request to proxy (port 8090)
+2. Proxy injects Powerbrain MCP tools into `tools[]` array
+3. Forwards augmented request to LLM (via LiteLLM, 100+ providers)
+4. When LLM returns tool calls → proxy executes against MCP server
+5. Repeats until final response, then returns to client
+
+OPA policies (`kb.proxy`) control: provider access, required tools, max iterations.
+Configuration: `pb-proxy/litellm_config.yaml` for LLM provider setup.
+
 ## Development
 
 ### Prerequisites
@@ -247,6 +268,7 @@ cd mcp-server && python3 -m pytest tests/ -v
 6. ✅ **Context Summarization** — OPA-controlled, Ollama-powered (`kb.summarization` policy)
 7. ✅ **Docker Secrets** — `/run/secrets/` with env var fallback
 8. ✅ **TLS Profile** — Optional Caddy reverse proxy (`docker compose --profile tls up`)
+9. ✅ **AI Provider Proxy** — Optional LLM gateway with transparent tool injection (`docker compose --profile proxy`)
 
 Details on all features: see `docs/architektur.md`
 

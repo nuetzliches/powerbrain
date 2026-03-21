@@ -47,6 +47,8 @@ Agent / Skill
 
 🏠 **Self-Hosted & GDPR-Native** — Everything runs on your infrastructure. No external API calls for embeddings, search, or summarization. Docker Compose up and you're running.
 
+🔀 **AI Provider Proxy** — Optional gateway between your AI consumers and their LLM providers. Transparently injects Powerbrain tools into every LLM request and executes tool calls automatically. Your teams use any LLM they prefer (100+ providers via LiteLLM); Powerbrain ensures they always query policy-checked enterprise context. Activate with `docker compose --profile proxy up`.
+
 ## 🚀 Quick Start
 
 ```bash
@@ -81,6 +83,18 @@ Connect your agent:
 ```
 
 That's it. Your agent now has access to `search_knowledge`, `query_data`, `graph_query`, and 7 more tools.
+
+### Optional: AI Provider Proxy
+
+```bash
+# Configure your LLM provider(s) in pb-proxy/litellm_config.yaml
+docker compose --profile proxy up -d
+
+# Now use OpenAI-compatible API with automatic Powerbrain tools:
+curl http://localhost:8090/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"What are our GDPR deletion policies?"}]}'
+```
 
 ## 🔍 How It Works
 

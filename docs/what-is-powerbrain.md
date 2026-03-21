@@ -79,6 +79,16 @@ Works with any MCP-compatible agent — Claude, OpenCode, or custom implementati
 
 Everything runs on your infrastructure as Docker containers. No external API calls for embeddings (Ollama), search (Qdrant), policies (OPA), or summarization (Ollama). Optional TLS via Caddy reverse proxy profile.
 
+### 🔀 AI Provider Proxy
+
+Optional gateway that sits between AI consumers and LLM providers. Injects Powerbrain tools transparently into every request, executes tool calls automatically, and returns the final response. Supports 100+ LLM providers via [LiteLLM](https://github.com/BerriAI/litellm).
+
+Two access patterns:
+1. **Direct MCP** — Agent speaks MCP natively (existing, standard)
+2. **Via Proxy** — Agent speaks OpenAI-compatible API, proxy handles MCP transparently
+
+Activate with `docker compose --profile proxy up`. OPA policies control which tools are mandatory, which providers are allowed, and iteration limits.
+
 ## Architecture Overview
 
 ```
@@ -115,6 +125,7 @@ Agent / Skill
 | **LangChain / LlamaIndex** | Frameworks, not products; no built-in compliance | Turnkey Docker deployment with GDPR built in |
 | **Enterprise search** (Elastic, Coveo) | Not MCP-native, not agent-oriented | MCP-first, designed for AI agent consumption |
 | **Manual RAG pipelines** | Custom code, no standardization | Standard MCP interface, policy-as-code |
+| **DIY proxy / gateway** | No MCP awareness, no tool enforcement | Transparent tool injection with policy control |
 
 ## Getting Started
 
