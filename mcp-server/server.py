@@ -1259,5 +1259,16 @@ if __name__ == "__main__":
         lifespan=lambda app: session_manager.run(),
     )
 
-    log.info("MCP Streamable HTTP auf %s:%s%s", MCP_HOST, MCP_PORT, MCP_PATH)
+    # ── Auth-Middleware (inside-out: last applied = outermost) ──
+    verifier = ApiKeyVerifier()
+    # AuthContextMiddleware: stores authenticated user in contextvars
+    app = AuthContextMiddleware(app)
+    if AUTH_REQUIRED:
+        # RequireAuthMiddleware: rejects unauthenticated requests with 401
+        app = RequireAuthMiddleware(app, required_scopes=[])
+    # AuthenticationMiddleware: extracts Bearer token, calls verifier
+    app = AuthenticationMiddleware(app, backend=BearerAuthBackend(verifier))
+
+    mode = "enforced" if AUTH_REQUIRED else "optional"
+    log.info("MCP Streamable HTTP auf %s:%s%s (auth: %s)", MCP_HOST, MCP_PORT, MCP_PATH, mode)
     uvicorn.run(app, host=MCP_HOST, port=MCP_PORT)
