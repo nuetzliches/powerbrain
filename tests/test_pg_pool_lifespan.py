@@ -50,6 +50,25 @@ class TestPGPoolLifespan(unittest.TestCase):
         self.assertIn("http.aclose()", lifespan_section,
                        "Lifespan should close the httpx client on shutdown")
 
+    def test_lifespan_bypass_exists(self):
+        """LifespanBypass must route lifespan events past auth middleware."""
+        self.assertIn("class LifespanBypass", self.source,
+                       "LifespanBypass class must exist to bypass auth on lifespan events")
+        bypass_start = self.source.index("class LifespanBypass")
+        bypass_section = self.source[bypass_start:bypass_start + 400]
+        self.assertIn('"lifespan"', bypass_section,
+                       "LifespanBypass must check for lifespan scope type")
+        self.assertIn("starlette_app", bypass_section,
+                       "LifespanBypass must route lifespan to starlette_app (no auth)")
+
+    def test_lifespan_bypass_is_final_app(self):
+        """LifespanBypass must be the app passed to uvicorn.run."""
+        # After LifespanBypass is defined, app must be reassigned to it
+        bypass_start = self.source.index("class LifespanBypass")
+        after_bypass = self.source[bypass_start:]
+        self.assertIn("app = LifespanBypass()", after_bypass,
+                       "app must be set to LifespanBypass() before uvicorn.run")
+
 
 if __name__ == "__main__":
     unittest.main()

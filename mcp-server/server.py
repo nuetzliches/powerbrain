@@ -1300,6 +1300,7 @@ if __name__ == "__main__":
     )
 
     # ── Auth-Middleware (inside-out: last applied = outermost) ──
+    starlette_app = app  # keep reference for lifespan bypass
     verifier = ApiKeyVerifier()
     # AuthContextMiddleware: stores authenticated user in contextvars
     app = AuthContextMiddleware(app)
@@ -1308,6 +1309,21 @@ if __name__ == "__main__":
         app = RequireAuthMiddleware(app, required_scopes=[])
     # AuthenticationMiddleware: extracts Bearer token, calls verifier
     app = AuthenticationMiddleware(app, backend=BearerAuthBackend(verifier))
+
+    # ── Lifespan Bypass ──
+    # RequireAuthMiddleware rejects ASGI lifespan events (no user in scope).
+    # Route lifespan directly to the Starlette app, HTTP through auth chain.
+    auth_app = app
+
+    class LifespanBypass:
+        """Routes lifespan events past auth middleware to Starlette."""
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] == "lifespan":
+                await starlette_app(scope, receive, send)
+            else:
+                await auth_app(scope, receive, send)
+
+    app = LifespanBypass()
 
     mode = "enforced" if AUTH_REQUIRED else "optional"
     log.info("MCP Streamable HTTP auf %s:%s%s (auth: %s)", MCP_HOST, MCP_PORT, MCP_PATH, mode)
