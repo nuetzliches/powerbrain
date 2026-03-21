@@ -6,7 +6,8 @@ Wird vom MCP-Server über das Docker-Netzwerk aufgerufen.
 
 Endpoints:
   POST /scan              — Text auf PII scannen (ohne Ingestion)
-  POST /ingest            — Daten einspeisen (CSV, JSON, SQL-Dump, Git-Repo)
+  POST /ingest            — Text einspeisen (full privacy pipeline)
+  POST /ingest/chunks     — Vorverarbeitete Chunks einspeisen (Adapter, ingest_text_chunks pipeline)
   POST /snapshots/create  — Wissens-Snapshot erstellen
   GET  /health            — Healthcheck
 """
@@ -39,13 +40,7 @@ RERANKER_URL = os.getenv("RERANKER_URL",  "http://reranker:8082")
 
 EMBEDDING_MODEL = "nomic-embed-text"
 
-# Collection-Mapping: source_type → Qdrant-Collection
-COLLECTION_MAP = {
-    "csv":      "knowledge_general",
-    "json":     "knowledge_general",
-    "sql_dump": "knowledge_general",
-    "git_repo": "knowledge_code",
-}
+DEFAULT_COLLECTION = "knowledge_general"
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("kb-ingestion")
@@ -83,12 +78,12 @@ async def shutdown():
 # ── Request/Response-Modelle ────────────────────────────────
 
 class IngestRequest(BaseModel):
-    source: str = Field(description="Quelle: Pfad, URL oder Inline-Daten")
-    source_type: str = Field(description="csv, json, sql_dump, git_repo")
-    collection: str | None = Field(default=None, description="Qdrant-Collection (Override, sonst via source_type)")
-    project: str | None = Field(default=None, description="Projekt-Zuordnung")
-    classification: str = Field(default="internal", description="Datenklassifizierung")
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    source: str
+    source_type: str | None = "text"
+    collection: str | None = None
+    project: str | None = None
+    classification: str = "internal"
+    metadata: dict[str, Any] = {}
 
 
 class SnapshotRequest(BaseModel):
@@ -106,6 +101,16 @@ class ScanResponse(BaseModel):
     contains_pii: bool = Field(description="Ob PII erkannt wurde")
     masked_text: str = Field(description="Text mit maskierten PII-Entitäten")
     entity_types: list[str] = Field(description="Liste erkannter PII-Typen")
+
+
+class ChunkIngestRequest(BaseModel):
+    """Request for adapter-based chunk ingestion. Internal use only."""
+    chunks: list[str]
+    project: str
+    collection: str = "knowledge_general"
+    classification: str = "internal"
+    metadata: dict[str, Any] = {}
+    source: str
 
 
 # ── Hilfsfunktionen ─────────────────────────────────────────
@@ -500,51 +505,31 @@ async def health():
 
 @app.post("/ingest")
 async def ingest(req: IngestRequest):
-    """
-    Speist Daten in die Wissensdatenbank ein.
-    Aktuell unterstützt: Inline-Text über das 'source'-Feld.
-    CSV/JSON/git_repo: Stub mit Platzhalter-Logik.
-    """
-    collection = req.collection or COLLECTION_MAP.get(req.source_type, "knowledge_general")
+    collection = req.collection or DEFAULT_COLLECTION
+    chunks = chunk_text(req.source)
+    result = await ingest_text_chunks(
+        chunks=chunks,
+        collection=collection,
+        source=f"{req.source_type or 'text'}:inline",
+        classification=req.classification,
+        project=req.project,
+        metadata=req.metadata,
+    )
+    return result
 
-    if req.source_type in ("csv", "json"):
-        # Für CSV/JSON: source als Inline-Daten oder Pfad behandeln
-        # Aktuell: source direkt als Text chunken (MVP)
-        chunks = chunk_text(req.source)
-        result = await ingest_text_chunks(
-            chunks=chunks,
-            collection=collection,
-            source=f"{req.source_type}:inline",
-            classification=req.classification,
-            project=req.project,
-            metadata=req.metadata,
-        )
-        return result
 
-    elif req.source_type == "git_repo":
-        # Git-Repo Ingestion: Platzhalter für spätere Implementierung
-        # TODO: git clone → Dateien lesen → chunken → vektorisieren
-        return {
-            "status": "stub",
-            "message": f"Git-Repo Ingestion für '{req.source}' noch nicht implementiert. "
-                       "Wird in der nächsten Iteration hinzugefügt.",
-            "collection": collection,
-        }
-
-    elif req.source_type == "sql_dump":
-        # SQL-Dump Ingestion: Platzhalter
-        return {
-            "status": "stub",
-            "message": f"SQL-Dump Ingestion für '{req.source}' noch nicht implementiert.",
-            "collection": collection,
-        }
-
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unbekannter source_type: '{req.source_type}'. "
-                   f"Erlaubt: csv, json, sql_dump, git_repo",
-        )
+@app.post("/ingest/chunks")
+async def ingest_chunks(req: ChunkIngestRequest):
+    """Ingest pre-processed chunks from adapters. Full privacy pipeline applies."""
+    result = await ingest_text_chunks(
+        chunks=req.chunks,
+        collection=req.collection,
+        source=req.source,
+        classification=req.classification,
+        project=req.project,
+        metadata=req.metadata,
+    )
+    return result
 
 
 @app.post("/snapshots/create")

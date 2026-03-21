@@ -686,12 +686,13 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "source":         {"type": "string"},
-                    "source_type":    {"type": "string", "enum": ["csv", "json", "sql_dump", "git_repo"]},
+                    "source_type":    {"type": "string", "default": "text",
+                                       "description": "Quelltyp (text). Weitere Typen via Adapter."},
                     "project":        {"type": "string"},
                     "classification": {"type": "string", "default": "internal"},
                     "metadata":       {"type": "object"},
                 },
-                "required": ["source", "source_type"]
+                "required": ["source"]
             }
         ),
         Tool(
@@ -1051,7 +1052,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         try:
             resp = await http.post(f"{INGESTION_URL}/ingest", json={
                 "source": arguments["source"],
-                "source_type": arguments["source_type"],
+                "source_type": arguments.get("source_type", "text"),
                 "project": arguments.get("project"),
                 "classification": arguments.get("classification", "internal"),
                 "metadata": arguments.get("metadata", {}),
@@ -1062,7 +1063,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
             result = {"error": f"Ingestion fehlgeschlagen: {str(e)}"}
 
         await log_access(agent_id, agent_role, "ingestion", arguments["source"],
-                         "ingest", "allow", {"source_type": arguments["source_type"]})
+                         "ingest", "allow", {"source_type": arguments.get("source_type", "text")})
         return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 
     # ── list_datasets ────────────────────────────────────────
