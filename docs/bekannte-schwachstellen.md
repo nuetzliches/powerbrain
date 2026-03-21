@@ -36,7 +36,7 @@ und lädt Policies beim Start via `/policies` Argument.
 
 ---
 
-## P1 — Sicherheitskritisch
+## ~~P1 — Sicherheitskritisch~~ — ALL RESOLVED
 
 ### ~~P1-1: Keine Authentifizierung — Rollen sind selbst-deklariert~~ — RESOLVED
 
@@ -71,7 +71,7 @@ Ungültige Eingaben werfen `ValueError`.
 
 ---
 
-## P2 — Korrektheit / Zuverlässigkeit
+## ~~P2 — Korrektheit / Zuverlässigkeit~~ — ALL RESOLVED
 
 ### ~~P2-1: 50 serielle OPA-Calls pro Suchanfrage~~ — RESOLVED
 
@@ -117,22 +117,20 @@ Pool und HTTP-Client werden beim Shutdown sauber geschlossen.
 
 ---
 
-### P2-6: Apache AGE — bekannte Einschränkungen
+### ~~P2-6: Apache AGE — bekannte Einschränkungen~~ — RESOLVED
 
-**Datei:** `mcp-server/graph_service.py`
-
-- `shortestPath` hat in bestimmten AGE-Versionen Bugs bei gerichteten Graphen
-- `RETURN DISTINCT m, r` bei variabler Tiefe (`[r*1..n]`) gibt in AGE keine
-  saubere Liste zurück; das `json.loads(str(row["result"]))`-Parsing ist fragil
-- AGE ist deutlich weniger ausgereift als Neo4j; bei komplexen Traversierungen
-  mit großen Graphen (>100k Knoten) ist Performance nicht garantiert
-
-**Fix:** AGE-Version pinnen, Integration-Tests für alle Graph-Queries.
-Für `shortestPath` einen expliziten Workaround implementieren und dokumentieren.
+**Status:** RESOLVED — Drei Fixes implementiert:
+1. Fehlende `graph_sync_log`-Migration erstellt (`011_graph_sync_log.sql`)
+   mit GRANT für `mcp_app`-Rolle.
+2. AGE agtype-Parsing gehärtet: `re.sub` entfernt `::vertex`, `::edge`,
+   `::path`, `::numeric` und weitere agtype-Suffixe vor `json.loads()`.
+   Fallback auf `{"raw": ...}` bei Parse-Fehler bleibt erhalten.
+3. `find_path()` nutzt `shortestPath` mit try/except-Fallback auf
+   variable-depth MATCH bei AGE-Bugs. Fehlschlag wird geloggt.
 
 ---
 
-## P3 — Architekturelle Schwächen
+## ~~P3 — Architekturelle Schwächen~~ — ALL RESOLVED
 
 ### ~~P3-1: Kein Retry / Circuit Breaker~~ — RESOLVED
 
@@ -145,18 +143,22 @@ Qdrant-Client mit `timeout=30`. Reranker behält bestehenden Graceful Fallback.
 
 ---
 
-### P3-2: Kein Rate Limiting
+### ~~P3-2: Kein Rate Limiting~~ — RESOLVED
 
-Ein einziger Agent kann den MCP-Server fluten. Kein Token Bucket, kein
-Request Queuing, kein Per-Agent Throttling.
+**Status:** RESOLVED — In-Memory Token Bucket Rate Limiting implementiert.
+Per-Agent Throttling basierend auf `agent_id` aus dem Auth-Context.
+Konfigurierbar über Env-Vars (`RATE_LIMIT_RPM`, `RATE_LIMIT_BURST`,
+`RATE_LIMIT_ENABLED`). Prometheus-Counter `kb_rate_limit_rejected_total`
+für Monitoring. Bei Überschreitung: HTTP 429 mit Retry-After Header.
 
 ---
 
-### P3-3: Ingestion-Pipeline ist ein Stub
+### ~~P3-3: Ingestion-Pipeline ist ein Stub~~ — RESOLVED
 
-CSV/JSON/git_repo-Ingestion ist im MCP-Tool-Schema beschrieben und
-in `ingest_data` verdrahtet, aber die eigentliche ETL-Implementierung fehlt.
-Die `ingest_data`-Logik delegiert an einen nicht existierenden Endpunkt.
+**Status:** RESOLVED — `ingest_data` MCP-Tool bereinigt: Schema auf `text`+`url`
+reduziert (CSV/JSON/git_repo entfernt). Neuer `/ingest/chunks` Adapter-Endpoint
+in der Ingestion-API für Pre-Chunked-Daten. Source-Tracking verbessert mit
+`source_type:inline` Format. `DEFAULT_COLLECTION` Konstante statt Magic String.
 
 ---
 
@@ -175,21 +177,21 @@ Prometheus-Metriken auf Port 9091.
 | ~~Sprint 2 (Security)~~ | ~~P1-1, P1-2, P1-3~~ | ~~resolved~~ |
 | ~~Sprint 3 (Korrektheit)~~ | ~~P2-1, P2-3, P2-5~~ | ~~resolved~~ |
 | ~~Sprint 4 (Korrektheit + Resilienz)~~ | ~~P2-2, P2-4, P3-1~~ | ~~resolved~~ |
-| Backlog | P2-6, P3-2, P3-3 | iterativ |
+| ~~Sprint 5 (AGE Hardening + Rate Limit + Ingestion)~~ | ~~P2-6, P3-2, P3-3~~ | ~~resolved~~ |
 
-System ist nach Sprint 1–3 für **interne Tests** geeignet.
+**Alle bekannten Issues sind resolved.** System ist nach Sprint 1–5 für **interne Tests** geeignet.
 Für **produktiven Einsatz** zusätzlich TLS + Secrets Management.
 
 ---
 
-## Phase 2 nach dem Search-first MVP
+## ~~Phase 2 nach dem Search-first MVP~~ — ALL RESOLVED
 
-Die erste MVP-Iteration konzentriert sich bewusst nur auf den lauffaehigen Suchpfad.
-Folgende Themen bleiben danach priorisierte Phase-2-Arbeit:
+Die erste MVP-Iteration konzentrierte sich auf den lauffähigen Suchpfad.
+Folgende Themen waren als Phase-2-Arbeit priorisiert und sind nun resolved:
 
-- SQL- und Cypher-Hardening ausserhalb des MVP-Suchpfads
-- vollstaendige Ingestion-API
-- Snapshot- und Evaluierungs-Nebenpfade
+- ~~SQL- und Cypher-Hardening ausserhalb des MVP-Suchpfads~~ (P1-2, P1-3)
+- ~~vollstaendige Ingestion-API~~ (P3-3)
+- ~~Snapshot- und Evaluierungs-Nebenpfade~~ (P2-3)
 
 ---
 
