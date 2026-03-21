@@ -14,10 +14,10 @@ class SearchFirstMvpDocsTests(unittest.TestCase):
         self.assertIn("MVP-Status", readme)
 
     def test_phase_two_boundary_is_documented(self) -> None:
-        weaknesses = (ROOT / "docs" / "bekannte-schwachstellen.md").read_text()
+        weaknesses = (ROOT / "docs" / "KNOWN_ISSUES.md").read_text()
 
         self.assertIn("Phase 2", weaknesses)
-        self.assertIn("Authentifizierung", weaknesses)
+        self.assertIn("authentication", weaknesses.lower())
 
 
 if __name__ == "__main__":

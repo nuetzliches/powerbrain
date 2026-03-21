@@ -64,7 +64,7 @@ kb-project/
 └── docs/
     ├── what-is-powerbrain.md       ← Key features, problem/solution overview (English)
     ├── architektur.md              ← Detaillierte Doku (inkl. Bausteine 3-5, DSGVO §4.5)
-    ├── bekannte-schwachstellen.md  ← P0–P3 Issues, Priorisierung, Fix-Hinweise
+    ├── KNOWN_ISSUES.md            ← Resolved issues archive (P0–P3)
     ├── technologie-entscheidungen.md ← VLM, vLLM, Git-Adapter, OTel, Adapter-Schicht
     ├── skalierbarkeit.md           ← Load Balancing, Caching, Skalierungsstufen
     └── dsgvo-externe-ki-dienste.md ← Rechtliche Einschätzung claude.ai / externe LLMs
