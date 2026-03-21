@@ -28,9 +28,22 @@ model_list:
   #     api_key: "os.environ/ANTHROPIC_API_KEY"
 
   # ── Existing LiteLLM Proxy ─────────────────────────────────
-  # If you already run a LiteLLM Proxy, point at it:
+  # If you already run a LiteLLM Proxy server, route through it.
+  # pb-proxy adds Powerbrain tool injection on top of your
+  # existing routing, fallbacks, and rate limits.
+  #
   # - model_name: "gpt-4o"
   #   litellm_params:
   #     model: "openai/gpt-4o"
   #     api_base: "http://your-litellm-proxy:4000"
   #     api_key: "os.environ/LITELLM_PROXY_KEY"
+  #
+  # - model_name: "claude-sonnet"
+  #   litellm_params:
+  #     model: "openai/claude-sonnet"
+  #     api_base: "http://your-litellm-proxy:4000"
+  #     api_key: "os.environ/LITELLM_PROXY_KEY"
+  #
+  # Note: Use "openai/" prefix for all models routed through a
+  # LiteLLM Proxy, since the proxy exposes an OpenAI-compatible API.
+  # The actual provider mapping is handled by your LiteLLM Proxy.
