@@ -6,6 +6,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+# Mock sentence_transformers before any test imports service.py
+if "sentence_transformers" not in sys.modules:
+    sys.modules["sentence_transformers"] = MagicMock()
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
