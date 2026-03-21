@@ -5,7 +5,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY server.py graph_service.py ./
+COPY *.py ./
 
 EXPOSE 8080
 
