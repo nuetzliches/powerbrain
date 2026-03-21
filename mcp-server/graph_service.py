@@ -262,16 +262,33 @@ async def find_path(pool: asyncpg.Pool,
                     from_label: str, from_id: str,
                     to_label: str, to_id: str,
                     max_depth: int = 5) -> list[dict]:
-    """Findet den kürzesten Pfad zwischen zwei Knoten."""
+    """Findet den kürzesten Pfad zwischen zwei Knoten.
+
+    Versucht zuerst shortestPath (AGE built-in). Falls das fehlschlägt
+    (bekannter AGE-Bug bei gerichteten Graphen), Fallback auf iterativen
+    Pfad via variable-depth MATCH.
+    """
     _require_identifier(from_label, "from_label")
     _require_identifier(to_label, "to_label")
-    cypher = (
-        f"MATCH p = shortestPath("
-        f"(a:{from_label} {{id: {_escape_cypher_value(from_id)}}})-[*..{max_depth}]-"
-        f"(b:{to_label} {{id: {_escape_cypher_value(to_id)}}}))"
-        f" RETURN p"
+    try:
+        cypher = (
+            f"MATCH p = shortestPath("
+            f"(a:{from_label} {{id: {_escape_cypher_value(from_id)}}})-[*..{max_depth}]-"
+            f"(b:{to_label} {{id: {_escape_cypher_value(to_id)}}}))"
+            f" RETURN p"
+        )
+        return await _execute_cypher(pool, cypher)
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
+        log.warning("shortestPath fehlgeschlagen, verwende Fallback: %s", e)
+
+    # Fallback: variable-depth MATCH without shortestPath
+    cypher_fallback = (
+        f"MATCH (a:{from_label} {{id: {_escape_cypher_value(from_id)}}})"
+        f"-[r*1..{max_depth}]-"
+        f"(b:{to_label} {{id: {_escape_cypher_value(to_id)}}})"
+        f" RETURN a, r, b LIMIT 1"
     )
-    return await _execute_cypher(pool, cypher)
+    return await _execute_cypher(pool, cypher_fallback)
 
 
 async def get_subgraph(pool: asyncpg.Pool, label: str, node_id: str,
