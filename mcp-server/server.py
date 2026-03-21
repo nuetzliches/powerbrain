@@ -695,8 +695,19 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-    agent_id   = arguments.get("agent_id", "unknown")
-    agent_role = arguments.get("agent_role", "unknown")
+    # ── Identity from auth token (preferred) or arguments (legacy) ──
+    access_token = get_access_token()
+    if access_token is not None:
+        agent_id = access_token.client_id
+        agent_role = access_token.scopes[0] if access_token.scopes else "unknown"
+    elif not AUTH_REQUIRED:
+        # Legacy fallback: self-declared identity (only when auth is optional)
+        agent_id = arguments.get("agent_id", "unknown")
+        agent_role = arguments.get("agent_role", "unknown")
+        log.warning("Unauthenticated request for tool '%s' from agent_id='%s'", name, agent_id)
+    else:
+        # Should not reach here (RequireAuthMiddleware already rejected)
+        return [TextContent(type="text", text=json.dumps({"error": "authentication required"}))]
 
     t_start = time.perf_counter()
     status  = "ok"
