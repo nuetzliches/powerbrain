@@ -114,9 +114,13 @@ async def embed_text(client: httpx.AsyncClient, text: str) -> list[float]:
     return resp.json()["embeddings"][0]
 
 
+_opa_access_cache: dict[str, bool] = {}
+
 async def check_opa_access(client: httpx.AsyncClient,
                            classification: str) -> bool:
     """Check OPA policy for eval agent access to a classification level."""
+    if classification in _opa_access_cache:
+        return _opa_access_cache[classification]
     try:
         resp = await client.post(
             f"{OPA_URL}/v1/data/kb/access/allow",
@@ -129,9 +133,11 @@ async def check_opa_access(client: httpx.AsyncClient,
             }},
         )
         resp.raise_for_status()
-        return resp.json().get("result", False)
+        result = resp.json().get("result", False)
+        _opa_access_cache[classification] = result
+        return result
     except Exception as e:
-        log.warning(f"OPA check failed, denying access: {e}")
+        log.warning("OPA check failed, denying access: %s", e)
         return False
 
 

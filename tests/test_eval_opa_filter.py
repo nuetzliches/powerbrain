@@ -52,6 +52,15 @@ class TestEvalOPAFilter(unittest.TestCase):
         self.assertIn("EVAL_AGENT_ROLE", self.source,
                        "Must use EVAL_AGENT_ROLE for OPA policy checks")
 
+    def test_opa_check_fails_closed(self):
+        """check_opa_access must deny access when OPA call fails."""
+        func_start = self.source.index("async def check_opa_access(")
+        next_def = self.source.index("\nasync def ", func_start + 1)
+        func_body = self.source[func_start:next_def]
+        self.assertIn("except", func_body, "Must handle OPA call failures")
+        self.assertIn("return False", func_body,
+                       "Must return False (deny) when OPA check fails")
+
 
 if __name__ == "__main__":
     unittest.main()
