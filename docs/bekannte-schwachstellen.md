@@ -89,17 +89,14 @@ opa:
 
 ## P1 — Sicherheitskritisch
 
-### P1-1: Keine Authentifizierung — Rollen sind selbst-deklariert
+### ~~P1-1: Keine Authentifizierung — Rollen sind selbst-deklariert~~ — RESOLVED
 
-**Datei:** `mcp-server/server.py`
-
-`agent_id` und `agent_role` sind einfache Request-Parameter, die der Aufrufer
-selbst setzt. Jeder Aufrufer der `agent_role: "admin"` behauptet, hat Admin-Rechte.
-OPA prüft die *Behauptung*, nicht die *Identität*.
-
-**Fix:** Vor der Tool-Ausführung ein Bearer-Token (JWT) validieren.
-Claims aus dem Token extrahieren, nicht aus Request-Parametern übernehmen.
-Minimallösung: API-Key pro Agent mit Rollen-Mapping in PG.
+**Status:** RESOLVED — API-Key-Authentifizierung implementiert. Jeder Agent
+benötigt einen `Authorization: Bearer kb_...` Header. Keys werden als SHA-256-Hash
+in der `api_keys`-Tabelle gespeichert und bilden auf eine feste Rolle
+(analyst/developer/admin) ab. `agent_id` und `agent_role` sind nicht mehr
+Tool-Parameter, sondern werden aus dem verifizierten Token abgeleitet.
+`AUTH_REQUIRED` Env-Var steuert ob Authentifizierung erzwungen wird (Default: true).
 
 ---
 
@@ -263,7 +260,6 @@ Für **produktiven Einsatz** zusätzlich Sprint 3 + TLS + Secrets Management.
 Die erste MVP-Iteration konzentriert sich bewusst nur auf den lauffaehigen Suchpfad.
 Folgende Themen bleiben danach priorisierte Phase-2-Arbeit:
 
-- Authentifizierung und vertraute Rollenweitergabe
 - SQL- und Cypher-Hardening ausserhalb des MVP-Suchpfads
 - vollstaendige Ingestion-API
 - Snapshot- und Evaluierungs-Nebenpfade
