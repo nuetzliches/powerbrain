@@ -38,6 +38,7 @@ from prometheus_client import (
 )
 import uvicorn
 import hashlib
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 import graph_service as graph
 from graph_service import validate_identifier
@@ -177,8 +178,14 @@ class ApiKeyVerifier(TokenVerifier):
         )
 
 
-# ── Hilfsfunktionen ──────────────────────────────────────────
-
+# ── Hilfsfunktionen ──
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=2, min=2, max=16),
+    retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
+    reraise=True,
+    before_sleep=lambda rs: log.warning(f"Ollama embed retry #{rs.attempt_number}: {rs.outcome.exception()}"),
+)
 async def embed_text(text: str) -> list[float]:
     with _otel_span("embed_text"):
         resp = await http.post(f"{OLLAMA_URL}/api/embed", json={
@@ -217,6 +224,15 @@ async def rerank_results(query: str, documents: list[dict], top_n: int) -> list[
             return documents[:top_n]
 
 
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_exponential(multiplier=0.5, min=0.5, max=2),
+    retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
+    reraise=True,
+    before_sleep=lambda rs: log.warning(
+        f"OPA retry #{rs.attempt_number} nach Fehler: {rs.outcome.exception()}"
+    ),
+)
 async def check_opa_policy(agent_id: str, agent_role: str,
                            resource: str, classification: str,
                            action: str = "read") -> dict:
@@ -270,18 +286,22 @@ async def log_access(agent_id: str, agent_role: str,
     contains_pii = False
 
     if context and "query" in context:
-        # Scan query text for PII before storing
-        scan_resp = await http.post(f"{INGESTION_URL}/scan", json={
-            "text": context["query"],
-        })
-        scan_resp.raise_for_status()
-        scan_data = scan_resp.json()
+        try:
+            # Scan query text for PII before storing
+            scan_resp = await http.post(f"{INGESTION_URL}/scan", json={
+                "text": context["query"],
+            })
+            scan_resp.raise_for_status()
+            scan_data = scan_resp.json()
 
-        contains_pii = scan_data["contains_pii"]
-        context["query"] = scan_data["masked_text"]
-        if contains_pii:
-            context["query_contains_pii"] = True
-            context["pii_entity_types"] = scan_data["entity_types"]
+            contains_pii = scan_data["contains_pii"]
+            context["query"] = scan_data["masked_text"]
+            if contains_pii:
+                context["query_contains_pii"] = True
+                context["pii_entity_types"] = scan_data["entity_types"]
+        except Exception as e:
+            log.warning(f"PII scan für Audit-Log fehlgeschlagen, speichere ohne Scan: {e}")
+            # Continue without PII scan — better to log unscanned than to fail
 
     pool = await get_pg_pool()
     await pool.execute("""
