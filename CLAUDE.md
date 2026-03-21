@@ -1,176 +1,215 @@
-# CLAUDE.md — Wissensdatenbank (KB)
+# CLAUDE.md — Powerbrain Context Engine
 
-## Projektübersicht
+## Project Overview
 
-Self-hosted Wissensdatenbank mit MCP-Zugriff, Policy-Engine und Datenschutz.
-Agenten greifen ausschließlich über das Model Context Protocol (MCP) zu.
-Alle Komponenten sind Open Source und laufen als Docker-Container.
+Open-source context engine that feeds AI agents with policy-compliant enterprise knowledge.
+Agents access data exclusively through the Model Context Protocol (MCP).
+All components are open source and run as Docker containers. Self-hosted, GDPR-native.
 
-## Architektur
+## Architecture
 
 ```
 Agent/Skill
     │ MCP
     ▼
-┌─────────────────────────────────────────────┐
-│  MCP-Server (FastAPI)                       │
-│  ├─ OPA Policy-Check (jeder Request)        │
-│  ├─ Qdrant Vektorsuche (oversampled)        │
-│  ├─ Reranker (Cross-Encoder, Top-N)         │
-│  ├─ PostgreSQL (strukturierte Daten)         │
-│  └─ Audit-Log (DSGVO-konform)               │
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│  MCP Server (FastAPI)                           │
+│  ├─ OPA Policy Check (every request)            │
+│  ├─ Qdrant Vector Search (oversampled)          │
+│  ├─ Reranker (Cross-Encoder, Top-N)             │
+│  ├─ Context Summarization (OPA-controlled)      │
+│  ├─ Sealed Vault (PII pseudonymization)         │
+│  ├─ PostgreSQL (structured data)                │
+│  └─ Audit Log (GDPR-compliant)                  │
+└─────────────────────────────────────────────────┘
     │           │           │           │
     ▼           ▼           ▼           ▼
  Qdrant    PostgreSQL     OPA       Reranker
- (Vektoren) (Daten+Meta+Vault) (Regeln)  (Cross-Enc.)
-    │           │
-    ▼           ▼
- Ollama     Forgejo (extern, bestehendes Setup)
- (Embeddings) (Policies, Schemas, Code)
+ (vectors)  (data+vault+graph) (policies) (Cross-Enc.)
+    │
+    ▼
+ Ollama
+ (embeddings + summarization)
 ```
 
-## Verzeichnisstruktur
+## Directory Structure
 
 ```
-kb-project/
-├── CLAUDE.md              ← Du bist hier
-├── README.md              ← Setup-Anleitung
-├── docker-compose.yml     ← Alle Services
-├── .env.example           ← Umgebungsvariablen
+powerbrain/
+├── CLAUDE.md              ← You are here
+├── README.md              ← Quick start and overview
+├── docker-compose.yml     ← All services
+├── .env.example           ← Environment variables
 ├── mcp-server/
-│   ├── server.py          ← MCP-Server (10 Tools)
+│   ├── server.py          ← MCP Server (10 tools)
 │   ├── graph_service.py   ← Knowledge Graph (Apache AGE)
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── reranker/
-│   ├── service.py         ← Cross-Encoder Service
+│   ├── service.py         ← Cross-Encoder service
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── ingestion/
-│   ├── pii_scanner.py     ← PII-Erkennung (Presidio)
-│   ├── retention_cleanup.py ← DSGVO-Löschjobs
+│   ├── pii_scanner.py     ← PII detection (Presidio)
+│   ├── retention_cleanup.py ← GDPR retention cleanup jobs
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── init-db/
-│   ├── 001_schema.sql     ← Basis-Schema
-│   ├── 002_privacy.sql    ← Datenschutz-Erweiterung
-│   ├── 003_knowledge_graph.sql ← Apache AGE Graph-Setup
-│   └── 007_pii_vault.sql       ← Sealed Vault (PII-Originale + Mappings)
+│   ├── 001_schema.sql     ← Base schema
+│   ├── 002_privacy.sql    ← Privacy extensions
+│   ├── 003_knowledge_graph.sql ← Apache AGE graph setup
+│   └── 007_pii_vault.sql  ← Sealed Vault (PII originals + mappings)
 ├── opa-policies/kb/
-│   ├── access.rego         ← Zugriffskontrolle
-│   ├── rules.rego          ← Business Rules
-│   └── privacy.rego        ← DSGVO-Policies
+│   ├── access.rego         ← Access control
+│   ├── rules.rego          ← Business rules
+│   ├── privacy.rego        ← GDPR policies
+│   └── summarization.rego  ← Context summarization policies
+├── caddy/
+│   └── Caddyfile           ← Reverse proxy config (optional TLS profile)
+├── secrets/
+│   └── .gitkeep            ← Docker Secrets directory (*.txt files gitignored)
+├── monitoring/
+│   ├── prometheus.yml      ← Prometheus config
+│   ├── alerting_rules.yml  ← Alert rules
+│   ├── tempo.yml           ← Distributed tracing config
+│   ├── grafana-dashboards/ ← Provisioned dashboards
+│   └── grafana-datasources/← Provisioned data sources
 └── docs/
-    ├── what-is-powerbrain.md       ← Key features, problem/solution overview (English)
-    ├── architektur.md              ← Detaillierte Doku (inkl. Bausteine 3-5, DSGVO §4.5)
-    ├── KNOWN_ISSUES.md            ← Resolved issues archive (P0–P3)
-    ├── technologie-entscheidungen.md ← VLM, vLLM, Git-Adapter, OTel, Adapter-Schicht
-    ├── skalierbarkeit.md           ← Load Balancing, Caching, Skalierungsstufen
-    └── dsgvo-externe-ki-dienste.md ← Rechtliche Einschätzung claude.ai / externe LLMs
+    ├── what-is-powerbrain.md       ← Detailed overview and positioning
+    ├── deployment.md               ← Dev, prod, TLS, Docker Secrets guide
+    ├── architektur.md              ← Technical deep-dive (components, GDPR)
+    ├── KNOWN_ISSUES.md             ← Resolved issues archive (P0–P3)
+    ├── technologie-entscheidungen.md ← ADRs (VLM, vLLM, Git adapter, OTel)
+    ├── skalierbarkeit.md           ← Scaling, load balancing, caching
+    └── dsgvo-externe-ki-dienste.md ← Legal assessment for external LLMs
 ```
 
-## Komponenten und Ports
+## Components and Ports
 
-| Service       | Port  | Technologie                        | Aufgabe                          |
+| Service       | Port  | Technology                         | Purpose                          |
 |---------------|-------|------------------------------------|----------------------------------|
-| mcp-server    | 8080  | Python, FastAPI, MCP SDK           | Einziger Agenten-Zugangspunkt    |
-| reranker      | 8082  | Python, sentence-transformers      | Cross-Encoder Reranking          |
-| ingestion     | 8081  | Python, FastAPI                    | ETL, Chunking, Embedding         |
-| qdrant        | 6333  | Qdrant                             | Vektordatenbank                  |
-| postgres      | 5432  | PostgreSQL 16 + Apache AGE         | Strukturierte Daten + Graph + Audit|
-| opa           | 8181  | Open Policy Agent                  | Regelwerk + Zugriffskontrolle    |
-| ollama        | 11434 | Ollama                             | Lokale Embeddings                |
-| forgejo       | 3000  | Forgejo (extern, nicht im Compose) | Git-Repos, Policies, Schemas     |
+| mcp-server    | 8080  | Python, FastAPI, MCP SDK           | Single agent access point        |
+| reranker      | 8082  | Python, sentence-transformers      | Cross-Encoder reranking          |
+| ingestion     | 8081  | Python, FastAPI                    | ETL, chunking, embedding         |
+| qdrant        | 6333  | Qdrant                             | Vector database                  |
+| postgres      | 5432  | PostgreSQL 16 + Apache AGE         | Structured data + graph + audit  |
+| opa           | 8181  | Open Policy Agent                  | Policy engine + access control   |
+| ollama        | 11434 | Ollama                             | Local embeddings + summarization |
+| caddy         | 80/443| Caddy 2 (optional, `tls` profile)  | TLS reverse proxy                |
+| forgejo       | 3000  | Forgejo (external, not in Compose) | Git repos, policies, schemas     |
+| prometheus    | 9090  | Prometheus                         | Metrics collection               |
+| grafana       | 3001  | Grafana                            | Dashboards + visualization       |
+| tempo         | 4317  | Grafana Tempo                      | Distributed tracing              |
 
-## Schlüsselkonzepte
+## Key Concepts
 
-### Datenklassifizierung
-Jedes Datenobjekt hat eine Klassifizierungsstufe:
-- `public` — Frei zugänglich für alle Agenten
-- `internal` — Nur für Rollen analyst, admin, developer
-- `confidential` — Nur admin
-- `restricted` — Admin + expliziter Zweck
+### Data Classification
+Every data object has a classification level:
+- `public` — Accessible to all agents
+- `internal` — Only for roles analyst, admin, developer
+- `confidential` — Only admin
+- `restricted` — Admin + explicit purpose
 
-OPA prüft bei **jedem** MCP-Request die Klassifizierung.
+OPA checks classification on **every** MCP request.
 
-### Suchpipeline (3-stufig)
-1. **Qdrant** liefert `top_k × 5` Ergebnisse (Oversampling)
-2. **OPA** filtert nach Policy und Klassifizierung
-3. **Cross-Encoder** bewertet Query-Dokument-Relevanz, gibt Top-K zurück
+### Search Pipeline (3-stage)
+1. **Qdrant** returns `top_k × 5` results (oversampling)
+2. **OPA** filters by policy and classification
+3. **Cross-Encoder** scores query-document relevance, returns top-k
 
-Wenn der Reranker ausfällt → Graceful Fallback auf Qdrant-Reihenfolge.
+If the reranker is down → graceful fallback to Qdrant ordering.
+
+### Context Summarization (OPA-controlled)
+After search and reranking, summarization is policy-controlled:
+- `kb.summarization.summarize_allowed` — all roles except viewer may request summaries
+- `kb.summarization.summarize_required` — confidential data: only summaries, never raw chunks
+- `kb.summarization.summarize_detail` — restricted data gets `brief` summaries only
+
+Agents use `summarize=true` and `summary_detail` parameters on `search_knowledge` and `get_code_context`.
+Response includes `summary` (text) and `summary_policy` (`requested` | `enforced` | `denied`).
+Graceful degradation: if Ollama summarization fails → raw chunks returned.
+
+Config: `SUMMARIZATION_MODEL` (default: `qwen2.5:3b`), `SUMMARIZATION_ENABLED` (default: `true`).
 
 ### Sealed Vault (Dual Storage)
-PII-Daten werden in zwei Stufen gespeichert:
-1. **Qdrant** enthält nur pseudonymisierte Texte (deterministisch, per-Projekt-Salt)
-2. **pii_vault Schema** (PostgreSQL, RLS) speichert Originale + Mapping
+PII data is stored in two tiers:
+1. **Qdrant** contains only pseudonymized text (deterministic, per-project salt)
+2. **pii_vault schema** (PostgreSQL, RLS) stores originals + mapping
 
-Zugriff auf Originale erfordert:
-- HMAC-signiertes Token mit Ablaufzeit
-- OPA-Policy-Check (`vault_access_allowed`)
-- Zweckbindung (nur erlaubte Purposes)
-- Felder werden nach Purpose redaktiert (`vault_fields_to_redact`)
+Access to originals requires:
+- HMAC-signed token with expiration
+- OPA policy check (`vault_access_allowed`)
+- Purpose binding (only allowed purposes)
+- Fields redacted by purpose (`vault_fields_to_redact`)
 
-Art. 17 Löschung: Vault-Mapping löschen → Pseudonyme werden irreversibel (restrict-Stufe).
+Art. 17 deletion: delete vault mapping → pseudonyms become irreversible.
 
-### MCP-Tools (10 Stück)
-- `search_knowledge` — Semantische Suche (Qdrant + Reranking); optional: Original-PII via Vault-Token
-- `query_data` — Strukturierte Abfragen (PostgreSQL)
-- `get_rules` — Business Rules für Kontext abrufen
-- `check_policy` — OPA-Policy evaluieren
-- `ingest_data` — Neue Daten einspeisen
-- `get_classification` — Klassifizierung abfragen
-- `list_datasets` — Datensätze auflisten
-- `get_code_context` — Code-Suche (Qdrant + Reranking)
-- `graph_query` — Knowledge Graph abfragen (Knoten, Beziehungen, Pfade)
-- `graph_mutate` — Knowledge Graph verändern (nur developer/admin)
+### MCP Tools (10)
+- `search_knowledge` — Semantic search (Qdrant + reranking); supports `summarize` and `summary_detail` parameters; optional PII originals via vault token
+- `query_data` — Structured queries (PostgreSQL)
+- `get_rules` — Business rules for a context
+- `check_policy` — OPA policy evaluation
+- `ingest_data` — Ingest new data
+- `get_classification` — Classification lookup
+- `list_datasets` — List available datasets
+- `get_code_context` — Code search (Qdrant + reranking); supports `summarize` and `summary_detail` parameters
+- `graph_query` — Knowledge graph queries (nodes, relationships, paths)
+- `graph_mutate` — Knowledge graph mutations (developer/admin only)
 
-### Datenschutz (DSGVO)
-- **PII-Scanner** (Microsoft Presidio) bei Ingestion
-- **Zweckbindung** über OPA-Policy (`kb.privacy`)
-- **Aufbewahrungsfristen** mit automatischer Löschung
-- **Recht auf Löschung** (Art. 17) mit Tracking-Tabelle
-- **Audit-Log** für jeden Zugriff auf PII-Daten
-- **Sealed Vault** für reversible Pseudonymisierung (Original im Vault, Pseudonym in Qdrant)
-- **HMAC-Token** für zeitlich begrenzten Vault-Zugriff
-- **2-Tier Löschung** (Art. 17): Vault löschen = Pseudonyme irreversibel
+### Privacy (GDPR)
+- **PII Scanner** (Microsoft Presidio) at ingestion
+- **Purpose binding** via OPA policy (`kb.privacy`)
+- **Retention periods** with automatic cleanup
+- **Right to erasure** (Art. 17) with tracking table
+- **Audit log** for every PII data access
+- **Sealed Vault** for reversible pseudonymization (original in vault, pseudonym in Qdrant)
+- **HMAC tokens** for time-limited vault access
+- **2-tier deletion** (Art. 17): delete vault = pseudonyms become irreversible
 
-### Forgejo-Integration
-Kein eigener Git-Container — nutzt bestehendes Forgejo:
-- `kb-policies` Repo → OPA Bundle-Polling
-- `kb-schemas` Repo → JSON-Schema-Validierung
-- `kb-docs` + Projekt-Repos → Ingestion Pipeline
+### Docker Secrets
+Sensitive values can be provided as Docker Secrets files in `./secrets/*.txt`:
+- `pg_password.txt` — PostgreSQL password
+- `vault_hmac_secret.txt` — Vault HMAC signing key
+- `forgejo_token.txt` — Forgejo API token
 
-## Entwicklung
+Services read from `/run/secrets/<name>` with env var fallback for backward compatibility.
+The `_read_secret()` helper checks `<ENV_VAR>_FILE` first, then falls back to `<ENV_VAR>`.
 
-### Voraussetzungen
+### Forgejo Integration
+No separate git container — uses existing Forgejo:
+- `kb-policies` repo → OPA bundle polling
+- `kb-schemas` repo → JSON schema validation
+- `kb-docs` + project repos → Ingestion pipeline
+
+## Development
+
+### Prerequisites
 - Docker + Docker Compose
-- Zugang zum bestehenden Forgejo-Server
-- Forgejo API-Token mit `read:repository` Berechtigung
+- Access to existing Forgejo server (optional)
+- Forgejo API token with `read:repository` permission (optional)
 
-### Erststart
+### First Start
 ```bash
 cp .env.example .env
-# .env anpassen: PG_PASSWORD, FORGEJO_URL, FORGEJO_TOKEN
+# Edit .env: PG_PASSWORD (and optionally FORGEJO_URL, FORGEJO_TOKEN)
 
 docker compose up -d
 
-# Embedding-Modell in Ollama laden
+# Pull embedding model
 docker exec kb-ollama ollama pull nomic-embed-text
 
-# Qdrant-Collections anlegen
-curl -X PUT http://localhost:6333/collections/knowledge_general \
-  -H 'Content-Type: application/json' \
-  -d '{"vectors":{"size":768,"distance":"Cosine"}}'
+# Create Qdrant collections
+for col in knowledge_general knowledge_code knowledge_rules; do
+  curl -s -X PUT "http://localhost:6333/collections/$col" \
+    -H 'Content-Type: application/json' \
+    -d '{"vectors":{"size":768,"distance":"Cosine"}}'
+done
+```
 
-curl -X PUT http://localhost:6333/collections/knowledge_code \
-  -H 'Content-Type: application/json' \
-  -d '{"vectors":{"size":768,"distance":"Cosine"}}'
-
-curl -X PUT http://localhost:6333/collections/knowledge_rules \
-  -H 'Content-Type: application/json' \
-  -d '{"vectors":{"size":768,"distance":"Cosine"}}'
+### Production with TLS
+```bash
+# Set DOMAIN in .env, then:
+docker compose --profile tls up -d
 ```
 
 ### Healthchecks
@@ -181,47 +220,60 @@ curl http://localhost:8082/health          # Reranker
 curl http://localhost:11434/api/tags       # Ollama
 ```
 
-### OPA-Policies testen
+### OPA Policy Tests
 ```bash
-# Policy lokal testen
+# Run all OPA tests (including summarization)
+docker exec kb-opa /opa test /policies/kb/ -v
+
+# Evaluate a specific policy
 docker exec kb-opa /opa eval \
   -d /policies/kb/access.rego \
   -i '{"agent_role":"analyst","classification":"internal","action":"read"}' \
   'data.kb.access.allow'
 ```
 
-## Offene Bausteine (Roadmap)
+### MCP Server Tests
+```bash
+cd mcp-server && python3 -m pytest tests/ -v
+```
 
-Priorisierte Reihenfolge:
+## Completed Features
 
-1. ✅ **Reranking** — Cross-Encoder Service (implementiert)
-2. ✅ **Knowledge Graph** — Apache AGE (implementiert)
-3. ✅ **Evaluation + Feedback-Loop** — `init-db/004_evaluation.sql`, MCP-Tools `submit_feedback`/`get_eval_stats`, `evaluation/run_eval.py`
-4. ✅ **Wissens-Versionierung** — `init-db/005_versioning.sql`, `ingestion/snapshot_service.py`, MCP-Tools `create_snapshot`/`list_snapshots`
-5. ✅ **Monitoring** — Prometheus + Grafana + Tempo in `docker-compose.yml`, Konfiguration in `monitoring/`
+1. ✅ **Reranking** — Cross-Encoder service
+2. ✅ **Knowledge Graph** — Apache AGE
+3. ✅ **Evaluation + Feedback Loop** — `init-db/004_evaluation.sql`, MCP tools `submit_feedback`/`get_eval_stats`
+4. ✅ **Knowledge Versioning** — `init-db/005_versioning.sql`, `ingestion/snapshot_service.py`
+5. ✅ **Monitoring** — Prometheus + Grafana + Tempo
+6. ✅ **Context Summarization** — OPA-controlled, Ollama-powered (`kb.summarization` policy)
+7. ✅ **Docker Secrets** — `/run/secrets/` with env var fallback
+8. ✅ **TLS Profile** — Optional Caddy reverse proxy (`docker compose --profile tls up`)
 
-Details zu allen Bausteinen (Architektur, Metriken, Alerting, Tracing): siehe `docs/architektur.md`
+Details on all features: see `docs/architektur.md`
 
-## Code-Konventionen
+## Code Conventions
 
-- Python 3.12+, Type Hints überall
-- Async/Await für alle I/O-Operationen
-- Pydantic-Modelle für Request/Response
-- Rego-Policies in `opa-policies/kb/` mit Package `kb.*`
-- SQL-Migrationen nummeriert: `001_schema.sql`, `002_privacy.sql`, ...
-- Docker-Images: Multi-Stage wo sinnvoll, Alpine-basiert wo möglich
-- Umgebungsvariablen für alle Konfiguration (keine Hardcodes)
-- Graceful Degradation: Jeder Service muss ohne den Reranker funktionieren
+- Python 3.12+, type hints everywhere
+- Async/await for all I/O operations
+- Pydantic models for request/response
+- Rego policies in `opa-policies/kb/` with package `kb.*`
+- SQL migrations numbered: `001_schema.sql`, `002_privacy.sql`, ...
+- Docker images: multi-stage where useful, Alpine-based where possible
+- Environment variables for all configuration (no hardcoded values)
+- Graceful degradation: every service must work without the reranker
+- Docker Secrets supported via `_read_secret()` with env var fallback
 
-## Wichtige Entscheidungen
+## Key Decisions
 
-| Entscheidung | Gewählt | Alternativen | Grund |
+| Decision | Chosen | Alternatives | Reason |
 |---|---|---|---|
-| Vektordatenbank | Qdrant | Milvus, ChromaDB | Beste Perf. + Filter + Clustering |
-| Embedding | nomic-embed-text (768d) | mxbai-embed-large | Balance Qualität/Speed |
-| Reranker | ms-marco-MiniLM-L-6-v2 | bge-reranker-v2-m3 | Schnell; Multilingual als Option |
-| Policy Engine | OPA (Rego) | Cerbos, GoRules | CNCF-Standard, Battle-tested |
-| PII-Scanner | Presidio | spaCy NER | Breite Entity-Erkennung + erweiterbar |
-| Git-Server | Forgejo (extern) | Gitea | Bereits vorhanden, API-kompatibel |
-| Relationale DB | PostgreSQL 16 | MySQL, SQLite | JSONB, GIN-Index, Extensions |
-| PII-Speicherung | Sealed Vault (Dual) | Destructive Masking, Full Encryption | Reversibel, suchbar, DSGVO-konform |
+| Vector DB | Qdrant | Milvus, ChromaDB | Best perf + filtering + clustering |
+| Embedding | nomic-embed-text (768d) | mxbai-embed-large | Quality/speed balance |
+| Reranker | ms-marco-MiniLM-L-6-v2 | bge-reranker-v2-m3 | Fast; multilingual as option |
+| Summarization | qwen2.5:3b (Ollama) | llama3.2:3b | Small, fast, good instruction following |
+| Policy Engine | OPA (Rego) | Cerbos, GoRules | CNCF standard, battle-tested |
+| PII Scanner | Presidio | spaCy NER | Broad entity detection + extensible |
+| Git Server | Forgejo (external) | Gitea | Already available, API-compatible |
+| Relational DB | PostgreSQL 16 | MySQL, SQLite | JSONB, GIN index, extensions |
+| PII Storage | Sealed Vault (Dual) | Destructive masking, full encryption | Reversible, searchable, GDPR-compliant |
+| TLS | Caddy (optional profile) | Nginx, Traefik | Zero-config HTTPS, simple Caddyfile |
+| Secrets | Docker Secrets + env fallback | Vault, SOPS | Simple, no extra infrastructure |
