@@ -8,12 +8,15 @@ import json
 import logging
 import asyncio
 from dataclasses import dataclass, field
+from typing import Any, Callable
 
-import litellm
 from tool_injection import ToolInjector
 import config
 
 log = logging.getLogger("pb-proxy.loop")
+
+# Type alias for the async completion callable (litellm.acompletion or Router.acompletion)
+ACompletion = Callable[..., Any]
 
 
 @dataclass
@@ -32,10 +35,13 @@ class AgentLoop:
     def __init__(
         self,
         tool_injector: ToolInjector,
+        *,
+        acompletion: ACompletion,
         max_iterations: int = 10,
         tool_call_timeout: int | None = None,
     ) -> None:
         self._injector = tool_injector
+        self._acompletion = acompletion
         self._max_iterations = max_iterations
         self._tool_call_timeout = tool_call_timeout or config.TOOL_CALL_TIMEOUT
 
@@ -54,7 +60,7 @@ class AgentLoop:
             result.iterations = iteration
 
             # Call LLM
-            response = await litellm.acompletion(
+            response = await self._acompletion(
                 model=model,
                 messages=working_messages,
                 tools=tools if tools else None,
