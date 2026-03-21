@@ -183,6 +183,79 @@ This means you can migrate to Docker Secrets gradually — existing `.env` setup
 
 **Important:** `secrets/*.txt` files are gitignored. Never commit secrets to the repository.
 
+## AI Provider Proxy
+
+The proxy is an optional service that intercepts LLM API requests and
+injects Powerbrain tools transparently.
+
+### Setup
+
+1. **Configure LLM providers** in `pb-proxy/litellm_config.yaml`:
+
+```yaml
+model_list:
+  - model_name: "gpt-4o"
+    litellm_params:
+      model: "openai/gpt-4o"
+      api_key: "os.environ/OPENAI_API_KEY"
+```
+
+2. **Set API keys** in `.env`:
+
+```bash
+OPENAI_API_KEY=sk-...
+```
+
+3. **Start with proxy profile:**
+
+```bash
+docker compose --profile proxy up -d
+```
+
+4. **Verify:**
+
+```bash
+curl http://localhost:8090/health
+```
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROXY_PORT` | `8090` | Proxy port |
+| `TOOL_REFRESH_INTERVAL` | `60` | Seconds between MCP tool refresh |
+| `MAX_ITERATIONS` | `10` | Default max agent-loop iterations |
+| `TOOL_CALL_TIMEOUT` | `30` | Timeout per tool call (seconds) |
+| `REQUEST_TIMEOUT` | `120` | Total request timeout (seconds) |
+| `FAIL_MODE` | `closed` | `open` or `closed` when MCP unreachable |
+
+### Usage
+
+Send requests using OpenAI-compatible format:
+
+```bash
+curl http://localhost:8090/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4o",
+    "messages": [{"role": "user", "content": "What are our data retention policies?"}]
+  }'
+```
+
+The proxy automatically injects Powerbrain tools. If the LLM decides to
+use `search_knowledge` or any other Powerbrain tool, the proxy executes
+the call against the MCP server and feeds the result back to the LLM.
+
+### Combining profiles
+
+```bash
+# Proxy + TLS
+docker compose --profile proxy --profile tls up -d
+
+# Proxy + seed data
+docker compose --profile proxy --profile seed up -d
+```
+
 ## Environment Variables Reference
 
 | Variable | Default | Description |
