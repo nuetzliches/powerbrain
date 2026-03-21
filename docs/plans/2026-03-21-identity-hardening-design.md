@@ -13,6 +13,7 @@
 **Supporting claims:**
 - *"Open source. Closed data."* — for technical contexts, badges, talks
 - *"Think globally. Host locally."* — European sovereignty claim
+- *"Bring your own LLM. Keep our guardrails."* — for proxy / provider-agnostic contexts
 
 **One-liner:**
 > Open-source context engine that feeds AI agents with policy-compliant
@@ -27,9 +28,10 @@
 1. Policy-aware Context Delivery (OPA)
 2. Sealed Vault & Pseudonymization
 3. Relevance Pipeline (Oversampling → Policy → Reranking)
-4. Context Summarization (policy-controlled) — NEW
+4. Context Summarization (policy-controlled)
 5. MCP-native Interface
 6. Self-hosted / GDPR-native
+7. AI Provider Proxy (transparent tool enforcement) — NEW
 
 **Non-core (useful, but not identity-defining):**
 Knowledge Graph, Evaluation/Feedback, Versioning, Monitoring, Proactive Context (future)
