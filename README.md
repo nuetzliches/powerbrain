@@ -1,44 +1,78 @@
-# Wissensdatenbank (KB)
+# 🧠 Powerbrain
 
-Self-hosted Knowledge Base mit MCP-Zugriff, Policy-Engine und DSGVO-Integration.
+> *"AI eats context. We decide what's on the menu."*
 
-## MVP-Status
+Open-source context engine that feeds AI agents with policy-compliant enterprise knowledge — self-hosted, GDPR-native, provider-agnostic.
 
-Der aktuelle Fokus ist ein `Search-first`-MVP:
+---
 
-- MCP ist ueber `http://localhost:8080/mcp` erreichbar
-- Prometheus-Metriken laufen separat auf Port `9091`
-- der minimal abgesicherte Suchpfad ist `MCP -> Ollama -> Qdrant -> OPA -> optionaler Reranker`
-- Authentifizierung, Ingestion-API und Snapshot-Flows bleiben vorerst Phase-2-Themen
+## The Problem
 
-## Quickstart
+Every AI agent needs context. But feeding enterprise data to LLMs means losing control — over who sees what, how long it's retained, and whether it complies with GDPR. Most solutions either block AI entirely or hand everything over. Neither works.
+
+## The Solution
+
+Powerbrain sits between your data and your AI agents. It delivers context through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), with every request checked by a policy engine. Your data stays on your infrastructure. Your policies decide what gets through.
+
+```
+Agent / Skill
+    │ MCP
+    ▼
+┌─────────────────────────────────────────────────┐
+│  Powerbrain MCP Server                          │
+│  ├─ OPA Policy Check (every request)            │
+│  ├─ Qdrant Vector Search (oversampled)          │
+│  ├─ Cross-Encoder Reranking (top-k)             │
+│  ├─ Context Summarization (policy-controlled)   │
+│  ├─ Sealed Vault (PII pseudonymization)         │
+│  └─ Audit Log (GDPR-compliant)                  │
+└─────────────────────────────────────────────────┘
+    │           │           │           │
+    ▼           ▼           ▼           ▼
+ Qdrant    PostgreSQL     OPA       Ollama
+ (vectors)  (data+vault)  (policies) (embeddings+LLM)
+```
+
+## ✨ Core Features
+
+🔒 **Policy-Aware Context Delivery** — Every search request is checked against OPA policies. Classification levels (public, internal, confidential, restricted) control what each agent role can access. Compliance is executable code, not documentation.
+
+🛡️ **Sealed Vault & Pseudonymization** — PII is detected at ingestion (Microsoft Presidio), pseudonymized with per-project salts, and stored in a dual-layer vault. Originals require HMAC-signed, time-limited tokens with purpose binding. Art. 17 deletion: remove the vault mapping and pseudonyms become irreversible.
+
+🎯 **Relevance Pipeline** — 3-stage search: Qdrant oversampling (5x candidates) → OPA policy filtering → Cross-Encoder reranking. Graceful degradation: if the reranker is down, results fall back to vector ordering.
+
+📝 **Context Summarization** — Agents can request summaries instead of raw chunks. OPA policies can enforce summarization for sensitive data (confidential = summary only, no raw text), control detail levels, or deny summarization entirely. Powered by Ollama.
+
+🔌 **MCP-Native Interface** — 10 tools accessible through the Model Context Protocol. Works with any MCP-compatible agent (Claude, OpenCode, custom). One endpoint, one protocol.
+
+🏠 **Self-Hosted & GDPR-Native** — Everything runs on your infrastructure. No external API calls for embeddings, search, or summarization. Docker Compose up and you're running.
+
+## 🚀 Quick Start
 
 ```bash
-git clone <repo-url> && cd kb-project
+git clone <repo-url> && cd powerbrain
 cp .env.example .env
-# .env editieren: FORGEJO_URL, FORGEJO_TOKEN, PG_PASSWORD
+# Edit .env: set PG_PASSWORD (and optionally FORGEJO_URL, FORGEJO_TOKEN)
 
 docker compose up -d
 
-# Embedding-Modell laden
+# Pull the embedding model
 docker exec kb-ollama ollama pull nomic-embed-text
 
-# Qdrant-Collections anlegen
+# Create vector collections
 for col in knowledge_general knowledge_code knowledge_rules; do
   curl -s -X PUT "http://localhost:6333/collections/$col" \
     -H 'Content-Type: application/json' \
-    -d '{"vectors":{"size":768,"distance":"Cosine"}}' && echo " → $col OK"
+    -d '{"vectors":{"size":768,"distance":"Cosine"}}' && echo " → $col ✓"
 done
 ```
 
-## MCP-Server verbinden
-
-In deiner Claude-Konfiguration:
+Connect your agent:
 
 ```json
 {
   "mcpServers": {
-    "wissensdatenbank": {
+    "powerbrain": {
       "type": "http",
       "url": "http://localhost:8080/mcp"
     }
@@ -46,64 +80,45 @@ In deiner Claude-Konfiguration:
 }
 ```
 
-## Search-first MVP verifizieren
+That's it. Your agent now has access to `search_knowledge`, `query_data`, `graph_query`, and 7 more tools.
 
-Minimaler Stack:
-
-```bash
-docker compose up -d postgres qdrant opa ollama reranker mcp-server
-docker exec kb-ollama ollama pull nomic-embed-text
-python3 scripts/seed_demo_search_data.py
-python3 scripts/smoke_search_first_mvp.py
-python3 scripts/smoke_search_first_mvp.py --check-reranker-fallback
-```
-
-Die beiden Scripts uebernehmen den MVP-Nachweis:
-
-- `scripts/seed_demo_search_data.py` legt Collections an, erzeugt ein Embedding ueber Ollama und schreibt ein Demo-Dokument nach Qdrant
-- `scripts/smoke_search_first_mvp.py` verbindet sich ueber den echten MCP-HTTP-Endpunkt, ruft `search_knowledge` auf und kann optional den Reranker-Fallback pruefen
-
-Der Seed ist in `docs/plans/2026-03-20-search-seed-notes.md` dokumentiert.
-
-## Architektur
-
-Siehe `CLAUDE.md` für das vollständige Architekturkonzept,
-`docs/architektur.md` für die detaillierte technische Dokumentation.
-
-## Für Agenten
-
-Agenten greifen auf die Wissensdatenbank ausschließlich über den MCP-Server zu.
-Die vollständige Tool-Referenz mit Beispielen, Zugriffslogik und Troubleshooting liegt in:
+## 🔍 How It Works
 
 ```
-skills/querying-knowledge-base/SKILL.md
+1. Agent calls search_knowledge("GDPR deletion policy", summarize=true)
+2. Powerbrain embeds the query via Ollama (nomic-embed-text)
+3. Qdrant returns 50 candidates (10 × 5 oversampling)
+4. OPA filters by agent role + data classification → 30 remain
+5. Cross-Encoder reranks by query-document relevance → top 10
+6. OPA summarization policy: allowed? required? detail level?
+7. Ollama summarizes the chunks (if applicable)
+8. Response: results + summary + policy transparency
 ```
 
-### Nativer MCP-Zugang (empfohlen)
+## 🧭 Principles
 
-MCP-Server in der Agent-Konfiguration registrieren:
+1. **Sovereignty by design** — Data sovereignty is not a feature, it's the architecture. No external API calls. No cloud dependencies. Your data, your rules.
 
-```json
-{
-  "mcpServers": {
-    "wissensdatenbank": {
-      "type": "http",
-      "url": "http://localhost:8080/mcp"
-    }
-  }
-}
-```
+2. **Enable, don't restrict** — The goal is not to prevent AI adoption, but to make it safely usable. Powerbrain says "yes, but with guardrails" instead of "no."
 
-Danach stehen alle 14 KB-Tools direkt zur Verfügung (`search_knowledge`, `graph_query`, `check_policy`, etc.).
+3. **Policy as code** — Compliance rules are OPA/Rego policies, version-controlled and testable. Not Word documents. Not checkbox audits.
 
-### Als Skill installieren
+## 📚 Documentation
 
-Für Agenten ohne nativen MCP-Zugang beschreibt der Skill den HTTP/curl-Zugriff.
+| Document | Description |
+|----------|-------------|
+| [What is Powerbrain?](docs/what-is-powerbrain.md) | Detailed overview and positioning |
+| [Architecture](docs/architektur.md) | Technical deep-dive |
+| [Deployment Guide](docs/deployment.md) | Dev, production, TLS, Docker Secrets |
+| [Technology Decisions](docs/technologie-entscheidungen.md) | ADRs and trade-offs |
+| [CLAUDE.md](CLAUDE.md) | Agent-facing reference (tools, schemas, conventions) |
 
-- **OpenCode**: `SKILL.md` nach `~/.config/opencode/skills/querying-knowledge-base/` kopieren
-- **Claude Code**: Als Custom Command in `.claude/commands/` ablegen
-- **Andere**: `SKILL.md` direkt lesen (z.B. via Raw-URL im Git-Repository)
+## 🤝 Contributing
 
-## Lizenz
+Powerbrain is open source (MIT). Contributions welcome — whether it's a new OPA policy, a better reranker model, or documentation improvements.
 
-Alle Eigenentwicklungen: MIT. Abhängigkeiten unter ihren jeweiligen Lizenzen.
+*Open source. Closed data.* 🔐
+
+## 📄 License
+
+All original code: **MIT**. Dependencies under their respective licenses.
