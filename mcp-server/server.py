@@ -23,14 +23,20 @@ from qdrant_client.models import Filter, FieldCondition, MatchValue
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import Tool, TextContent
+from mcp.server.auth.provider import AccessToken
+from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend, RequireAuthMiddleware
+from mcp.server.auth.middleware.auth_context import AuthContextMiddleware, get_access_token
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.types import Scope, Receive, Send
+from starlette.middleware import Middleware
+from starlette.middleware.authentication import AuthenticationMiddleware
 from prometheus_client import (
     Counter, Histogram, Gauge,
     start_http_server as prom_start_http_server,
 )
 import uvicorn
+import hashlib
 
 import graph_service as graph
 from graph_service import validate_identifier
@@ -52,6 +58,7 @@ MCP_PATH       = os.getenv("MCP_PATH", "/mcp")
 METRICS_PORT   = int(os.getenv("METRICS_PORT", "9091"))
 OTEL_ENABLED   = os.getenv("OTEL_ENABLED", "false").lower() == "true"
 OTLP_ENDPOINT  = os.getenv("OTLP_ENDPOINT", "http://tempo:4317")
+AUTH_REQUIRED  = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
 
 EMBEDDING_MODEL    = "nomic-embed-text"
 DEFAULT_TOP_K      = 10
@@ -133,6 +140,39 @@ async def get_pg_pool() -> asyncpg.Pool:
     if pg_pool is None:
         pg_pool = await asyncpg.create_pool(POSTGRES_URL, min_size=2, max_size=10)
     return pg_pool
+
+
+# ── API-Key-Authentifizierung ────────────────────────────────
+
+class ApiKeyVerifier:
+    """TokenVerifier implementation that validates API keys against PostgreSQL."""
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        if not token:
+            return None
+        key_hash = hashlib.sha256(token.encode()).hexdigest()
+        pool = await get_pg_pool()
+        row = await pool.fetchrow(
+            "SELECT agent_id, agent_role FROM api_keys "
+            "WHERE key_hash = $1 AND active = true "
+            "AND (expires_at IS NULL OR expires_at > now())",
+            key_hash,
+        )
+        if row is None:
+            return None
+        # Update last_used_at (fire-and-forget, don't block auth)
+        try:
+            await pool.execute(
+                "UPDATE api_keys SET last_used_at = now() WHERE key_hash = $1",
+                key_hash,
+            )
+        except Exception:
+            pass  # Non-critical, don't fail auth over this
+        return AccessToken(
+            token=token,
+            client_id=row["agent_id"],
+            scopes=[row["agent_role"]],
+        )
 
 
 # ── Hilfsfunktionen ──────────────────────────────────────────
