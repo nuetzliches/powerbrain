@@ -103,18 +103,11 @@ delegiert korrekt an diesen Endpoint.
 
 ---
 
-### P2-4: Referenz auf nicht existierende Tabelle `business_rules`
+### ~~P2-4: Referenz auf nicht existierende Tabelle `business_rules`~~ — RESOLVED
 
-**Datei:** `ingestion/snapshot_service.py`
-
-```python
-PG_SNAPSHOT_TABLES = ["datasets", "dataset_rows", "business_rules", "documents_meta"]
-```
-
-`business_rules` ist in keiner der SQL-Migrationen definiert. Row-Count-Abfrage
-schlägt zur Laufzeit fehl.
-
-**Fix:** Tabelle entweder in einer Migration anlegen oder aus der Liste entfernen.
+**Status:** RESOLVED — `business_rules` wurde aus `PG_SNAPSHOT_TABLES` in
+`snapshot_service.py` entfernt. Business Rules werden ausschließlich über
+OPA-Policies (`kb.rules`) bereitgestellt, nicht über PostgreSQL.
 
 ---
 
@@ -182,7 +175,7 @@ Prometheus-Metriken auf Port 9091.
 | ~~Sprint 1 (Blocker)~~ | ~~P0-1, P0-2, P0-3, P0-4~~ | ~~resolved~~ |
 | ~~Sprint 2 (Security)~~ | ~~P1-1, P1-2, P1-3~~ | ~~resolved~~ |
 | ~~Sprint 3 (Korrektheit)~~ | ~~P2-1, P2-3, P2-5~~ | ~~resolved~~ |
-| Backlog | P2-2, P2-4, P2-6, P3-1, P3-2, P3-3 | iterativ |
+| Backlog | P2-2, P2-6, P3-1, P3-2, P3-3 | iterativ |
 
 System ist nach Sprint 1–3 für **interne Tests** geeignet.
 Für **produktiven Einsatz** zusätzlich TLS + Secrets Management.
