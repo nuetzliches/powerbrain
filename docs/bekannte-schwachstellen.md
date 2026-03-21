@@ -82,16 +82,13 @@ Gemeinsame Helper-Funktion `filter_by_policy` für Qdrant-Hits.
 
 ---
 
-### P2-2: `run_eval.py` umgeht OPA-Policy-Filter
+### ~~P2-2: `run_eval.py` umgeht OPA-Policy-Filter~~ — RESOLVED
 
-**Datei:** `evaluation/run_eval.py`
-
-Der Offline-Evaluator spricht direkt gegen die Qdrant REST-API ohne Policy-Filter.
-Evaluierungsläufe können `restricted`-Dokumente in `eval_runs.details` (JSONB)
-persistieren — ein unkontrollierter Kanal für geschützte Daten.
-
-**Fix:** Evaluierung über den MCP-Server mit einem dedizierten `eval`-Role-Token
-routen, oder Qdrant-Ergebnisse vor dem Speichern gegen Klassifizierung filtern.
+**Status:** RESOLVED — `run_eval.py` prüft nun jedes Qdrant-Ergebnis gegen
+OPA `kb/access/allow` bevor es in die Evaluierung eingeht. `check_opa_access()`
+nutzt `EVAL_AGENT_ROLE = "analyst"` für konsistente Zugriffskontrolle.
+OPA-Ergebnisse werden pro Classification gecacht (nur 4 Werte möglich).
+Bei OPA-Fehler: Fail-Closed (Zugriff verweigert).
 
 ---
 
@@ -137,12 +134,14 @@ Für `shortestPath` einen expliziten Workaround implementieren und dokumentieren
 
 ## P3 — Architekturelle Schwächen
 
-### P3-1: Kein Retry / Circuit Breaker
+### ~~P3-1: Kein Retry / Circuit Breaker~~ — RESOLVED
 
-Kurzzeitige Ausfälle von Ollama (~30s beim Modell-Loading), Qdrant oder OPA
-lassen alle gleichzeitigen Requests sofort fehlschlagen statt zu queuen.
-Empfehlung: `tenacity` für Retry-Logic mit exponential Backoff; Circuit Breaker
-für den Reranker (ist ohnehin als optional konzipiert).
+**Status:** RESOLVED — `tenacity` Retry-Decorators auf kritischen externen Calls:
+`embed_text` (3 Versuche, 2/4/8s Backoff für Ollama), `check_opa_policy`
+(2 Versuche, 0.5/1s Backoff). Retryable Exceptions (ConnectError, TimeoutException)
+werden re-raised für tenacity, andere Fehler werden sofort behandelt.
+`log_access` PII-Scan hat try/except mit 1 Retry bei Verbindungsfehler.
+Qdrant-Client mit `timeout=30`. Reranker behält bestehenden Graceful Fallback.
 
 ---
 
@@ -175,7 +174,8 @@ Prometheus-Metriken auf Port 9091.
 | ~~Sprint 1 (Blocker)~~ | ~~P0-1, P0-2, P0-3, P0-4~~ | ~~resolved~~ |
 | ~~Sprint 2 (Security)~~ | ~~P1-1, P1-2, P1-3~~ | ~~resolved~~ |
 | ~~Sprint 3 (Korrektheit)~~ | ~~P2-1, P2-3, P2-5~~ | ~~resolved~~ |
-| Backlog | P2-2, P2-6, P3-1, P3-2, P3-3 | iterativ |
+| ~~Sprint 4 (Korrektheit + Resilienz)~~ | ~~P2-2, P2-4, P3-1~~ | ~~resolved~~ |
+| Backlog | P2-6, P3-2, P3-3 | iterativ |
 
 System ist nach Sprint 1–3 für **interne Tests** geeignet.
 Für **produktiven Einsatz** zusätzlich TLS + Secrets Management.
