@@ -462,10 +462,8 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Required with pii_access_token: purpose for accessing PII data",
                     },
-                    "agent_id":   {"type": "string"},
-                    "agent_role": {"type": "string"},
                 },
-                "required": ["query", "agent_id", "agent_role"]
+                "required": ["query"]
             }
         ),
         Tool(
@@ -477,10 +475,8 @@ async def list_tools() -> list[Tool]:
                     "dataset":    {"type": "string"},
                     "conditions": {"type": "object"},
                     "limit":      {"type": "integer", "default": 50},
-                    "agent_id":   {"type": "string"},
-                    "agent_role": {"type": "string"},
                 },
-                "required": ["dataset", "agent_id", "agent_role"]
+                "required": ["dataset"]
             }
         ),
         Tool(
@@ -491,10 +487,8 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "category":   {"type": "string"},
                     "context":    {"type": "object"},
-                    "agent_id":   {"type": "string"},
-                    "agent_role": {"type": "string"},
                 },
-                "required": ["category", "agent_id", "agent_role"]
+                "required": ["category"]
             }
         ),
         Tool(
@@ -506,10 +500,8 @@ async def list_tools() -> list[Tool]:
                     "action":         {"type": "string"},
                     "resource":       {"type": "string"},
                     "classification": {"type": "string"},
-                    "agent_id":       {"type": "string"},
-                    "agent_role":     {"type": "string"},
                 },
-                "required": ["action", "resource", "classification", "agent_id", "agent_role"]
+                "required": ["action", "resource", "classification"]
             }
         ),
         Tool(
@@ -523,10 +515,8 @@ async def list_tools() -> list[Tool]:
                     "project":        {"type": "string"},
                     "classification": {"type": "string", "default": "internal"},
                     "metadata":       {"type": "object"},
-                    "agent_id":       {"type": "string"},
-                    "agent_role":     {"type": "string"},
                 },
-                "required": ["source", "source_type", "agent_id", "agent_role"]
+                "required": ["source", "source_type"]
             }
         ),
         Tool(
@@ -537,10 +527,8 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "resource_id":   {"type": "string"},
                     "resource_type": {"type": "string", "enum": ["dataset", "document", "rule"]},
-                    "agent_id":      {"type": "string"},
-                    "agent_role":    {"type": "string"},
                 },
-                "required": ["resource_id", "resource_type", "agent_id", "agent_role"]
+                "required": ["resource_id", "resource_type"]
             }
         ),
         Tool(
@@ -551,10 +539,8 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "project":     {"type": "string"},
                     "source_type": {"type": "string"},
-                    "agent_id":    {"type": "string"},
-                    "agent_role":  {"type": "string"},
                 },
-                "required": ["agent_id", "agent_role"]
+                "required": []
             }
         ),
         Tool(
@@ -567,10 +553,8 @@ async def list_tools() -> list[Tool]:
                     "repo":       {"type": "string"},
                     "language":   {"type": "string"},
                     "top_k":      {"type": "integer", "default": 5},
-                    "agent_id":   {"type": "string"},
-                    "agent_role": {"type": "string"},
                 },
-                "required": ["query", "agent_id", "agent_role"]
+                "required": ["query"]
             }
         ),
         Tool(
@@ -589,10 +573,8 @@ async def list_tools() -> list[Tool]:
                     "to_id":      {"type": "string"},
                     "max_depth":  {"type": "integer", "default": 2},
                     "direction":  {"type": "string", "enum": ["out", "in", "both"], "default": "both"},
-                    "agent_id":   {"type": "string"},
-                    "agent_role": {"type": "string"},
                 },
-                "required": ["action", "agent_id", "agent_role"]
+                "required": ["action"]
             }
         ),
         Tool(
@@ -612,10 +594,8 @@ async def list_tools() -> list[Tool]:
                     "to_id":          {"type": "string"},
                     "rel_type":       {"type": "string"},
                     "rel_properties": {"type": "object"},
-                    "agent_id":       {"type": "string"},
-                    "agent_role":     {"type": "string"},
                 },
-                "required": ["action", "agent_id", "agent_role"]
+                "required": ["action"]
             }
         ),
         # ── Baustein 3: Evaluation + Feedback ──────────────────
@@ -638,10 +618,8 @@ async def list_tools() -> list[Tool]:
                     "comment":        {"type": "string", "description": "Freitext-Kommentar"},
                     "collection":     {"type": "string"},
                     "rerank_scores":  {"type": "object"},
-                    "agent_id":       {"type": "string"},
-                    "agent_role":     {"type": "string"},
                 },
-                "required": ["query", "result_ids", "rating", "agent_id", "agent_role"]
+                "required": ["query", "result_ids", "rating"]
             }
         ),
         Tool(
@@ -653,10 +631,8 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "days":       {"type": "integer", "default": 30,
                                    "description": "Auswertungszeitraum in Tagen"},
-                    "agent_id":   {"type": "string"},
-                    "agent_role": {"type": "string"},
                 },
-                "required": ["agent_id", "agent_role"]
+                "required": []
             }
         ),
         # ── Baustein 4: Snapshots ───────────────────────────────
@@ -669,10 +645,8 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "name":        {"type": "string", "description": "Snapshot-Name (z.B. 'before-migration-v2')"},
                     "description": {"type": "string"},
-                    "agent_id":    {"type": "string"},
-                    "agent_role":  {"type": "string"},
                 },
-                "required": ["name", "agent_id", "agent_role"]
+                "required": ["name"]
             }
         ),
         Tool(
@@ -682,10 +656,8 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "limit":      {"type": "integer", "default": 10},
-                    "agent_id":   {"type": "string"},
-                    "agent_role": {"type": "string"},
                 },
-                "required": ["agent_id", "agent_role"]
+                "required": []
             }
         ),
     ]
