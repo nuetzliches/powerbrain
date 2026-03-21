@@ -5,85 +5,34 @@ P2 (Korrektheit), P3 (Architektur).
 
 ---
 
-## P0 — Blocker: System startet nicht / Kernfunktion defekt
+## ~~P0 — Blocker: System startet nicht / Kernfunktion defekt~~ — ALL RESOLVED
 
-### P0-1: MCP-Transport: stdio ≠ Docker-Netzwerk
+### ~~P0-1: MCP-Transport: stdio ≠ Docker-Netzwerk~~ — RESOLVED
 
-**Datei:** `mcp-server/server.py`, `mcp-server/Dockerfile`
-
-Der MCP-Server nutzt `stdio_server` (stdin/stdout-Pipes). Port 8080 liefert
-ausschließlich Prometheus-Metriken. Kein Agent in einem anderen Docker-Container
-kann jemals MCP-Tools aufrufen — das Kernversprechen des Projekts ist in der
-aktuellen Docker-Konfiguration nicht erfüllbar.
-
-**Fix:** `mcp[server]`'s SSE- oder Streamable-HTTP-Transport verwenden.
-Port 8080 als MCP-HTTP-Endpoint, Prometheus auf separatem Port (z.B. 9091).
-
-```python
-# Statt:
-from mcp.server.stdio import stdio_server
-
-# Benötigt:
-from mcp.server.sse import SseServerTransport
-# oder (neuere SDK-Version):
-from mcp.server.streamable_http import StreamableHTTPServerTransport
-```
+**Status:** RESOLVED — MCP-Server verwendet nun `StreamableHTTPSessionManager`
+auf Port 8080. Prometheus-Metriken auf separatem Port 9091. Agenten in anderen
+Docker-Containern können MCP-Tools über HTTP aufrufen.
 
 ---
 
-### P0-2: `ingestion_api.py` fehlt
+### ~~P0-2: `ingestion_api.py` fehlt~~ — RESOLVED
 
-**Datei:** `ingestion/Dockerfile`
-
-```dockerfile
-CMD ["uvicorn", "ingestion_api:app", "--host", "0.0.0.0", "--port", "8081"]
-```
-
-Diese Datei existiert nicht. Der Service crasht beim Start mit `ModuleNotFoundError`.
-Damit sind alle abhängigen Funktionen tot: `ingest_data`, `create_snapshot`,
-Ingestion-Pipeline generell.
-
-**Fix:** `ingestion_api.py` mit FastAPI-App implementieren, mindestens:
-`POST /ingest`, `POST /snapshots/create`, `GET /health`.
+**Status:** RESOLVED — `ingestion/ingestion_api.py` implementiert mit Endpoints:
+`POST /ingest`, `POST /scan`, `POST /snapshots/create`, `GET /health`.
 
 ---
 
-### P0-3: `graph_service.py` fehlt im MCP-Server-Image
+### ~~P0-3: `graph_service.py` fehlt im MCP-Server-Image~~ — RESOLVED
 
-**Datei:** `mcp-server/Dockerfile`
-
-```dockerfile
-COPY server.py .   # graph_service.py wird nicht kopiert
-```
-
-`server.py` importiert `graph_service as graph`. Container startet mit `ImportError`.
-
-**Fix:**
-```dockerfile
-COPY server.py graph_service.py ./
-```
+**Status:** RESOLVED — `mcp-server/Dockerfile` kopiert nun beide Dateien:
+`COPY server.py graph_service.py ./`
 
 ---
 
-### P0-4: OPA-Policies werden nicht geladen
+### ~~P0-4: OPA-Policies werden nicht geladen~~ — RESOLVED
 
-**Datei:** `docker-compose.yml`
-
-Der OPA-Container hat kein Volume für `./opa-policies`. OPA läuft leer.
-Da `default allow := false` gilt, werden **alle** Anfragen verweigert.
-
-**Fix:** Volume einbinden und Policies beim Start laden:
-
-```yaml
-opa:
-  volumes:
-    - ./opa-policies:/policies
-  command:
-    - "run"
-    - "--server"
-    - "--addr=0.0.0.0:8181"
-    - "/policies"
-```
+**Status:** RESOLVED — OPA-Container hat Volume `./opa-policies:/policies:ro`
+und lädt Policies beim Start via `/policies` Argument.
 
 ---
 
@@ -124,16 +73,12 @@ Ungültige Eingaben werfen `ValueError`.
 
 ## P2 — Korrektheit / Zuverlässigkeit
 
-### P2-1: 50 serielle OPA-Calls pro Suchanfrage
+### ~~P2-1: 50 serielle OPA-Calls pro Suchanfrage~~ — RESOLVED
 
-**Datei:** `mcp-server/server.py`, `search_knowledge`-Handler
-
-Oversampling holt 50 Treffer, jeder wird einzeln per HTTP gegen OPA geprüft.
-Bei 20–50 ms/Call: 1–2,5 Sekunden reiner OPA-Overhead pro Suchanfrage.
-
-**Fix:** OPA-Batch-Evaluation nutzen (`/v1/data` mit Array-Input) oder
-Klassifizierungsfilter direkt als Qdrant-Payload-Filter setzen, sodass
-OPA nur noch für tatsächlich zurückgegebene Ergebnisse aufgerufen wird.
+**Status:** RESOLVED — OPA-Policy-Checks werden nun mit `asyncio.gather`
+parallel ausgeführt statt seriell. Betrifft `search_knowledge`,
+`get_code_context` und `list_datasets`. Latenz sinkt von N × RTT auf ~1 × RTT.
+Gemeinsame Helper-Funktion `filter_by_policy` für Qdrant-Hits.
 
 ---
 
@@ -150,16 +95,11 @@ routen, oder Qdrant-Ergebnisse vor dem Speichern gegen Klassifizierung filtern.
 
 ---
 
-### P2-3: `create_snapshot` Endpoint nicht implementiert
+### ~~P2-3: `create_snapshot` Endpoint nicht implementiert~~ — RESOLVED
 
-**Datei:** `mcp-server/server.py`, `ingestion/snapshot_service.py`
-
-Das MCP-Tool delegiert an `http://ingestion:8081/snapshots/create`. Dieser
-Endpoint existiert nicht. `snapshot_service.py` hat kein FastAPI-App, nur
-CLI-Funktionen. Das Tool gibt immer einen Connection-Error zurück.
-
-**Fix:** FastAPI-Endpoint in `ingestion_api.py` implementieren, der
-`snapshot_service.create_snapshot()` aufruft.
+**Status:** RESOLVED — `ingestion_api.py` implementiert `POST /snapshots/create`,
+das `snapshot_service.create_snapshot()` aufruft. MCP-Tool `create_snapshot`
+delegiert korrekt an diesen Endpoint.
 
 ---
 
@@ -178,16 +118,12 @@ schlägt zur Laufzeit fehl.
 
 ---
 
-### P2-5: PG Connection Pool lazy-initialized
+### ~~P2-5: PG Connection Pool lazy-initialized~~ — RESOLVED
 
-**Datei:** `mcp-server/server.py`
-
-Der Pool wird beim ersten Request erstellt — keine Pre-Warming-Phase, kein
-Verbindungstest beim Start. Erste Anfrage nach einem Neustart ist langsam
-und kann bei PG-Nichterreichbarkeit im Hintergrund fehlschlagen.
-
-**Fix:** Pool in einem `lifespan`-Context-Manager initialisieren und
-`pool.fetchval("SELECT 1")` als Startup-Healthcheck ausführen.
+**Status:** RESOLVED — PG Connection Pool wird nun in einem `lifespan`
+async context manager initialisiert mit `SELECT 1` Startup-Healthcheck.
+Pool und HTTP-Client werden beim Shutdown sauber geschlossen.
+`get_pg_pool()` wirft `RuntimeError` falls Pool nicht initialisiert.
 
 ---
 
@@ -232,12 +168,10 @@ Die `ingest_data`-Logik delegiert an einen nicht existierenden Endpunkt.
 
 ---
 
-### P3-4: Monitoring-Port-Konflikt (MCP-Server)
+### ~~P3-4: Monitoring-Port-Konflikt (MCP-Server)~~ — RESOLVED
 
-Port 8080 ist sowohl als MCP-Endpoint (Architektur-Intent) als auch für
-Prometheus-Metriken genutzt. Das `prom_start_http_server(8080)` im Hintergrundthread
-belegt den Port bevor ein etwaiger HTTP-MCP-Transport ihn nutzen könnte.
-Nach Behebung von P0-1 muss der Metrics-Port auf einen anderen Wert (z.B. 9091) wechseln.
+**Status:** RESOLVED — Mit P0-1 miterledigt. MCP-Endpoint auf Port 8080,
+Prometheus-Metriken auf Port 9091.
 
 ---
 
@@ -245,13 +179,13 @@ Nach Behebung von P0-1 muss der Metrics-Port auf einen anderen Wert (z.B. 9091) 
 
 | Priorität | Issues | Aufwand |
 |-----------|--------|---------|
-| Sprint 1 (Blocker) | P0-1, P0-2, P0-3, P0-4 | ~3–5 Tage |
+| ~~Sprint 1 (Blocker)~~ | ~~P0-1, P0-2, P0-3, P0-4~~ | ~~resolved~~ |
 | ~~Sprint 2 (Security)~~ | ~~P1-1, P1-2, P1-3~~ | ~~resolved~~ |
-| Sprint 3 (Korrektheit) | P2-1, P2-3, P2-5 | ~2–3 Tage |
-| Backlog | P2-2, P2-4, P2-6, P3-x | iterativ |
+| ~~Sprint 3 (Korrektheit)~~ | ~~P2-1, P2-3, P2-5~~ | ~~resolved~~ |
+| Backlog | P2-2, P2-4, P2-6, P3-1, P3-2, P3-3 | iterativ |
 
-System ist erst nach Sprint 1 + Sprint 2 für **interne Tests** geeignet.
-Für **produktiven Einsatz** zusätzlich Sprint 3 + TLS + Secrets Management.
+System ist nach Sprint 1–3 für **interne Tests** geeignet.
+Für **produktiven Einsatz** zusätzlich TLS + Secrets Management.
 
 ---
 
