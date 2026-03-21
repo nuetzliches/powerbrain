@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
+from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_anonymizer import AnonymizerEngine
 # OperatorConfig no longer needed — pseudonymize_text does manual replacement
 
@@ -107,7 +108,22 @@ class PIIScanner:
 
     def __init__(self, languages: list[str] | None = None):
         self.languages = languages or ["de", "en"]
-        self.analyzer = AnalyzerEngine()
+
+        # Configure Presidio NLP engine with spaCy models for each language
+        nlp_config = {
+            "nlp_engine_name": "spacy",
+            "models": [
+                {"lang_code": "de", "model_name": "de_core_news_md"},
+                {"lang_code": "en", "model_name": "en_core_web_lg"},
+            ],
+        }
+        provider = NlpEngineProvider(nlp_configuration=nlp_config)
+        nlp_engine = provider.create_engine()
+
+        self.analyzer = AnalyzerEngine(
+            nlp_engine=nlp_engine,
+            supported_languages=self.languages,
+        )
         self.anonymizer = AnonymizerEngine()
 
         # Deutsche Muster registrieren
