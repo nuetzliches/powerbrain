@@ -317,6 +317,43 @@ services:
       - kb-net
     restart: "no"
 
+  # ── AI Provider Proxy (optional) ──────────────────────────
+  pb-proxy:
+    profiles: ["proxy"]
+    build:
+      context: ./pb-proxy
+      dockerfile: Dockerfile
+    container_name: kb-proxy
+    ports:
+      - "${PROXY_PORT:-8090}:8090"
+    environment:
+      MCP_SERVER_URL:          http://mcp-server:8080/mcp
+      OPA_URL:                 http://opa:8181
+      LITELLM_CONFIG:          /app/litellm_config.yaml
+      PROXY_HOST:              "0.0.0.0"
+      PROXY_PORT:              "8090"
+      TOOL_REFRESH_INTERVAL:   ${TOOL_REFRESH_INTERVAL:-60}
+      MAX_ITERATIONS:          ${MAX_ITERATIONS:-10}
+      TOOL_CALL_TIMEOUT:       ${TOOL_CALL_TIMEOUT:-30}
+      REQUEST_TIMEOUT:         ${REQUEST_TIMEOUT:-120}
+      FAIL_MODE:               ${FAIL_MODE:-closed}
+      METRICS_PORT:            "9092"
+    volumes:
+      - ./pb-proxy/litellm_config.yaml:/app/litellm_config.yaml:ro
+    depends_on:
+      mcp-server:
+        condition: service_started
+      opa:
+        condition: service_healthy
+    networks:
+      - kb-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   # ── Caddy (TLS Reverse Proxy, optional) ───────────────────
   caddy:
     profiles: ["tls"]

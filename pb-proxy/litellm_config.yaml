@@ -1,0 +1,25 @@
+# LiteLLM Model Configuration for Powerbrain AI Provider Proxy
+# Docs: https://docs.litellm.ai/docs/proxy/configs
+#
+# Configure your LLM providers here. Each entry maps a model_name
+# (used in API requests) to a provider-specific model + credentials.
+#
+# Examples:
+#
+# model_list:
+#   - model_name: "gpt-4o"
+#     litellm_params:
+#       model: "openai/gpt-4o"
+#       api_key: "os.environ/OPENAI_API_KEY"
+#
+#   - model_name: "claude-sonnet"
+#     litellm_params:
+#       model: "anthropic/claude-sonnet-4-20250514"
+#       api_key: "os.environ/ANTHROPIC_API_KEY"
+#
+#   - model_name: "local-llama"
+#     litellm_params:
+#       model: "ollama/llama3.2"
+#       api_base: "http://ollama:11434"
+
+model_list: []
