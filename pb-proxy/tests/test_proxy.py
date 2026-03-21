@@ -95,3 +95,29 @@ def test_chat_completions_with_client_tools(client, mock_deps):
     assert response.status_code == 200
     # Verify merge_tools was called with client tools
     mock_deps["injector"].merge_tools.assert_called_once()
+
+
+def test_chat_completions_denied_by_opa(client, mock_deps):
+    """OPA denial returns 403."""
+    mock_deps["opa"].return_value = {"provider_allowed": False, "max_iterations": 0}
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hi"}],
+        },
+    )
+    assert response.status_code == 403
+
+
+def test_streaming_returns_501(client, mock_deps):
+    """Streaming requests return 501 Not Implemented."""
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stream": True,
+        },
+    )
+    assert response.status_code == 501

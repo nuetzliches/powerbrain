@@ -10,7 +10,6 @@ Endpoint: POST /v1/chat/completions (OpenAI-compatible)
 """
 
 import asyncio
-import json
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -18,10 +17,11 @@ from typing import Any
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from prometheus_client import (
-    Counter, Histogram, Gauge,
+    Counter, Histogram,
     start_http_server as prom_start_http_server,
 )
 
@@ -69,7 +69,8 @@ http_client: httpx.AsyncClient | None = None
 
 async def check_opa_policy(agent_role: str, provider: str) -> dict:
     """Check proxy policies via OPA."""
-    assert http_client is not None
+    if http_client is None:
+        raise RuntimeError("http_client not initialized (lifespan not started)")
     opa_input = {
         "input": {
             "agent_role": agent_role,
@@ -90,13 +91,6 @@ async def check_opa_policy(agent_role: str, provider: str) -> dict:
 
 
 # ── Request/Response Models ──────────────────────────────────
-
-class ChatMessage(BaseModel):
-    role: str
-    content: str | None = None
-    tool_calls: list[dict] | None = None
-    tool_call_id: str | None = None
-
 
 class ChatCompletionRequest(BaseModel):
     model: str
@@ -146,9 +140,11 @@ app = FastAPI(
 
 @app.get("/health")
 async def health():
+    tools_loaded = len(tool_injector.tool_names)
+    status = "healthy" if tools_loaded > 0 else "degraded"
     return {
-        "status": "healthy",
-        "tools_loaded": len(tool_injector.tool_names),
+        "status": status,
+        "tools_loaded": tools_loaded,
         "fail_mode": config.FAIL_MODE,
     }
 
@@ -208,7 +204,7 @@ async def chat_completions(request: ChatCompletionRequest):
     except Exception as e:
         PROXY_REQUESTS.labels(model=request.model, status="error").inc()
         log.error("Agent loop failed: %s", e)
-        raise HTTPException(status_code=502, detail=f"LLM request failed: {str(e)}")
+        raise HTTPException(status_code=502, detail="LLM request failed")
 
     # Metrics
     latency = time.monotonic() - start_time
@@ -229,7 +225,6 @@ async def chat_completions(request: ChatCompletionRequest):
     if result.max_iterations_reached:
         headers["X-Proxy-Max-Iterations-Reached"] = "true"
 
-    from fastapi.responses import JSONResponse
     return JSONResponse(content=response_data, headers=headers)
 
 
