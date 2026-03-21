@@ -87,10 +87,11 @@ That's it. Your agent now has access to `search_knowledge`, `query_data`, `graph
 ### Optional: AI Provider Proxy
 
 ```bash
-# Configure your LLM provider(s) in pb-proxy/litellm_config.yaml
+# 1. Uncomment/add your LLM provider in pb-proxy/litellm_config.yaml
+# 2. Set API keys in .env (e.g. OPENAI_API_KEY=sk-...)
 docker compose --profile proxy up -d
 
-# Now use OpenAI-compatible API with automatic Powerbrain tools:
+# Use the proxy — Powerbrain tools are injected automatically:
 curl http://localhost:8090/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"What are our GDPR deletion policies?"}]}'

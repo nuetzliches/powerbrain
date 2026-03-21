@@ -10,7 +10,8 @@ def mock_deps():
     """Mock all external dependencies."""
     with patch("proxy.tool_injector") as mock_injector, \
          patch("proxy.check_opa_policy") as mock_opa, \
-         patch("proxy.AgentLoop") as mock_loop_cls:
+         patch("proxy.AgentLoop") as mock_loop_cls, \
+         patch("proxy.llm_acompletion") as mock_acompletion:
 
         mock_injector.merge_tools = MagicMock(return_value=[
             {"type": "function", "function": {"name": "search_knowledge"}},
@@ -39,6 +40,7 @@ def mock_deps():
             "loop_cls": mock_loop_cls,
             "loop": mock_loop,
             "result": mock_result,
+            "acompletion": mock_acompletion,
         }
 
 
@@ -121,3 +123,18 @@ def test_streaming_returns_501(client, mock_deps):
         },
     )
     assert response.status_code == 501
+
+
+def test_agent_loop_receives_acompletion(client, mock_deps):
+    """AgentLoop is created with the llm_acompletion callable."""
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+    assert response.status_code == 200
+    mock_deps["loop_cls"].assert_called_once()
+    call_kwargs = mock_deps["loop_cls"].call_args
+    assert call_kwargs.kwargs.get("acompletion") is mock_deps["acompletion"]
