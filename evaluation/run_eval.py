@@ -34,6 +34,7 @@ MCP_BASE_URL = os.getenv("MCP_EVAL_URL", "http://mcp-server:8080")   # Direkt ge
 QDRANT_URL   = os.getenv("QDRANT_URL",   "http://qdrant:6333")
 OLLAMA_URL   = os.getenv("OLLAMA_URL",   "http://ollama:11434")
 RERANKER_URL = os.getenv("RERANKER_URL", "http://reranker:8082")
+OPA_URL      = os.getenv("OPA_URL",      "http://opa:8181")
 
 EMBEDDING_MODEL    = "nomic-embed-text"
 EVAL_AGENT_ID      = "eval-bot"
@@ -113,6 +114,27 @@ async def embed_text(client: httpx.AsyncClient, text: str) -> list[float]:
     return resp.json()["embeddings"][0]
 
 
+async def check_opa_access(client: httpx.AsyncClient,
+                           classification: str) -> bool:
+    """Check OPA policy for eval agent access to a classification level."""
+    try:
+        resp = await client.post(
+            f"{OPA_URL}/v1/data/kb/access/allow",
+            json={"input": {
+                "agent_id": EVAL_AGENT_ID,
+                "agent_role": EVAL_AGENT_ROLE,
+                "resource": "eval/search",
+                "classification": classification,
+                "action": "read",
+            }},
+        )
+        resp.raise_for_status()
+        return resp.json().get("result", False)
+    except Exception as e:
+        log.warning(f"OPA check failed, denying access: {e}")
+        return False
+
+
 async def search(client: httpx.AsyncClient, query: str, collection: str) -> tuple[list[str], list[str], float]:
     """
     Führt vollständige Suche durch (Embed → Qdrant → Reranker).
@@ -135,6 +157,17 @@ async def search(client: httpx.AsyncClient, query: str, collection: str) -> tupl
          "metadata": {k: v for k, v in h["payload"].items() if k != "content"}}
         for h in hits
     ]
+
+    # OPA policy filter — remove documents the eval agent may not access
+    filtered = []
+    for doc in documents:
+        classification = doc["metadata"].get("classification", "internal")
+        allowed = await check_opa_access(client, classification)
+        if allowed:
+            filtered.append(doc)
+        else:
+            log.debug(f"OPA denied eval access to {doc['id']} ({classification})")
+    documents = filtered
 
     # Reranking
     try:
