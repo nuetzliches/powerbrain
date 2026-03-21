@@ -44,12 +44,20 @@ import graph_service as graph
 from graph_service import validate_identifier
 
 # ── Konfiguration ────────────────────────────────────────────
+
+def _read_secret(env_var: str, default: str = "") -> str:
+    """Read from Docker Secret file if available, else fall back to env var."""
+    file_path = os.getenv(f"{env_var}_FILE")
+    if file_path and os.path.isfile(file_path):
+        return open(file_path).read().strip()
+    return os.getenv(env_var, default)
+
 QDRANT_URL    = os.getenv("QDRANT_URL",    "http://localhost:6333")
 POSTGRES_URL  = os.getenv("POSTGRES_URL",  "postgresql://kb_admin:changeme@localhost:5432/knowledgebase")
 OPA_URL       = os.getenv("OPA_URL",       "http://localhost:8181")
 OLLAMA_URL    = os.getenv("OLLAMA_URL",    "http://localhost:11434")
 FORGEJO_URL   = os.getenv("FORGEJO_URL",   "http://forgejo.local:3000")
-FORGEJO_TOKEN = os.getenv("FORGEJO_TOKEN", "")
+FORGEJO_TOKEN = _read_secret("FORGEJO_TOKEN")
 RERANKER_URL  = os.getenv("RERANKER_URL",  "http://reranker:8082")
 RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
 INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8081")
@@ -525,7 +533,7 @@ async def log_access(agent_id: str, agent_role: str,
 
 # ── Vault Access ────────────────────────────────────────────
 
-VAULT_HMAC_SECRET = os.getenv("VAULT_HMAC_SECRET", "change-me-in-production")
+VAULT_HMAC_SECRET = _read_secret("VAULT_HMAC_SECRET", "change-me-in-production")
 
 
 def validate_pii_access_token(token: dict) -> dict:

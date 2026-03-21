@@ -8,4 +8,5 @@ build/
 .mypy_cache/
 .ruff_cache/
 .worktrees/
+secrets/*.txt
 nul

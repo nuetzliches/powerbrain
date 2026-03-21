@@ -19,6 +19,14 @@ volumes:
   grafana_data:
   tempo_data:
 
+secrets:
+  pg_password:
+    file: ./secrets/pg_password.txt
+  vault_hmac_secret:
+    file: ./secrets/vault_hmac_secret.txt
+  forgejo_token:
+    file: ./secrets/forgejo_token.txt
+
 services:
 
   # ── Qdrant (Vektordatenbank) ──────────────────────────────
@@ -50,9 +58,12 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./init-db:/docker-entrypoint-initdb.d
+    secrets:
+      - pg_password
     environment:
       POSTGRES_DB: knowledgebase
       POSTGRES_USER: kb_admin
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
       POSTGRES_PASSWORD: ${PG_PASSWORD:-changeme_in_production}
     networks:
       - kb-net
@@ -156,6 +167,10 @@ services:
     ports:
       - "8080:8080"   # MCP Streamable HTTP
       - "9091:9091"   # Prometheus /metrics
+    secrets:
+      - pg_password
+      - vault_hmac_secret
+      - forgejo_token
     environment:
       QDRANT_URL:      http://qdrant:6333
       POSTGRES_URL:    postgresql://kb_admin:${PG_PASSWORD:-changeme_in_production}@postgres:5432/knowledgebase
@@ -163,6 +178,8 @@ services:
       OLLAMA_URL:      http://ollama:11434
       FORGEJO_URL:     ${FORGEJO_URL:-http://forgejo.local:3000}
       FORGEJO_TOKEN:   ${FORGEJO_TOKEN:-}
+      FORGEJO_TOKEN_FILE: /run/secrets/forgejo_token
+      VAULT_HMAC_SECRET_FILE: /run/secrets/vault_hmac_secret
       RERANKER_URL:    http://reranker:8082
       RERANKER_ENABLED: "true"
       AUTH_REQUIRED:   ${AUTH_REQUIRED:-true}
@@ -193,6 +210,9 @@ services:
     container_name: kb-ingestion
     ports:
       - "8081:8081"
+    secrets:
+      - pg_password
+      - forgejo_token
     environment:
       QDRANT_URL:    http://qdrant:6333
       POSTGRES_URL:  postgresql://kb_admin:${PG_PASSWORD:-changeme_in_production}@postgres:5432/knowledgebase
@@ -200,6 +220,7 @@ services:
       OLLAMA_URL:    http://ollama:11434
       FORGEJO_URL:   ${FORGEJO_URL:-http://forgejo.local:3000}
       FORGEJO_TOKEN: ${FORGEJO_TOKEN:-}
+      FORGEJO_TOKEN_FILE: /run/secrets/forgejo_token
       RERANKER_URL:  http://reranker:8082
     depends_on:
       qdrant:
