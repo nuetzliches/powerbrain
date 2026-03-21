@@ -41,7 +41,7 @@ async def cmd_create(args: argparse.Namespace) -> None:
         key = generate_key()
         key_h = hash_key(key)
         expires = None
-        if args.expires_in_days:
+        if args.expires_in_days is not None:
             expires = datetime.now(timezone.utc) + timedelta(days=args.expires_in_days)
 
         await conn.execute(
@@ -99,7 +99,7 @@ async def cmd_revoke(args: argparse.Namespace) -> None:
     conn = await asyncpg.connect(POSTGRES_URL)
     try:
         result = await conn.execute(
-            "UPDATE api_keys SET active = false WHERE agent_id = $1",
+            "UPDATE api_keys SET active = false WHERE agent_id = $1 AND active = true",
             args.agent_id,
         )
         if result == "UPDATE 1":

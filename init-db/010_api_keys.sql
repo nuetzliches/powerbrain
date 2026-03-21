@@ -16,8 +16,14 @@ CREATE TABLE IF NOT EXISTS api_keys (
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys (key_hash);
 
--- Grant permissions for the MCP app user
-GRANT SELECT, UPDATE ON api_keys TO mcp_app;
+-- Grant permissions for the MCP app user (conditional — mcp_app may not exist yet)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mcp_app') THEN
+        GRANT SELECT, UPDATE ON api_keys TO mcp_app;
+    END IF;
+END
+$$;
 
 -- Default development key (only for local development!)
 -- Key: kb_dev_localonly_do_not_use_in_production

@@ -29,7 +29,6 @@ from mcp.server.auth.middleware.auth_context import AuthContextMiddleware, get_a
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.types import Scope, Receive, Send
-from starlette.middleware import Middleware
 from starlette.middleware.authentication import AuthenticationMiddleware
 from prometheus_client import (
     Counter, Histogram, Gauge,
@@ -160,10 +159,12 @@ class ApiKeyVerifier(TokenVerifier):
         )
         if row is None:
             return None
-        # Update last_used_at (fire-and-forget, don't block auth)
+        # Update last_used_at (throttled: only if >5 min old, fire-and-forget)
         try:
             await pool.execute(
-                "UPDATE api_keys SET last_used_at = now() WHERE key_hash = $1",
+                "UPDATE api_keys SET last_used_at = now() "
+                "WHERE key_hash = $1 AND (last_used_at IS NULL "
+                "OR last_used_at < now() - interval '5 minutes')",
                 key_hash,
             )
         except Exception:
