@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN python -m spacy download de_core_news_md
+RUN python -m spacy download en_core_web_lg
 
 COPY . .
 
