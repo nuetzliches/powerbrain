@@ -96,10 +96,16 @@ async def _execute_cypher(pool: asyncpg.Pool, cypher: str, params: dict | None =
     results = []
     for row in rows:
         raw = row["result"]
-        # agtype kommt als String, der JSON-kompatibel ist
         if raw is not None:
             try:
-                parsed = json.loads(str(raw))
+                raw_str = str(raw)
+                # Strip AGE agtype suffixes before JSON parsing.
+                # Note: operates on full string, may strip inside JSON values (low-risk).
+                cleaned = re.sub(
+                    r'::(vertex|edge|path|numeric|agtype|bool|null|string|list|map|integer|float)\b',
+                    '', raw_str,
+                )
+                parsed = json.loads(cleaned)
                 results.append(parsed)
             except (json.JSONDecodeError, TypeError):
                 results.append({"raw": str(raw)})
