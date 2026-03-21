@@ -1,40 +1,121 @@
-# What is PowerBrain?
+# What is Powerbrain?
 
-PowerBrain is a self-hosted knowledge base designed for AI agent access via the Model Context Protocol (MCP). All components are open source and run as Docker containers. It enforces data classification, GDPR compliance, and policy-driven access control on every request.
+Powerbrain is an open-source **context engine** that feeds AI agents with policy-compliant enterprise knowledge. It sits between your data and your AI agents, delivering context through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) with every request checked by a policy engine.
 
-## Key Features
+Self-hosted. GDPR-native. Provider-agnostic.
 
-- **MCP-Native Access** -- Agents interact exclusively through the Model Context Protocol (10 tools: search, query, ingest, graph, policy checks, and more)
-- **3-Stage Search Pipeline** -- Qdrant vector search (oversampled 5x) -> OPA policy filter -> Cross-Encoder reranking for Top-N results
-- **Data Classification** -- Every data object has a classification level (public, internal, confidential, restricted) enforced by OPA on every request
-- **Sealed Vault (Dual Storage)** -- PII data stored both pseudonymized (in Qdrant for search quality) and as originals (in a secured PostgreSQL vault with RLS), with HMAC-token-based elevated access
-- **GDPR Compliance** -- PII scanning (Microsoft Presidio), purpose limitation via OPA policy, retention periods with automatic cleanup, Art. 17 right to erasure (2-tier deletion), audit logging
-- **Knowledge Graph** -- Apache AGE on PostgreSQL for entity relationships, path queries, and structured knowledge
-- **Policy Engine** -- Open Policy Agent (OPA) with Rego rules for access control, privacy decisions, and business rules
-- **Local Embeddings** -- Ollama with nomic-embed-text (768d) for fully self-hosted vector generation
-- **Knowledge Versioning** -- Snapshots and version tracking for knowledge base content
-- **Monitoring and Observability** -- Prometheus metrics, Grafana dashboards, Tempo distributed tracing
-- **Forgejo Integration** -- Policies, schemas, and docs sourced from existing Forgejo git repos (no separate git container needed)
+> *"AI eats context. We decide what's on the menu."*
 
-## Problem / Solution
+## The Problem
 
-| Problem | How PowerBrain Solves It |
-|---|---|
-| AI agents need structured access to organizational knowledge | MCP server provides 10 specialized tools (search, query, ingest, graph, policy) as a single access point |
-| PII in training/search data creates legal risk (GDPR) | Presidio PII scanner at ingestion, OPA-driven actions (mask/pseudonymize/block), Sealed Vault for reversible pseudonymization |
-| Destructive PII masking degrades search quality | Sealed Vault pattern: deterministic pseudonyms preserve sentence structure for better embeddings, originals stored securely for authorized access |
-| No way to retrieve original PII when legally required | HMAC-signed short-lived tokens with purpose binding and field-level redaction via OPA policy |
-| Data classification enforcement is inconsistent | OPA checks every MCP request against classification levels; policy-as-code, changeable without redeployment |
-| GDPR Art. 17 right to erasure is complex | 2-tier deletion: restrict (vault deleted, pseudonyms become irreversible and thus anonymous) or full delete (including Qdrant vectors) |
-| Vector search alone has poor precision | 3-stage pipeline: Qdrant oversampling x5, OPA policy filter, Cross-Encoder reranking for Top-N |
-| Knowledge exists in isolation without relationships | Apache AGE knowledge graph for entity relationships, path queries, and cross-referencing |
-| External AI services create data sovereignty concerns | Fully self-hosted: local embeddings (Ollama), local vector DB (Qdrant), local policy engine (OPA) |
-| Audit and compliance requirements | Every access logged (GDPR-conform audit trail), vault access separately audited with token hashes |
+Organizations want to use AI agents against their own data — internal docs, code, policies, customer records. But the moment you connect enterprise data to an AI, three things break:
+
+1. **Data sovereignty** — Who controls what the agent sees? Can you prove it?
+2. **Privacy compliance** — PII in search results creates GDPR liability. Masking it destroys search quality.
+3. **Provider lock-in** — Building on a vendor's RAG API means your context pipeline is someone else's product.
+
+Most solutions either block AI adoption entirely ("too risky") or hand everything over ("just use the API"). Neither works.
+
+## The Solution
+
+Powerbrain is a self-hosted context delivery layer. It doesn't replace your AI agents — it feeds them. Every search result passes through a policy engine before reaching the agent. Sensitive data is pseudonymized, summarized, or blocked based on executable rules.
+
+```
+Agent → MCP → Powerbrain → Policy Check → Context Delivery
+                              ↕
+                    Qdrant · PostgreSQL · OPA · Ollama
+```
+
+## Core Features
+
+### 🔒 Policy-Aware Context Delivery
+
+Every request is checked by [Open Policy Agent](https://www.openpolicyagent.org/) against data classification levels (public, internal, confidential, restricted) and agent roles. Access decisions are Rego policies — version-controlled, testable, deployable without code changes.
+
+### 🛡️ Sealed Vault & Pseudonymization
+
+PII is detected at ingestion using [Microsoft Presidio](https://microsoft.github.io/presidio/), pseudonymized with deterministic per-project salts (preserving sentence structure for better embeddings), and stored in a dual-layer vault. The pseudonymized text goes to Qdrant for search quality; originals stay in a secured PostgreSQL schema with row-level security. Accessing originals requires HMAC-signed, time-limited tokens with purpose binding.
+
+Art. 17 right to erasure: delete the vault mapping and pseudonyms become irreversible — the data is effectively anonymized without touching the vector store.
+
+### 🎯 3-Stage Relevance Pipeline
+
+1. **Qdrant** returns 5x oversampled candidates (50 results for a top-10 query)
+2. **OPA** filters by classification + agent role (removes unauthorized results)
+3. **Cross-Encoder** reranks remaining results by query-document relevance (returns top-k)
+
+Graceful degradation: if the reranker is down, results fall back to Qdrant's vector ordering.
+
+### 📝 Context Summarization
+
+Agents can request summaries instead of raw chunks. OPA policies control this per classification level:
+
+- **Allowed** — Agent may opt in to summarization
+- **Enforced** — Confidential data is only returned as summaries (raw chunks stripped)
+- **Denied** — Viewers don't get summarization access
+
+Powered by Ollama with configurable models. Falls back to raw chunks if summarization fails.
+
+### 🔌 MCP-Native Interface
+
+10 tools accessible through a single MCP endpoint:
+
+| Tool | Purpose |
+|------|---------|
+| `search_knowledge` | Semantic search with optional summarization |
+| `get_code_context` | Code-specific search with reranking |
+| `query_data` | Structured PostgreSQL queries |
+| `graph_query` | Knowledge graph traversal (Apache AGE) |
+| `graph_mutate` | Graph modifications (developer/admin only) |
+| `check_policy` | OPA policy evaluation |
+| `get_rules` | Business rules for a context |
+| `ingest_data` | Data ingestion |
+| `get_classification` | Data classification lookup |
+| `list_datasets` | Available datasets |
+
+Works with any MCP-compatible agent — Claude, OpenCode, or custom implementations.
+
+### 🏠 Self-Hosted & GDPR-Native
+
+Everything runs on your infrastructure as Docker containers. No external API calls for embeddings (Ollama), search (Qdrant), policies (OPA), or summarization (Ollama). Optional TLS via Caddy reverse proxy profile.
 
 ## Architecture Overview
 
-The MCP server (FastAPI) is the single entry point for all agent interactions. It orchestrates requests across Qdrant (vector search), PostgreSQL 16 with Apache AGE (structured data, knowledge graph, audit logs, and the Sealed Vault), and OPA (policy evaluation on every request). Embeddings are generated locally via Ollama (nomic-embed-text, 768 dimensions), and a Cross-Encoder reranker service improves search precision after policy filtering. Forgejo provides git-based management of OPA policy bundles, JSON schemas, and documentation through its existing infrastructure -- no additional git container is required.
+```
+Agent / Skill
+    │ MCP (Streamable HTTP)
+    ▼
+┌─────────────────────────────────────────────────┐
+│  MCP Server (Python, FastAPI)                   │
+│  ├─ Authentication (API key verification)       │
+│  ├─ Rate Limiting (per-role token bucket)       │
+│  ├─ OPA Policy Check (every request)            │
+│  ├─ Qdrant Vector Search (oversampled)          │
+│  ├─ Cross-Encoder Reranking (top-k)             │
+│  ├─ Context Summarization (OPA-controlled)      │
+│  ├─ Sealed Vault (PII resolution)               │
+│  ├─ Knowledge Graph (Apache AGE/Cypher)         │
+│  └─ Audit Log (GDPR-compliant)                  │
+└─────────────────────────────────────────────────┘
+    │           │           │           │
+    ▼           ▼           ▼           ▼
+ Qdrant    PostgreSQL     OPA       Ollama
+ (vectors)  (data+graph   (policies) (embeddings
+             +vault+audit)            +summarization)
+```
+
+**Monitoring:** Prometheus metrics, Grafana dashboards, Grafana Tempo distributed tracing.
+
+## How is This Different?
+
+| Approach | Limitation | Powerbrain |
+|----------|-----------|------------|
+| **Vendor RAG APIs** (OpenAI, Pinecone) | Data leaves your infrastructure | Fully self-hosted, no external calls |
+| **Vector-only search** (ChromaDB, Weaviate) | No policy layer, no PII handling | OPA policy check on every request, Sealed Vault |
+| **LangChain / LlamaIndex** | Frameworks, not products; no built-in compliance | Turnkey Docker deployment with GDPR built in |
+| **Enterprise search** (Elastic, Coveo) | Not MCP-native, not agent-oriented | MCP-first, designed for AI agent consumption |
+| **Manual RAG pipelines** | Custom code, no standardization | Standard MCP interface, policy-as-code |
 
 ## Getting Started
 
-See `README.md` for setup instructions and `CLAUDE.md` for the full technical reference.
+See the [README](../README.md) for quick start instructions and [Deployment Guide](deployment.md) for production setup. The full technical reference is in [CLAUDE.md](../CLAUDE.md).
