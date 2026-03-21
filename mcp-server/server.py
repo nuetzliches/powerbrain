@@ -132,7 +132,7 @@ def _otel_span(name: str):
 
 
 # ── Clients ──────────────────────────────────────────────────
-qdrant  = AsyncQdrantClient(url=QDRANT_URL)
+qdrant  = AsyncQdrantClient(url=QDRANT_URL, timeout=30)
 http    = httpx.AsyncClient(timeout=30.0)
 pg_pool: asyncpg.Pool | None = None
 
@@ -181,10 +181,10 @@ class ApiKeyVerifier(TokenVerifier):
 # ── Hilfsfunktionen ──
 @retry(
     stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=2, min=2, max=16),
+    wait=wait_exponential(multiplier=2, min=2, max=8),
     retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
     reraise=True,
-    before_sleep=lambda rs: log.warning(f"Ollama embed retry #{rs.attempt_number}: {rs.outcome.exception()}"),
+    before_sleep=lambda rs: log.warning(f"Embed retry #{rs.attempt_number} nach Fehler: {rs.outcome.exception()}"),
 )
 async def embed_text(text: str) -> list[float]:
     with _otel_span("embed_text"):
@@ -229,9 +229,7 @@ async def rerank_results(query: str, documents: list[dict], top_n: int) -> list[
     wait=wait_exponential(multiplier=0.5, min=0.5, max=2),
     retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
     reraise=True,
-    before_sleep=lambda rs: log.warning(
-        f"OPA retry #{rs.attempt_number} nach Fehler: {rs.outcome.exception()}"
-    ),
+    before_sleep=lambda rs: log.warning(f"OPA retry #{rs.attempt_number} nach Fehler: {rs.outcome.exception()}"),
 )
 async def check_opa_policy(agent_id: str, agent_role: str,
                            resource: str, classification: str,
@@ -247,6 +245,8 @@ async def check_opa_policy(agent_id: str, agent_role: str,
             )
             resp.raise_for_status()
             allowed = resp.json().get("result", False)
+        except (httpx.ConnectError, httpx.TimeoutException):
+            raise  # Let tenacity retry these
         except Exception as e:
             log.warning(f"OPA check failed, defaulting to deny: {e}")
             allowed = False
@@ -287,11 +287,20 @@ async def log_access(agent_id: str, agent_role: str,
 
     if context and "query" in context:
         try:
-            # Scan query text for PII before storing
-            scan_resp = await http.post(f"{INGESTION_URL}/scan", json={
-                "text": context["query"],
-            })
-            scan_resp.raise_for_status()
+            scan_resp = None
+            for attempt in range(2):  # 1 initial + 1 retry
+                try:
+                    scan_resp = await http.post(f"{INGESTION_URL}/scan", json={
+                        "text": context["query"],
+                    })
+                    scan_resp.raise_for_status()
+                    break
+                except (httpx.ConnectError, httpx.TimeoutException):
+                    if attempt == 0:
+                        log.warning("PII scan retry nach Verbindungsfehler...")
+                        await asyncio.sleep(1)
+                    else:
+                        raise
             scan_data = scan_resp.json()
 
             contains_pii = scan_data["contains_pii"]

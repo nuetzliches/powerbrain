@@ -63,6 +63,20 @@ class TestRetryConfig(unittest.TestCase):
         self.assertIn("except", func_body,
                        "log_access must handle /scan failures gracefully")
 
+    def test_check_opa_retry_has_backoff(self):
+        """check_opa_policy retry must use exponential backoff."""
+        func_start = self.source.index("async def check_opa_policy")
+        pre_func = self.source[max(0, func_start - 300):func_start]
+        self.assertIn("wait_exponential", pre_func,
+                       "check_opa_policy retry must use wait_exponential")
+
+    def test_check_opa_retry_has_stop(self):
+        """check_opa_policy retry must have a stop condition."""
+        func_start = self.source.index("async def check_opa_policy")
+        pre_func = self.source[max(0, func_start - 300):func_start]
+        self.assertIn("stop_after_attempt", pre_func,
+                       "check_opa_policy retry must use stop_after_attempt")
+
 
 if __name__ == "__main__":
     unittest.main()
