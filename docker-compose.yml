@@ -165,6 +165,7 @@ services:
       FORGEJO_TOKEN:   ${FORGEJO_TOKEN:-}
       RERANKER_URL:    http://reranker:8082
       RERANKER_ENABLED: "true"
+      AUTH_REQUIRED:   ${AUTH_REQUIRED:-true}
       MCP_HOST:        0.0.0.0
       MCP_PORT:        "8080"
       MCP_PATH:        /mcp
