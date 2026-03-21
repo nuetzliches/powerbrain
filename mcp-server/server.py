@@ -62,6 +62,16 @@ OTEL_ENABLED   = os.getenv("OTEL_ENABLED", "false").lower() == "true"
 OTLP_ENDPOINT  = os.getenv("OTLP_ENDPOINT", "http://tempo:4317")
 AUTH_REQUIRED  = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
 
+RATE_LIMIT_ENABLED    = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
+RATE_LIMIT_ANALYST    = int(os.getenv("RATE_LIMIT_ANALYST", "60"))
+RATE_LIMIT_DEVELOPER  = int(os.getenv("RATE_LIMIT_DEVELOPER", "120"))
+RATE_LIMIT_ADMIN      = int(os.getenv("RATE_LIMIT_ADMIN", "300"))
+RATE_LIMITS_BY_ROLE   = {
+    "analyst": RATE_LIMIT_ANALYST,
+    "developer": RATE_LIMIT_DEVELOPER,
+    "admin": RATE_LIMIT_ADMIN,
+}
+
 EMBEDDING_MODEL    = "nomic-embed-text"
 DEFAULT_TOP_K      = 10
 OVERSAMPLE_FACTOR  = 5
@@ -104,6 +114,11 @@ mcp_feedback_avg_rating = Gauge(
     "kb_feedback_avg_rating",
     "Aktueller Durchschnitt des Feedback-Ratings (letzte 24h)",
 )
+mcp_rate_limit_rejected = Counter(
+    "kb_rate_limit_rejected_total",
+    "Requests rejected by rate limiter",
+    ["agent_role"],
+)
 
 # ── OpenTelemetry Setup ──────────────────────────────────────
 tracer = None
@@ -129,6 +144,111 @@ def _otel_span(name: str):
         return tracer.start_as_current_span(name)
     from contextlib import nullcontext
     return nullcontext()
+
+
+# ── Rate Limiting ────────────────────────────────────────────
+
+class TokenBucket:
+    """In-memory token bucket for rate limiting."""
+
+    def __init__(self, capacity: float, refill_rate: float):
+        self.capacity = capacity
+        self.tokens = capacity
+        self.refill_rate = refill_rate  # tokens per second
+        self.last_refill = asyncio.get_event_loop().time() if asyncio.get_event_loop().is_running() else 0.0
+        self._lock = asyncio.Lock()
+        self.last_used = self.last_refill
+
+    async def consume(self) -> tuple[bool, float]:
+        """Try to consume a token. Returns (allowed, retry_after_seconds)."""
+        async with self._lock:
+            now = asyncio.get_event_loop().time()
+            elapsed = now - self.last_refill
+            self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate)
+            self.last_refill = now
+            self.last_used = now
+
+            if self.tokens >= 1.0:
+                self.tokens -= 1.0
+                return True, 0.0
+            else:
+                retry_after = (1.0 - self.tokens) / self.refill_rate
+                return False, retry_after
+
+
+_rate_limit_buckets: dict[str, TokenBucket] = {}
+_rate_limit_cleanup_counter = 0
+
+
+def _get_bucket(agent_id: str, role: str) -> TokenBucket:
+    """Get or create a token bucket for an agent."""
+    global _rate_limit_cleanup_counter
+    if agent_id not in _rate_limit_buckets:
+        rpm = RATE_LIMITS_BY_ROLE.get(role, RATE_LIMIT_ANALYST)
+        _rate_limit_buckets[agent_id] = TokenBucket(
+            capacity=float(rpm),
+            refill_rate=rpm / 60.0,
+        )
+    # Periodic cleanup of stale buckets (every 100 requests)
+    _rate_limit_cleanup_counter += 1
+    if _rate_limit_cleanup_counter >= 100:
+        _rate_limit_cleanup_counter = 0
+        now = asyncio.get_event_loop().time()
+        stale = [k for k, v in _rate_limit_buckets.items()
+                 if now - v.last_used > 600]
+        for k in stale:
+            del _rate_limit_buckets[k]
+    return _rate_limit_buckets[agent_id]
+
+
+class RateLimitMiddleware:
+    """Starlette middleware for per-agent rate limiting."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not RATE_LIMIT_ENABLED:
+            return await self.app(scope, receive, send)
+
+        # Skip rate limiting for health/metrics endpoints
+        path = scope.get("path", "")
+        if path in ("/health", "/metrics"):
+            return await self.app(scope, receive, send)
+
+        try:
+            # Extract agent info from auth state (set by AuthContextMiddleware)
+            user = scope.get("user")
+            if user and hasattr(user, "identity"):
+                agent_id = user.identity
+                role = user.scopes[0] if user.scopes else "analyst"
+                bucket = _get_bucket(agent_id, role)
+                allowed, retry_after = await bucket.consume()
+
+                if not allowed:
+                    mcp_rate_limit_rejected.labels(agent_role=role).inc()
+                    response_body = json.dumps({
+                        "error": "Rate limit exceeded",
+                        "retry_after": round(retry_after, 1),
+                    }).encode()
+                    await send({
+                        "type": "http.response.start",
+                        "status": 429,
+                        "headers": [
+                            [b"content-type", b"application/json"],
+                            [b"Retry-After", str(int(retry_after) + 1).encode()],
+                        ],
+                    })
+                    await send({
+                        "type": "http.response.body",
+                        "body": response_body,
+                    })
+                    return
+        except Exception as e:
+            # Fail open — rate limiter error should not block requests
+            log.warning(f"Rate limiter Fehler, Request wird durchgelassen: {e}")
+
+        return await self.app(scope, receive, send)
 
 
 # ── Clients ──────────────────────────────────────────────────
@@ -1333,6 +1453,8 @@ if __name__ == "__main__":
     verifier = ApiKeyVerifier()
     # AuthContextMiddleware: stores authenticated user in contextvars
     app = AuthContextMiddleware(app)
+    # RateLimitMiddleware: per-agent token bucket rate limiting (reads scope["user"])
+    app = RateLimitMiddleware(app)
     if AUTH_REQUIRED:
         # RequireAuthMiddleware: rejects unauthenticated requests with 401
         app = RequireAuthMiddleware(app, required_scopes=[])
