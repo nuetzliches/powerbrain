@@ -18,6 +18,8 @@ volumes:
   prometheus_data:
   grafana_data:
   tempo_data:
+  caddy_data:
+  caddy_config:
 
 secrets:
   pg_password:
@@ -314,3 +316,24 @@ services:
     networks:
       - kb-net
     restart: "no"
+
+  # ── Caddy (TLS Reverse Proxy, optional) ───────────────────
+  caddy:
+    profiles: ["tls"]
+    image: caddy:2-alpine
+    container_name: kb-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    networks:
+      - kb-net
+    restart: unless-stopped
+    depends_on:
+      - mcp-server
+      - ingestion

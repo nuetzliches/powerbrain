@@ -1,0 +1,27 @@
+{$DOMAIN:localhost} {
+    # MCP Server
+    handle /mcp* {
+        reverse_proxy mcp-server:8080
+    }
+
+    # Ingestion API
+    handle /ingest* {
+        reverse_proxy ingestion:8081
+    }
+    handle /scan* {
+        reverse_proxy ingestion:8081
+    }
+    handle /snapshots* {
+        reverse_proxy ingestion:8081
+    }
+
+    # Grafana
+    handle /grafana* {
+        reverse_proxy grafana:3000
+    }
+
+    # Health endpoint
+    handle /health {
+        respond "ok" 200
+    }
+}
