@@ -1,0 +1,18 @@
+[project]
+name = "powerbrain"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = [
+    "mcp-server/tests",
+    "ingestion/tests",
+    "reranker/tests",
+    "evaluation/tests",
+    "tests/integration",
+]
+asyncio_mode = "auto"
+addopts = "--import-mode=importlib"
+markers = [
+    "integration: requires running services (deselect with -m 'not integration')",
+]
