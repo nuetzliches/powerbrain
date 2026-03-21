@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx
 import uvicorn
+import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -63,6 +64,7 @@ PROXY_ITERATIONS = Histogram(
 
 tool_injector = ToolInjector()
 http_client: httpx.AsyncClient | None = None
+llm_acompletion: Any = None
 
 
 # ── OPA Helper ───────────────────────────────────────────────
@@ -105,12 +107,39 @@ class ChatCompletionRequest(BaseModel):
     model_config = {"extra": "allow"}
 
 
+# ── LLM Router ───────────────────────────────────────────────
+
+def _load_llm_router() -> Any:
+    """Load LiteLLM Router from YAML config. Falls back to litellm.acompletion."""
+    import litellm
+
+    config_path = config.LITELLM_CONFIG
+    try:
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        log.warning("LiteLLM config not found at %s, using direct completion", config_path)
+        return litellm.acompletion
+
+    model_list = cfg.get("model_list", [])
+    if not model_list:
+        log.info("LiteLLM config has empty model_list, using direct completion")
+        return litellm.acompletion
+
+    router = litellm.Router(model_list=model_list)
+    log.info("LiteLLM Router loaded with %d model(s): %s",
+             len(model_list),
+             [m.get("model_name", "?") for m in model_list])
+    return router.acompletion
+
+
 # ── Application ──────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global http_client
+    global http_client, llm_acompletion
     http_client = httpx.AsyncClient(timeout=config.REQUEST_TIMEOUT)
+    llm_acompletion = _load_llm_router()
     prom_start_http_server(config.METRICS_PORT)
     log.info("Prometheus metrics on port %d", config.METRICS_PORT)
 
@@ -187,7 +216,7 @@ async def chat_completions(request: ChatCompletionRequest):
         litellm_kwargs["top_p"] = request.top_p
 
     # Run agent loop
-    loop = AgentLoop(tool_injector, max_iterations=max_iterations)
+    loop = AgentLoop(tool_injector, acompletion=llm_acompletion, max_iterations=max_iterations)
     try:
         result: AgentLoopResult = await asyncio.wait_for(
             loop.run(
