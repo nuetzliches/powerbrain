@@ -10,10 +10,12 @@ Baustein 4: create_snapshot, list_snapshots
 Baustein 5: Prometheus-Metriken (/metrics HTTP auf Port 8080) + OpenTelemetry Tracing
 """
 
+import asyncio
 import os
 import json
 import logging
 import time
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -135,9 +137,8 @@ pg_pool: asyncpg.Pool | None = None
 
 
 async def get_pg_pool() -> asyncpg.Pool:
-    global pg_pool
     if pg_pool is None:
-        pg_pool = await asyncpg.create_pool(POSTGRES_URL, min_size=2, max_size=10)
+        raise RuntimeError("PG pool not initialized — server not started via lifespan")
     return pg_pool
 
 
@@ -236,6 +237,30 @@ async def check_opa_policy(agent_id: str, agent_role: str,
 
         mcp_policy_decisions_total.labels(result="allow" if allowed else "deny").inc()
         return {"allowed": allowed, "input": input_data}
+
+
+async def filter_by_policy(
+    hits: list,
+    agent_id: str,
+    agent_role: str,
+    resource_prefix: str,
+) -> list:
+    """Check OPA policies for all hits in parallel, return allowed ones."""
+    if not hits:
+        return []
+
+    async def _check(hit):
+        classification = hit.payload.get("classification", "internal")
+        policy = await check_opa_policy(
+            agent_id, agent_role,
+            f"{resource_prefix}/{hit.id}", classification,
+        )
+        if policy["allowed"]:
+            return hit
+        return None
+
+    results = await asyncio.gather(*[_check(h) for h in hits])
+    return [h for h in results if h is not None]
 
 
 async def log_access(agent_id: str, agent_role: str,
@@ -726,18 +751,18 @@ async def _dispatch(name: str, arguments: dict[str, Any],
                 query_filter=qdrant_filter, limit=oversample_k, with_payload=True,
             )
 
-        filtered = []
-        for hit in results.points:
-            classification = hit.payload.get("classification", "internal")
-            policy = await check_opa_policy(agent_id, agent_role,
-                                            f"{collection}/{hit.id}", classification)
-            if policy["allowed"]:
-                filtered.append({
-                    "id": str(hit.id), "score": round(hit.score, 4),
-                    "content": hit.payload.get("text", hit.payload.get("content", "")),
-                    "metadata": {k: v for k, v in hit.payload.items()
-                                 if k not in ("content", "text")},
-                })
+        allowed_hits = await filter_by_policy(
+            results.points, agent_id, agent_role, collection,
+        )
+        filtered = [
+            {
+                "id": str(hit.id), "score": round(hit.score, 4),
+                "content": hit.payload.get("text", hit.payload.get("content", "")),
+                "metadata": {k: v for k, v in hit.payload.items()
+                             if k not in ("content", "text")},
+            }
+            for hit in allowed_hits
+        ]
 
         reranked = await rerank_results(query, filtered, top_n=top_k)
         mcp_search_results_count.labels(collection=collection).observe(len(reranked))
@@ -910,16 +935,21 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         q += " ORDER BY created_at DESC LIMIT 100"
         rows = await pool.fetch(q, *params)
 
-        datasets = []
-        for r in rows:
-            policy = await check_opa_policy(agent_id, agent_role,
-                                            f"dataset/{r['id']}", r["classification"])
+        async def _check_dataset(r):
+            policy = await check_opa_policy(
+                agent_id, agent_role,
+                f"dataset/{r['id']}", r["classification"],
+            )
             if policy["allowed"]:
-                datasets.append({
+                return {
                     "id": str(r["id"]), "name": r["name"],
                     "project": r["project"], "classification": r["classification"],
                     "created_at": r["created_at"].isoformat() if r["created_at"] else None,
-                })
+                }
+            return None
+
+        checked = await asyncio.gather(*[_check_dataset(r) for r in rows])
+        datasets = [d for d in checked if d is not None]
 
         return [TextContent(type="text",
             text=json.dumps({"datasets": datasets, "count": len(datasets)}, ensure_ascii=False, indent=2))]
@@ -944,18 +974,27 @@ async def _dispatch(name: str, arguments: dict[str, Any],
             query_filter=qdrant_filter, limit=oversample_k, with_payload=True,
         )
 
-        code_results = []
-        for hit in results.points:
+        async def _check_code(hit):
             classification = hit.payload.get("classification", "internal")
-            policy = await check_opa_policy(agent_id, agent_role, f"code/{hit.id}", classification)
+            policy = await check_opa_policy(
+                agent_id, agent_role, f"code/{hit.id}", classification,
+            )
             if policy["allowed"]:
-                code_results.append({
-                    "id": str(hit.id), "score": round(hit.score, 4),
-                    "content": hit.payload.get("content", ""),
-                    "metadata": {"repo": hit.payload.get("repo"),
-                                 "path": hit.payload.get("path"),
-                                 "language": hit.payload.get("language")},
-                })
+                return hit
+            return None
+
+        checked_hits = await asyncio.gather(*[_check_code(h) for h in results.points])
+        allowed_hits = [h for h in checked_hits if h is not None]
+        code_results = [
+            {
+                "id": str(hit.id), "score": round(hit.score, 4),
+                "content": hit.payload.get("content", ""),
+                "metadata": {"repo": hit.payload.get("repo"),
+                             "path": hit.payload.get("path"),
+                             "language": hit.payload.get("language")},
+            }
+            for hit in allowed_hits
+        ]
 
         reranked = await rerank_results(query, code_results, top_n=top_k)
         await log_access(agent_id, agent_role, "code", "knowledge_code", "search", "allow", {
@@ -1238,9 +1277,26 @@ if __name__ == "__main__":
         async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
             await session_manager.handle_request(scope, receive, send)
 
+    @asynccontextmanager
+    async def lifespan(app):
+        """Startup/shutdown lifecycle: PG pool, HTTP client, MCP session manager."""
+        global pg_pool
+        # ── Startup ──
+        pg_pool = await asyncpg.create_pool(POSTGRES_URL, min_size=2, max_size=10)
+        await pg_pool.fetchval("SELECT 1")
+        log.info("PostgreSQL pool ready (%s)", POSTGRES_URL.split("@")[-1])
+
+        async with session_manager.run():
+            yield
+
+        # ── Shutdown ──
+        await http.aclose()
+        await pg_pool.close()
+        log.info("Shutdown: PG pool and HTTP client closed")
+
     app = Starlette(
         routes=[Route(MCP_PATH, endpoint=MCPTransport())],
-        lifespan=lambda app: session_manager.run(),
+        lifespan=lifespan,
     )
 
     # ── Auth-Middleware (inside-out: last applied = outermost) ──
