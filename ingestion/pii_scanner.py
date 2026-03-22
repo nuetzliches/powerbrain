@@ -17,7 +17,6 @@ Abhängigkeiten (requirements.txt):
 """
 
 import os
-import re
 import hashlib
 import logging
 from dataclasses import dataclass, field
@@ -25,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
 from presidio_analyzer.nlp_engine import NlpEngineProvider
@@ -42,7 +41,7 @@ class PatternConfig(BaseModel):
     """A single regex pattern for a custom recognizer."""
     name: str
     regex: str
-    score: float = 0.6
+    score: float = Field(0.6, ge=0.0, le=1.0)
 
 
 class RecognizerConfig(BaseModel):
@@ -61,7 +60,7 @@ class LanguageConfig(BaseModel):
 
 class PIIScannerConfig(BaseModel):
     """Top-level PII scanner configuration."""
-    min_confidence: float = 0.7
+    min_confidence: float = Field(0.7, ge=0.0, le=1.0)
     languages: list[LanguageConfig] = [
         LanguageConfig(code="de", model="de_core_news_md"),
         LanguageConfig(code="en", model="en_core_web_lg"),
@@ -75,17 +74,9 @@ class PIIScannerConfig(BaseModel):
     @property
     def all_entity_types(self) -> list[str]:
         """Return deduplicated entity types including custom recognizers."""
-        seen: set[str] = set()
-        result: list[str] = []
-        for et in self.entity_types:
-            if et not in seen:
-                seen.add(et)
-                result.append(et)
-        for rec in self.custom_recognizers:
-            if rec.entity_type not in seen:
-                seen.add(rec.entity_type)
-                result.append(rec.entity_type)
-        return result
+        return list(dict.fromkeys(
+            self.entity_types + [r.entity_type for r in self.custom_recognizers]
+        ))
 
 
 # ── Config Loading ──────────────────────────────────────────
@@ -108,9 +99,13 @@ def load_config(path: str | Path | None = None) -> PIIScannerConfig:
     if not config_path.exists():
         log.warning("PII config file not found at %s, using defaults", config_path)
         return PIIScannerConfig()
-    with open(config_path) as f:
-        data = yaml.safe_load(f)
-    return PIIScannerConfig(**data)
+    try:
+        with open(config_path) as f:
+            data = yaml.safe_load(f)
+        return PIIScannerConfig(**data)
+    except (yaml.YAMLError, Exception) as exc:
+        log.warning("Failed to load PII config from %s: %s, using defaults", config_path, exc)
+        return PIIScannerConfig()
 
 
 # ── Scan-Ergebnis ──────────────────────────────────────────
