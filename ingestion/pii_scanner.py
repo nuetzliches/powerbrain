@@ -218,16 +218,16 @@ class PIIScanner:
             score_threshold=MIN_CONFIDENCE,
         )
 
-        def make_pseudonym(entity_text: str) -> str:
+        def make_pseudonym(entity_text: str, entity_type: str) -> str:
             h = hashlib.sha256(f"{salt}:{entity_text}".encode()).hexdigest()[:8]
-            return h
+            return f"[{entity_type}:{h}]"
 
         # Baue individuelle Pseudonyme pro Ergebnis (nicht pro Entity-Typ),
         # damit mehrere Entities gleichen Typs unterschiedliche Pseudonyme bekommen.
         mapping: dict[str, str] = {}
         for r in results:
             original = text[r.start:r.end]
-            pseudo = make_pseudonym(original)
+            pseudo = make_pseudonym(original, r.entity_type)
             mapping[original] = pseudo
 
         # Manuell ersetzen statt Presidio's anonymizer (der per-Typ-Operatoren braucht).
@@ -235,7 +235,7 @@ class PIIScanner:
         pseudonymized = text
         for r in sorted(results, key=lambda x: x.start, reverse=True):
             original = pseudonymized[r.start:r.end]
-            pseudo = mapping.get(original, make_pseudonym(original))
+            pseudo = mapping.get(original, make_pseudonym(original, r.entity_type))
             pseudonymized = pseudonymized[:r.start] + pseudo + pseudonymized[r.end:]
 
         return pseudonymized, mapping

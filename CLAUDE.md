@@ -269,6 +269,7 @@ cd mcp-server && python3 -m pytest tests/ -v
 7. ✅ **Docker Secrets** — `/run/secrets/` with env var fallback
 8. ✅ **TLS Profile** — Optional Caddy reverse proxy (`docker compose --profile tls up`)
 9. ✅ **AI Provider Proxy** — Optional LLM gateway with transparent tool injection (`docker compose --profile proxy`)
+10. ✅ **Chat-Path PII Protection** — Reversible pseudonymization in proxy chat path (`pb-proxy/pii_middleware.py`, OPA-controlled)
 
 Details on all features: see `docs/architektur.md`
 

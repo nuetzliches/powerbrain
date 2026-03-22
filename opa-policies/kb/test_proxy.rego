@@ -60,3 +60,59 @@ test_max_iterations_admin if {
         "agent_role": "admin",
     }
 }
+
+# ── PII Protection Tests ─────────────────────────────────────
+
+test_pii_scan_enabled_default if {
+    proxy.pii_scan_enabled with input as {"agent_role": "analyst"}
+}
+
+test_pii_scan_enabled_for_developer if {
+    proxy.pii_scan_enabled with input as {"agent_role": "developer"}
+}
+
+test_pii_scan_admin_opt_out_allowed if {
+    not proxy.pii_scan_enabled with input as {
+        "agent_role": "admin",
+        "pii_scan_opt_out": true,
+    }
+}
+
+test_pii_scan_admin_opt_out_blocked_when_forced if {
+    proxy.pii_scan_enabled with input as {
+        "agent_role": "admin",
+        "pii_scan_opt_out": true,
+        "pii_scan_forced": true,
+    }
+}
+
+test_pii_scan_non_admin_cannot_opt_out if {
+    proxy.pii_scan_enabled with input as {
+        "agent_role": "analyst",
+        "pii_scan_opt_out": true,
+    }
+}
+
+test_pii_entity_types_defined if {
+    count(proxy.pii_entity_types) > 0
+    "PERSON" in proxy.pii_entity_types
+    "EMAIL_ADDRESS" in proxy.pii_entity_types
+}
+
+test_pii_scan_forced_default_false if {
+    not proxy.pii_scan_forced with input as {}
+}
+
+# ── Non-Text Content Tests ───────────────────────────────────
+
+test_non_text_default_placeholder if {
+    proxy.non_text_content_action == "placeholder" with input as {"agent_role": "analyst"}
+}
+
+test_non_text_admin_allow if {
+    proxy.non_text_content_action == "allow" with input as {"agent_role": "admin"}
+}
+
+test_non_text_developer_placeholder if {
+    proxy.non_text_content_action == "placeholder" with input as {"agent_role": "developer"}
+}

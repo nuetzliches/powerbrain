@@ -139,6 +139,9 @@ class TestPseudonymizeText:
         _, map2 = scanner.pseudonymize_text("Max is here", "salt2")
 
         assert map1["Max"] != map2["Max"]
+        # Both should still have typed format
+        assert map1["Max"].startswith("[PERSON:")
+        assert map2["Max"].startswith("[PERSON:")
 
     def test_no_pii_returns_original(self, scanner):
         scanner.analyzer.analyze.return_value = []
@@ -157,3 +160,38 @@ class TestPseudonymizeText:
         result, mapping = scanner.pseudonymize_text("Max is here", "salt")
         assert "Max" not in result
         assert mapping["Max"] in result
+
+    def test_typed_format_in_mapping(self, scanner):
+        """Pseudonyms in mapping must use [TYPE:hash] format."""
+        mock_r = MagicMock()
+        mock_r.entity_type = "PERSON"
+        mock_r.start = 0
+        mock_r.end = 3
+        mock_r.score = 0.9
+        scanner.analyzer.analyze.return_value = [mock_r]
+
+        _, mapping = scanner.pseudonymize_text("Max is here", "salt")
+        pseudo = mapping["Max"]
+        assert pseudo.startswith("[PERSON:")
+        assert pseudo.endswith("]")
+        # 8-char hex between colon and bracket
+        hex_part = pseudo[len("[PERSON:"):-1]
+        assert len(hex_part) == 8
+        int(hex_part, 16)  # must be valid hex
+
+    def test_typed_format_in_text(self, scanner):
+        """Verify [EMAIL_ADDRESS:hash] format appears in pseudonymized text."""
+        mock_r = MagicMock()
+        mock_r.entity_type = "EMAIL_ADDRESS"
+        mock_r.start = 9
+        mock_r.end = 24
+        mock_r.score = 0.99
+        scanner.analyzer.analyze.return_value = [mock_r]
+
+        text = "Kontakt: max@example.com bitte"
+        result, mapping = scanner.pseudonymize_text(text, "project-salt")
+        pseudo = mapping["max@example.com"]
+        assert pseudo.startswith("[EMAIL_ADDRESS:")
+        assert pseudo.endswith("]")
+        assert "[EMAIL_ADDRESS:" in result
+        assert "max@example.com" not in result

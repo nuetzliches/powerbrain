@@ -1,7 +1,7 @@
 # Chat-Path PII Protection — Design
 
 **Datum:** 2026-03-22
-**Status:** Entwurf
+**Status:** Implementiert
 **Ansatz:** A — Proxy-Middleware ruft Ingestion-Service
 
 ## Problem

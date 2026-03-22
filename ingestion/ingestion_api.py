@@ -6,6 +6,7 @@ Wird vom MCP-Server über das Docker-Netzwerk aufgerufen.
 
 Endpoints:
   POST /scan              — Text auf PII scannen (ohne Ingestion)
+  POST /pseudonymize      — Text pseudonymisieren ohne Speicherung (Chat-Pfad)
   POST /ingest            — Text einspeisen (full privacy pipeline)
   POST /ingest/chunks     — Vorverarbeitete Chunks einspeisen (Adapter, ingest_text_chunks pipeline)
   POST /snapshots/create  — Wissens-Snapshot erstellen
@@ -100,6 +101,19 @@ class ScanRequest(BaseModel):
 class ScanResponse(BaseModel):
     contains_pii: bool = Field(description="Ob PII erkannt wurde")
     masked_text: str = Field(description="Text mit maskierten PII-Entitäten")
+    entity_types: list[str] = Field(description="Liste erkannter PII-Typen")
+
+
+class PseudonymizeRequest(BaseModel):
+    text: str = Field(min_length=1, description="Text der pseudonymisiert werden soll")
+    salt: str = Field(min_length=1, description="Salt für deterministische Pseudonyme")
+    language: str = Field(default="de", description="Sprache des Textes (de, en)")
+
+
+class PseudonymizeResponse(BaseModel):
+    text: str = Field(description="Pseudonymisierter Text")
+    mapping: dict[str, str] = Field(description="Mapping original → pseudonym")
+    contains_pii: bool = Field(description="Ob PII erkannt wurde")
     entity_types: list[str] = Field(description="Liste erkannter PII-Typen")
 
 
@@ -468,6 +482,34 @@ async def scan(req: ScanRequest) -> ScanResponse:
     return ScanResponse(
         contains_pii=scan_result.contains_pii,
         masked_text=masked,
+        entity_types=entity_types,
+    )
+
+
+@app.post("/pseudonymize")
+async def pseudonymize(req: PseudonymizeRequest) -> PseudonymizeResponse:
+    """Pseudonymisiert PII im Text ohne Speicherung.
+
+    Wird vom pb-proxy aufgerufen, bevor Chat-Nachrichten
+    an den LLM-Provider gesendet werden.
+    """
+    scanner = get_scanner()
+    scan_result = scanner.scan_text(req.text, language=req.language)
+
+    if scan_result.contains_pii:
+        pseudonymized, mapping = scanner.pseudonymize_text(
+            req.text, salt=req.salt, language=req.language,
+        )
+        entity_types = list(scan_result.entity_counts.keys())
+    else:
+        pseudonymized = req.text
+        mapping = {}
+        entity_types = []
+
+    return PseudonymizeResponse(
+        text=pseudonymized,
+        mapping=mapping,
+        contains_pii=scan_result.contains_pii,
         entity_types=entity_types,
     )
 

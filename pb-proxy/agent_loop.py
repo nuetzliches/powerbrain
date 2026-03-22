@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from tool_injection import ToolInjector
+from pii_middleware import depseudonymize_tool_arguments
 import config
 
 log = logging.getLogger("pb-proxy.loop")
@@ -39,11 +40,13 @@ class AgentLoop:
         acompletion: ACompletion,
         max_iterations: int = 10,
         tool_call_timeout: int | None = None,
+        pii_reverse_map: dict[str, str] | None = None,
     ) -> None:
         self._injector = tool_injector
         self._acompletion = acompletion
         self._max_iterations = max_iterations
         self._tool_call_timeout = tool_call_timeout or config.TOOL_CALL_TIMEOUT
+        self._pii_reverse_map = pii_reverse_map or {}
 
     async def run(
         self,
@@ -101,6 +104,12 @@ class AgentLoop:
                     log.warning("Invalid JSON in tool arguments for %s: %s",
                                 tool_name, tc.function.arguments)
                     arguments = {}
+
+                # De-pseudonymize tool arguments before MCP call
+                if self._pii_reverse_map:
+                    arguments = depseudonymize_tool_arguments(
+                        arguments, self._pii_reverse_map
+                    )
 
                 if tool_name in self._injector.tool_names:
                     # Execute against MCP server
