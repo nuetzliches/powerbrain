@@ -418,7 +418,7 @@ benefits the MCP server and proxy).
 |------|----------|------------|
 | Multi-MCP-Server support for proxy | Medium | Proxy MVP |
 | ~~SSE streaming through proxy~~ | ~~Medium~~ | ✅ Implemented |
-| Model discovery (wildcard/passthrough routing) | Medium | Proxy MVP |
+| ~~Model discovery (wildcard/passthrough routing)~~ | ~~Medium~~ | ✅ Implemented |
 | Proxy authentication (separate from provider keys) | Medium | Proxy MVP |
 | Client tool passthrough | Low | Proxy MVP |
 | KB REST API service | Medium | Service layer extraction |

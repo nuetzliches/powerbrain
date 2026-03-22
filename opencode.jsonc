@@ -4,10 +4,14 @@
   // Routes LLM requests through pb-proxy (PII pseudonymization +
   // Powerbrain tool injection).
   // Activate: docker compose --profile proxy up -d
-  // Auth: /connect → Other → id "powerbrain-proxy" → your provider API key
-  //   (e.g. Anthropic key for Claude models). The proxy forwards it to
-  //   the LLM provider. If no key is set, the proxy uses its central key
-  //   from secrets/anthropic_api_key.txt.
+  //
+  // Models support two formats:
+  //   - Short aliases from litellm_config.yaml (e.g. "claude-opus")
+  //   - Passthrough: "provider/model" (e.g. "anthropic/claude-3-5-haiku-20241022")
+  //
+  // API key resolution (in order):
+  //   1. Your Bearer token (/connect → Other → your API key)
+  //   2. Central key from secrets/ (e.g. secrets/anthropic_api_key.txt)
   "provider": {
     "powerbrain-proxy": {
       "npm": "@ai-sdk/openai-compatible",
@@ -17,25 +21,34 @@
       },
       "models": {
         "claude-opus": {
-          "name": "Claude Opus 4 (via Powerbrain)",
+          "name": "Claude Opus 4 (alias)",
           "limit": {
             "context": 200000,
             "output": 32000
           }
         },
+        "anthropic/claude-sonnet-4-20250514": {
+          "name": "Claude Sonnet 4 (passthrough)",
+          "limit": {
+            "context": 200000,
+            "output": 16000
+          }
+        },
+        "anthropic/claude-3-5-haiku-20241022": {
+          "name": "Claude Haiku 3.5 (passthrough)",
+          "limit": {
+            "context": 200000,
+            "output": 8192
+          }
+        },
         "gpt-4o": {
-          "name": "GPT-4o (via Powerbrain)",
+          "name": "GPT-4o (alias)",
           "limit": {
             "context": 128000,
             "output": 16384
           }
         }
       }
-      // BACKLOG: Haiku support — Anthropic model ID mismatch.
-      // The proxy tried claude-3-5-haiku-20241022, but Anthropic returned
-      // "not_found_error". OpenCode shows "Claude Haiku 3.5 (latest)" with
-      // an unknown internal model ID. Need to determine the exact model name
-      // on your Anthropic account and add to litellm_config.yaml.
     }
   },
   "mcp": {

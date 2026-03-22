@@ -1,17 +1,23 @@
 # LiteLLM Model Configuration for Powerbrain AI Provider Proxy
 # Docs: https://docs.litellm.ai/docs/proxy/configs
 #
-# Each entry maps a model_name (used in API requests) to a
-# provider-specific model identifier + credentials.
+# This file defines curated model ALIASES — short names that map to
+# specific provider/model combinations with pre-configured credentials.
 #
-# The proxy loads this file at startup via LITELLM_CONFIG env var.
-# If model_list is empty, the proxy falls back to direct LiteLLM
-# routing (model name = provider/model, e.g. "openai/gpt-4o").
+# Models NOT listed here can still be used via PASSTHROUGH ROUTING:
+#   Request model = "provider/model-name" (e.g. "anthropic/claude-3-5-haiku-20241022")
+#   The proxy resolves the API key from the user's Bearer token or
+#   from PROVIDER_KEY_MAP (auto-discovered from env vars / Docker Secrets).
+#
+# You only need entries here for:
+#   - Short aliases (e.g. "claude-opus" instead of "anthropic/claude-opus-4-20250514")
+#   - Non-standard routing (e.g. GitHub Models, custom API base URLs)
+#   - Multi-key rotation / load balancing (LiteLLM Router feature)
 
 model_list:
   # ── GitHub Models (via PAT) ────────────────────────────────
-  # Uses GitHub Models API at models.inference.ai.azure.com.
-  # Requires a GitHub PAT stored in secrets/github_pat.txt.
+  # Uses GitHub Models API — needs alias because the provider prefix
+  # is "github/" which differs from the standard routing.
   - model_name: "gpt-4o"
     litellm_params:
       model: "github/gpt-4o"
@@ -22,60 +28,28 @@ model_list:
       model: "github/gpt-4o-mini"
       api_key: "os.environ/GITHUB_PAT"
 
-  # Claude is not available on all GitHub Models accounts.
-  # Uncomment if your PAT has access:
-  # - model_name: "claude-sonnet"
-  #   litellm_params:
-  #     model: "github/claude-sonnet-4-20250514"
-  #     api_key: "os.environ/GITHUB_PAT"
-
-  # ── Local Ollama (works out of the box with Docker Compose) ──
-  # - model_name: "llama"
-  #   litellm_params:
-  #     model: "ollama/llama3.2"
-  #     api_base: "http://ollama:11434"
-
-  # ── OpenAI ─────────────────────────────────────────────────
-  # - model_name: "gpt-4o"
-  #   litellm_params:
-  #     model: "openai/gpt-4o"
-  #     api_key: "os.environ/OPENAI_API_KEY"
-
-  # ── Anthropic ──────────────────────────────────────────────
-  # Using direct Anthropic model IDs (not LiteLLM aliases).
-  # Get latest models from https://docs.anthropic.com/en/docs/about/models
+  # ── Anthropic (curated alias) ──────────────────────────────
+  # Short alias for the most-used Anthropic model.
+  # Other Anthropic models are available via passthrough:
+  #   "anthropic/claude-sonnet-4-20250514"
+  #   "anthropic/claude-3-5-haiku-20241022"
+  #   etc. — no config entry needed.
   - model_name: "claude-opus"
     litellm_params:
       model: "anthropic/claude-opus-4-20250514"
       api_key: "os.environ/ANTHROPIC_API_KEY"
 
-  - model_name: "claude-sonnet"
-    litellm_params:
-      model: "anthropic/claude-3-5-sonnet-20241022"
-      api_key: "os.environ/ANTHROPIC_API_KEY"
-
-  - model_name: "claude-haiku"
-    litellm_params:
-      model: "anthropic/claude-3-5-haiku-20241022"
-      api_key: "os.environ/ANTHROPIC_API_KEY"
+  # ── Local Ollama ───────────────────────────────────────────
+  # Uncomment to add a local model alias:
+  # - model_name: "llama"
+  #   litellm_params:
+  #     model: "ollama/llama3.2"
+  #     api_base: "http://ollama:11434"
 
   # ── Existing LiteLLM Proxy ─────────────────────────────────
-  # If you already run a LiteLLM Proxy server, route through it.
-  # pb-proxy adds Powerbrain tool injection on top of your
-  # existing routing, fallbacks, and rate limits.
-  #
+  # If you already run a LiteLLM Proxy, route through it:
   # - model_name: "gpt-4o"
   #   litellm_params:
   #     model: "openai/gpt-4o"
   #     api_base: "http://your-litellm-proxy:4000"
   #     api_key: "os.environ/LITELLM_PROXY_KEY"
-  #
-  # - model_name: "claude-sonnet"
-  #   litellm_params:
-  #     model: "openai/claude-sonnet"
-  #     api_base: "http://your-litellm-proxy:4000"
-  #     api_key: "os.environ/LITELLM_PROXY_KEY"
-  #
-  # Note: Use "openai/" prefix for all models routed through a
-  # LiteLLM Proxy, since the proxy exposes an OpenAI-compatible API.
-  # The actual provider mapping is handled by your LiteLLM Proxy.

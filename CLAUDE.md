@@ -199,14 +199,20 @@ Sits between AI consumers and LLM providers:
 4. When LLM returns tool calls → proxy executes against MCP server
 5. Repeats until final response, then returns to client
 
+**Dual-mode model routing:**
+- **Aliases** — short names from `litellm_config.yaml` (e.g., `"claude-opus"` → `anthropic/claude-opus-4-20250514`)
+- **Passthrough** — any `provider/model` format (e.g., `"anthropic/claude-3-5-haiku-20241022"`) routes directly via LiteLLM without config entries
+
+API key resolution (passthrough): user Bearer token → `PROVIDER_KEY_MAP` env var → 401.
+
 Endpoints:
-- `GET /v1/models` — Lists configured models (OpenAI-compatible)
+- `GET /v1/models` — Lists configured model aliases (OpenAI-compatible)
 - `POST /v1/chat/completions` — Chat endpoint with tool injection + agent loop
 - `GET /health` — Health check
 
 Supports SSE streaming (`"stream": true`).
 OPA policies (`kb.proxy`) control: provider access, required tools, max iterations.
-Configuration: `pb-proxy/litellm_config.yaml` for LLM provider setup.
+Configuration: `pb-proxy/litellm_config.yaml` for curated aliases (passthrough needs no config).
 
 ## Development
 
@@ -278,6 +284,7 @@ cd mcp-server && python3 -m pytest tests/ -v
 10. ✅ **Chat-Path PII Protection** — Reversible pseudonymization in proxy chat path (`pb-proxy/pii_middleware.py`, OPA-controlled)
 11. ✅ **Proxy Model Discovery** — `GET /v1/models` endpoint for OpenAI-compatible client integration
 12. ✅ **Proxy SSE Streaming** — Simulated streaming via SSE chunks for `stream: true` requests
+13. ✅ **Passthrough Routing** — Dual-mode model routing: aliases via Router + `provider/model` passthrough via direct LiteLLM
 
 Details on all features: see `docs/architektur.md`
 

@@ -84,8 +84,10 @@ PII_SCAN_FAILURES = Counter(
 tool_injector = ToolInjector()
 http_client: httpx.AsyncClient | None = None
 pii_http_client: httpx.AsyncClient | None = None
-llm_acompletion: Any = None
+router_acompletion: Any = None      # LiteLLM Router (for aliases)
+direct_acompletion: Any = None      # LiteLLM direct (for passthrough)
 model_list: list[dict[str, Any]] = []
+known_aliases: set[str] = set()     # Model names configured in Router
 
 
 # ── OPA Helper ───────────────────────────────────────────────
@@ -130,10 +132,10 @@ class ChatCompletionRequest(BaseModel):
 
 # ── LLM Router ───────────────────────────────────────────────
 
-def _load_llm_router() -> tuple[Any, list[dict[str, Any]]]:
-    """Load LiteLLM Router from YAML config. Falls back to litellm.acompletion.
+def _load_llm_router() -> tuple[Any | None, Any, list[dict[str, Any]], set[str]]:
+    """Load LiteLLM Router from YAML config + direct fallback.
 
-    Returns (acompletion_callable, model_list_from_config).
+    Returns (router_acompletion_or_None, direct_acompletion, model_list, known_aliases).
     """
     import litellm
 
@@ -142,29 +144,29 @@ def _load_llm_router() -> tuple[Any, list[dict[str, Any]]]:
         with open(config_path) as f:
             cfg = yaml.safe_load(f) or {}
     except FileNotFoundError:
-        log.warning("LiteLLM config not found at %s, using direct completion", config_path)
-        return litellm.acompletion, []
+        log.warning("LiteLLM config not found at %s, using direct completion only", config_path)
+        return None, litellm.acompletion, [], set()
 
     models = cfg.get("model_list", [])
     if not models:
-        log.info("LiteLLM config has empty model_list, using direct completion")
-        return litellm.acompletion, []
+        log.info("LiteLLM config has empty model_list, using direct completion only")
+        return None, litellm.acompletion, [], set()
 
     router = litellm.Router(model_list=models)
-    log.info("LiteLLM Router loaded with %d model(s): %s",
-             len(models),
-             [m.get("model_name", "?") for m in models])
-    return router.acompletion, models
+    aliases = {m.get("model_name", "") for m in models}
+    log.info("LiteLLM Router loaded with %d alias(es): %s", len(aliases), sorted(aliases))
+    log.info("Passthrough routing enabled for providers: %s", sorted(config.PROVIDER_KEY_MAP.keys()))
+    return router.acompletion, litellm.acompletion, models, aliases
 
 
 # ── Application ──────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global http_client, pii_http_client, llm_acompletion, model_list
+    global http_client, pii_http_client, router_acompletion, direct_acompletion, model_list, known_aliases
     http_client = httpx.AsyncClient(timeout=config.REQUEST_TIMEOUT)
     pii_http_client = httpx.AsyncClient(timeout=10)
-    llm_acompletion, model_list = _load_llm_router()
+    router_acompletion, direct_acompletion, model_list, known_aliases = _load_llm_router()
     prom_start_http_server(config.METRICS_PORT)
     log.info("Prometheus metrics on port %d", config.METRICS_PORT)
 
@@ -225,6 +227,51 @@ async def list_models():
             "owned_by": owner,
         })
     return {"object": "list", "data": data}
+
+
+def _resolve_provider_key(model: str, user_api_key: str | None) -> tuple[Any, dict[str, Any]]:
+    """Determine which acompletion callable + extra kwargs to use.
+
+    For known aliases: use Router.
+    For provider/model format: use direct litellm.acompletion with resolved key.
+    Returns (acompletion_callable, extra_kwargs).
+    Raises HTTPException if model can't be routed.
+    """
+    extra_kwargs: dict[str, Any] = {}
+
+    if model in known_aliases:
+        acompletion = router_acompletion or direct_acompletion
+        if user_api_key:
+            extra_kwargs["api_key"] = user_api_key
+        return acompletion, extra_kwargs
+
+    # Passthrough: model must be "provider/model-name" format
+    if "/" not in model:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown model '{model}'. "
+                f"Use 'provider/model-name' format (e.g. 'anthropic/claude-opus-4-20250514') "
+                f"or one of the configured aliases: {sorted(known_aliases)}"
+            ),
+        )
+
+    provider = model.split("/")[0]
+
+    # Resolve API key: user token → provider env var → reject
+    if user_api_key:
+        extra_kwargs["api_key"] = user_api_key
+    elif provider in config.PROVIDER_KEY_MAP:
+        extra_kwargs["api_key"] = config.PROVIDER_KEY_MAP[provider]
+    else:
+        raise HTTPException(
+            status_code=401,
+            detail=f"No API key configured for provider '{provider}'. "
+                   f"Send your key via Authorization header or configure "
+                   f"{provider.upper()}_API_KEY as env var / Docker Secret.",
+        )
+
+    return direct_acompletion, extra_kwargs
 
 
 @app.post("/v1/chat/completions")
@@ -330,14 +377,16 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
     if request.top_p is not None:
         litellm_kwargs["top_p"] = request.top_p
 
-    # Pass user-provided API key to LiteLLM (overrides centrally configured key)
-    if user_api_key:
-        litellm_kwargs["api_key"] = user_api_key
+    # Resolve routing: alias → Router, provider/model → direct
+    acompletion, routing_kwargs = _resolve_provider_key(
+        model=request.model, user_api_key=user_api_key,
+    )
+    litellm_kwargs.update(routing_kwargs)
 
     # Run agent loop
     loop = AgentLoop(
         tool_injector,
-        acompletion=llm_acompletion,
+        acompletion=acompletion,
         max_iterations=max_iterations,
         pii_reverse_map=pii_reverse_map,
     )

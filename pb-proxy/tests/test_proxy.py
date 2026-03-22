@@ -13,7 +13,9 @@ def mock_deps():
     with patch("proxy.tool_injector") as mock_injector, \
          patch("proxy.check_opa_policy") as mock_opa, \
          patch("proxy.AgentLoop") as mock_loop_cls, \
-         patch("proxy.llm_acompletion") as mock_acompletion, \
+         patch("proxy.router_acompletion") as mock_router_acompletion, \
+         patch("proxy.direct_acompletion") as mock_direct_acompletion, \
+         patch("proxy.known_aliases", {"gpt-4o", "claude-opus", "gpt-4", "claude-sonnet"}) as mock_aliases, \
          patch("proxy.pii_http_client") as mock_pii_http:
 
         mock_injector.merge_tools = MagicMock(return_value=[
@@ -55,7 +57,8 @@ def mock_deps():
             "loop_cls": mock_loop_cls,
             "loop": mock_loop,
             "result": mock_result,
-            "acompletion": mock_acompletion,
+            "router_acompletion": mock_router_acompletion,
+            "direct_acompletion": mock_direct_acompletion,
             "pii_http": mock_pii_http,
         }
 
@@ -198,7 +201,7 @@ def test_streaming_returns_sse(client, mock_deps):
 
 
 def test_agent_loop_receives_acompletion(client, mock_deps):
-    """AgentLoop is created with the llm_acompletion callable."""
+    """AgentLoop is created with the correct acompletion callable."""
     response = client.post(
         "/v1/chat/completions",
         json={
@@ -209,7 +212,8 @@ def test_agent_loop_receives_acompletion(client, mock_deps):
     assert response.status_code == 200
     mock_deps["loop_cls"].assert_called_once()
     call_kwargs = mock_deps["loop_cls"].call_args
-    assert call_kwargs.kwargs.get("acompletion") is mock_deps["acompletion"]
+    # gpt-4o is a known alias, so Router acompletion is used
+    assert call_kwargs.kwargs.get("acompletion") is mock_deps["router_acompletion"]
 
 
 # ── User API Key Passthrough Tests ───────────────────────────
@@ -383,3 +387,93 @@ class TestPIIProtection:
         # AgentLoop should have been created with empty pii_reverse_map
         call_kwargs = mock_deps["loop_cls"].call_args
         assert call_kwargs.kwargs.get("pii_reverse_map") == {}
+
+
+# ── Passthrough Routing Tests ──────────────────────────────────
+
+
+def test_passthrough_model_uses_direct_completion(mock_deps):
+    """Models with provider/ prefix bypass Router and use litellm.acompletion."""
+    with patch.dict("config.PROVIDER_KEY_MAP", {"anthropic": "sk-ant-test-key-123456"}):
+        from proxy import app
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "anthropic/claude-3-5-haiku-20241022",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+        assert response.status_code == 200
+        # Verify the model name was passed through to the loop
+        run_call = mock_deps["loop"].run.call_args
+        assert run_call.kwargs["model"] == "anthropic/claude-3-5-haiku-20241022"
+        # Verify direct_acompletion was used (not router)
+        call_kwargs = mock_deps["loop_cls"].call_args
+        assert call_kwargs.kwargs.get("acompletion") is mock_deps["direct_acompletion"]
+
+
+def test_passthrough_no_key_returns_401(mock_deps):
+    """Passthrough model with no API key returns 401."""
+    with patch.dict("config.PROVIDER_KEY_MAP", {}, clear=True):
+        from proxy import app
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "cohere/command-r-plus",
+                "messages": [{"role": "user", "content": "Hi"}],
+            },
+        )
+        assert response.status_code == 401
+        assert "cohere" in response.json()["detail"].lower()
+
+
+def test_passthrough_user_key_overrides_env(mock_deps):
+    """User Bearer token is used even when env var key exists for passthrough."""
+    with patch.dict("config.PROVIDER_KEY_MAP", {"anthropic": "central-key-12345"}):
+        from proxy import app
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "anthropic/claude-opus-4-20250514",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+            headers={"Authorization": "Bearer sk-ant-user-key-override"},
+        )
+        assert response.status_code == 200
+        run_call = mock_deps["loop"].run.call_args
+        assert run_call.kwargs.get("api_key") == "sk-ant-user-key-override"
+
+
+def test_unknown_model_no_prefix_returns_400(mock_deps):
+    """Model without provider prefix and not an alias returns 400."""
+    from proxy import app
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "some-random-model",
+            "messages": [{"role": "user", "content": "Hi"}],
+        },
+    )
+    assert response.status_code == 400
+    assert "provider/model-name" in response.json()["detail"]
+
+
+def test_passthrough_with_env_key(mock_deps):
+    """Passthrough uses PROVIDER_KEY_MAP when no user key provided."""
+    with patch.dict("config.PROVIDER_KEY_MAP", {"anthropic": "sk-ant-central-key-123"}):
+        from proxy import app
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "anthropic/claude-3-5-haiku-20241022",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+        assert response.status_code == 200
+        run_call = mock_deps["loop"].run.call_args
+        assert run_call.kwargs.get("api_key") == "sk-ant-central-key-123"

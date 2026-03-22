@@ -59,13 +59,26 @@ INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8081")
 PII_SCAN_ENABLED = os.getenv("PII_SCAN_ENABLED", "true").lower() == "true"
 PII_SCAN_FORCED = os.getenv("PII_SCAN_FORCED", "false").lower() == "true"
 
-# ── LLM Provider Keys ───────────────────────────────────────
-# Read from Docker Secret and export to os.environ so LiteLLM
-# can pick it up via "os.environ/<VAR>" in litellm_config.yaml.
-GITHUB_PAT = _read_secret("GITHUB_PAT", "")
-if GITHUB_PAT:
-    os.environ["GITHUB_PAT"] = GITHUB_PAT
+# ── Provider Key Map (for passthrough routing) ───────────────
+# Maps LiteLLM provider prefix → env var value.
+# Only providers with a configured key are included.
+# Used by passthrough routing to resolve API keys for models
+# not listed in litellm_config.yaml.
+PROVIDER_KEY_MAP: dict[str, str] = {}
 
-ANTHROPIC_API_KEY = _read_secret("ANTHROPIC_API_KEY", "")
-if ANTHROPIC_API_KEY:
-    os.environ["ANTHROPIC_API_KEY"] = ANTHROPIC_API_KEY
+_PROVIDER_ENV_VARS = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "github": "GITHUB_PAT",
+    "azure": "AZURE_API_KEY",
+    "cohere": "COHERE_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+}
+
+for _provider, _env_var in _PROVIDER_ENV_VARS.items():
+    _key = _read_secret(_env_var, "")
+    if _key:
+        PROVIDER_KEY_MAP[_provider] = _key
+        # Also export to os.environ for LiteLLM (if not already set)
+        if _env_var not in os.environ:
+            os.environ[_env_var] = _key
