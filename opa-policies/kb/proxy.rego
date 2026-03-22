@@ -36,3 +36,37 @@ default max_iterations := 5
 max_iterations := 10 if {
     input.agent_role in {"developer", "admin"}
 }
+
+# ── PII Protection ───────────────────────────────────────────
+# Controls whether outbound LLM requests are scanned for PII.
+# Enabled by default; only admin may opt out (unless forced).
+
+default pii_scan_enabled := true
+
+pii_scan_forced if {
+    input.pii_scan_forced == true
+}
+
+pii_scan_opt_out_allowed if {
+    input.agent_role == "admin"
+    input.pii_scan_opt_out == true
+    not pii_scan_forced
+}
+
+pii_scan_enabled := false if {
+    pii_scan_opt_out_allowed
+}
+
+pii_entity_types := {"PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "IBAN_CODE", "LOCATION"}
+
+default pii_system_prompt_injection := true
+
+# ── Non-Text Content ─────────────────────────────────────────
+# Controls how non-text content (images, PDFs, etc.) is handled.
+# Default: replace with placeholder; admin may allow passthrough.
+
+default non_text_content_action := "placeholder"
+
+non_text_content_action := "allow" if {
+    input.agent_role == "admin"
+}
