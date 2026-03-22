@@ -51,6 +51,7 @@ powerbrain/
 │   └── requirements.txt
 ├── ingestion/
 │   ├── pii_scanner.py     ← PII detection (Presidio)
+│   ├── pii_config.yaml    ← PII scanner config (entity types, custom recognizers)
 │   ├── retention_cleanup.py ← GDPR retention cleanup jobs
 │   ├── Dockerfile
 │   └── requirements.txt
@@ -166,7 +167,7 @@ Art. 17 deletion: delete vault mapping → pseudonyms become irreversible.
 - `graph_mutate` — Knowledge graph mutations (developer/admin only)
 
 ### Privacy (GDPR)
-- **PII Scanner** (Microsoft Presidio) at ingestion
+- **PII Scanner** (Microsoft Presidio) at ingestion — configurable via `ingestion/pii_config.yaml` (entity types, custom recognizers, confidence, languages)
 - **Purpose binding** via OPA policy (`kb.privacy`)
 - **Retention periods** with automatic cleanup
 - **Right to erasure** (Art. 17) with tracking table
