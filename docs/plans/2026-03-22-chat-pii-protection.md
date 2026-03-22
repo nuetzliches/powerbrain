@@ -12,6 +12,205 @@
 
 ---
 
+### Task 0: Non-Text-Content Policy-Gate
+
+**Files:**
+- Modify: `pb-proxy/pii_middleware.py` (wird in Task 5 erstellt — hier vorab-spezifiziert)
+- Modify: `opa-policies/kb/proxy.rego`
+- Modify: `opa-policies/kb/test_proxy.rego`
+- Create: `pb-proxy/tests/test_non_text_filter.py`
+
+Non-text content (Bilder, Dateien) in multimodalen Messages kann nicht PII-gescannt werden.
+Statt es als Known Limitation zu akzeptieren, steuert eine OPA-Policy das Verhalten.
+
+OpenAI-kompatibles multimodales Format:
+```json
+{"role": "user", "content": [
+  {"type": "text", "text": "Was zeigt dieses Bild?"},
+  {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+]}
+```
+
+**Step 1: Write Rego tests for non-text content policy**
+
+Append to `opa-policies/kb/test_proxy.rego`:
+
+```rego
+# ── Non-Text Content Tests ───────────────────────────────────
+
+test_non_text_default_placeholder if {
+    proxy.non_text_content_action == "placeholder" with input as {"agent_role": "analyst"}
+}
+
+test_non_text_admin_allow if {
+    proxy.non_text_content_action == "allow" with input as {"agent_role": "admin"}
+}
+
+test_non_text_developer_placeholder if {
+    proxy.non_text_content_action == "placeholder" with input as {"agent_role": "developer"}
+}
+```
+
+**Step 2: Run Rego tests to verify they fail**
+
+Run: `docker exec kb-opa /opa test /policies/kb/ -v`
+Expected: FAIL — `non_text_content_action` not defined
+
+**Step 3: Implement OPA rules**
+
+Append to `opa-policies/kb/proxy.rego`:
+
+```rego
+# ── Non-Text Content ─────────────────────────────────────────
+# Multimodaler Content (Bilder, Dateien) kann nicht PII-gescannt werden.
+# Policy steuert: "block" (ablehnen), "placeholder" (ersetzen), "allow" (durchlassen)
+default non_text_content_action := "placeholder"
+
+non_text_content_action := "allow" if {
+    input.agent_role == "admin"
+}
+```
+
+**Step 4: Run Rego tests to verify they pass**
+
+Run: `docker exec kb-opa /opa test /policies/kb/ -v`
+Expected: All PASS
+
+**Step 5: Write Python unit test for non-text content filter**
+
+Create `pb-proxy/tests/test_non_text_filter.py`:
+
+```python
+"""Tests für Non-Text-Content-Filterung in Chat-Messages."""
+import pytest
+from pii_middleware import filter_non_text_content
+
+
+class TestFilterNonTextContent:
+    def test_text_only_unchanged(self):
+        """Reine Text-Messages bleiben unverändert."""
+        messages = [{"role": "user", "content": "Hallo Welt"}]
+        result, had_non_text = filter_non_text_content(messages, action="placeholder")
+        assert result == messages
+        assert had_non_text is False
+
+    def test_multimodal_placeholder(self):
+        """Bilder werden durch Platzhalter ersetzt."""
+        messages = [{"role": "user", "content": [
+            {"type": "text", "text": "Was zeigt das Bild?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+        ]}]
+        result, had_non_text = filter_non_text_content(messages, action="placeholder")
+        assert had_non_text is True
+        parts = result[0]["content"]
+        assert parts[0] == {"type": "text", "text": "Was zeigt das Bild?"}
+        assert parts[1]["type"] == "text"
+        assert "nicht gescannt" in parts[1]["text"].lower() or "PII" in parts[1]["text"]
+
+    def test_multimodal_block(self):
+        """Bei action=block wird ValueError geworfen."""
+        messages = [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+        ]}]
+        with pytest.raises(ValueError, match="non-text"):
+            filter_non_text_content(messages, action="block")
+
+    def test_multimodal_allow(self):
+        """Bei action=allow bleiben Bilder erhalten."""
+        messages = [{"role": "user", "content": [
+            {"type": "text", "text": "Schau mal"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+        ]}]
+        result, had_non_text = filter_non_text_content(messages, action="allow")
+        assert result == messages
+        assert had_non_text is True
+
+    def test_mixed_messages(self):
+        """Mix aus Text- und Multimodal-Messages."""
+        messages = [
+            {"role": "system", "content": "Du bist ein Assistent."},
+            {"role": "user", "content": [
+                {"type": "text", "text": "Analysiere:"},
+                {"type": "image_url", "image_url": {"url": "https://example.com/img.jpg"}},
+            ]},
+            {"role": "user", "content": "Noch eine Frage"},
+        ]
+        result, had_non_text = filter_non_text_content(messages, action="placeholder")
+        assert had_non_text is True
+        assert result[0]["content"] == "Du bist ein Assistent."
+        assert result[2]["content"] == "Noch eine Frage"
+        # Multimodal message: image replaced
+        parts = result[1]["content"]
+        assert any("nicht gescannt" in p.get("text", "").lower() or "PII" in p.get("text", "") for p in parts if p["type"] == "text")
+```
+
+**Step 6: Implement `filter_non_text_content` in `pii_middleware.py`**
+
+Wird in Task 5 integriert. Die Funktion:
+
+```python
+def filter_non_text_content(
+    messages: list[dict[str, Any]], action: str = "placeholder"
+) -> tuple[list[dict[str, Any]], bool]:
+    """
+    Filtert non-text Content (Bilder, Dateien) aus multimodalen Messages.
+
+    Args:
+        action: "block" (ValueError), "placeholder" (ersetzen), "allow" (durchlassen)
+
+    Returns:
+        Tuple aus (gefilterte Messages, ob non-text Content gefunden wurde)
+    """
+    result = deepcopy(messages)
+    had_non_text = False
+
+    for msg in result:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+
+        has_non_text_parts = any(
+            part.get("type") not in ("text",) for part in content
+            if isinstance(part, dict)
+        )
+        if not has_non_text_parts:
+            continue
+
+        had_non_text = True
+
+        if action == "block":
+            raise ValueError(
+                "Request contains non-text content (images/files) which cannot be "
+                "scanned for PII. Blocked by policy."
+            )
+        elif action == "allow":
+            continue
+        else:  # placeholder
+            msg["content"] = [
+                part if part.get("type") == "text"
+                else {"type": "text", "text": "[Non-text content removed — not scanned for PII by policy]"}
+                for part in content
+                if isinstance(part, dict)
+            ]
+
+    return result, had_non_text
+```
+
+**Step 7: Run tests to verify they pass**
+
+Run: `cd pb-proxy && python3 -m pytest tests/test_non_text_filter.py -v`
+Expected: All PASS
+
+**Step 8: Commit**
+
+```bash
+git add opa-policies/kb/proxy.rego opa-policies/kb/test_proxy.rego \
+       pb-proxy/pii_middleware.py pb-proxy/tests/test_non_text_filter.py
+git commit -m "feat(proxy): policy-controlled non-text content filter for multimodal messages"
+```
+
+---
+
 ### Task 1: Typisiertes Pseudonym-Format in PIIScanner
 
 **Files:**
@@ -1120,11 +1319,12 @@ git commit -m "docs: update CLAUDE.md and design doc for chat-path PII protectio
 
 | Task | Komponente | Beschreibung |
 |------|-----------|-------------|
+| 0 | Non-Text Filter | Policy-gesteuertes Gate für multimodalen Content (Bilder, Dateien) |
 | 1 | Ingestion PIIScanner | Typisiertes Pseudonym-Format `[TYPE:hash]` |
 | 2 | Ingestion API | Neuer `POST /pseudonymize` Endpunkt |
 | 3 | OPA Policies | `pii_scan_enabled`, `pii_scan_forced`, `pii_entity_types` |
 | 4 | Proxy Config | `INGESTION_URL`, `PII_SCAN_ENABLED`, `PII_SCAN_FORCED` |
-| 5 | Proxy Middleware | `pii_middleware.py` — pseudonymize/depseudonymize Funktionen |
+| 5 | Proxy Middleware | `pii_middleware.py` — pseudonymize/depseudonymize + non-text filter |
 | 6 | Proxy Integration | Middleware in `proxy.py` + Tool-Arg-De-Pseudonymisierung in `agent_loop.py` |
 | 7 | Monitoring | Prometheus-Counter für PII-Entities + Scan-Failures |
 | 8 | Docker Compose | Env-Vars und `depends_on` für pb-proxy |
@@ -1132,3 +1332,5 @@ git commit -m "docs: update CLAUDE.md and design doc for chat-path PII protectio
 | 10 | Docs | CLAUDE.md + Design-Doc aktualisieren |
 
 **Punkt 6 aus den Known Limitations (Tool-Call-Argumente)** wird in Task 6 gelöst: `agent_loop.py` de-pseudonymisiert Tool-Argumente vor dem MCP-Aufruf via `depseudonymize_tool_arguments()`.
+
+**Known Limitation 1 (Non-Text Content)** wird in Task 0 gelöst: Policy-gesteuertes Gate (`block`/`placeholder`/`allow`) für multimodalen Content, der nicht PII-gescannt werden kann.

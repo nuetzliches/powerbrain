@@ -169,7 +169,7 @@ Neue Rego-Tests in `opa-policies/kb/test_proxy_pii.rego`.
 
 ## Known Limitations
 
-1. **Nur Text** — Bilder, PDFs, Audio/Video, Datei-Metadaten und multimodale Inputs (Base64-Bilder in Chat-Messages) werden nicht gescannt. Für Vision-API-Aufrufe oder Dokument-Uploads ist eine separate Lösung nötig.
+1. ~~**Nur Text**~~ **Gelöst:** Non-text Content (Bilder, PDFs, Dateien) wird per OPA-Policy gesteuert: `block` (ablehnen), `placeholder` (ersetzen durch Hinweis), `allow` (durchlassen mit Warning). Default: `placeholder`. PII-Scanning erfolgt weiterhin nur für Text — aber non-text Content kann nicht unbemerkt durchrutschen.
 
 2. **LLM kann Pseudonyme verfälschen** — wenn das LLM `[PERSON:a1b2c3d4]` fragmentiert, umformuliert oder in Teilstrings aufteilt, schlägt das Reverse-Mapping fehl. Mitigation: System-Prompt-Hinweis und robustes Regex-Matching.
 
@@ -179,4 +179,4 @@ Neue Rego-Tests in `opa-policies/kb/test_proxy_pii.rego`.
 
 5. **Presidio-Erkennungsrate** — Presidio erkennt nicht alle PII zuverlässig (z.B. ungewöhnliche Namen, Abkürzungen, Kontext-abhängige PII). False Negatives sind möglich.
 
-6. **Tool-Call-Argumente** — wenn das LLM Pseudonyme in MCP-Tool-Calls verwendet (z.B. `search_knowledge(query="[PERSON:a1b2c3d4]")`), muss der Proxy diese vor dem MCP-Aufruf de-pseudonymisieren. Sonst sucht der MCP-Server nach dem Pseudonym statt nach dem echten Namen.
+6. ~~**Tool-Call-Argumente**~~ **Gelöst:** Proxy de-pseudonymisiert Tool-Call-Argumente vor MCP-Aufrufen via `depseudonymize_tool_arguments()`.
