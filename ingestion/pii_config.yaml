@@ -1,0 +1,45 @@
+# PII Scanner Configuration
+# =========================
+# Controls which PII entities are detected and how.
+# Changes require container restart.
+
+# Minimum confidence score for entity detection (0.0 - 1.0)
+min_confidence: 0.7
+
+# NLP languages and spaCy models
+languages:
+  - code: de
+    model: de_core_news_md
+  - code: en
+    model: en_core_web_lg
+
+# Presidio built-in entity types to detect
+# Full list: https://microsoft.github.io/presidio/supported_entities/
+entity_types:
+  - PERSON
+  - EMAIL_ADDRESS
+  - PHONE_NUMBER
+  - IBAN_CODE
+  - CREDIT_CARD
+  - IP_ADDRESS
+  - LOCATION
+  - DATE_OF_BIRTH
+  # - ORGANIZATION  # uncomment to detect company/org names
+
+# Custom regex-based recognizers
+custom_recognizers:
+  - name: German Tax ID
+    entity_type: DE_TAX_ID
+    language: de
+    patterns:
+      - name: de_tax_id
+        regex: '\b\d{2}\s?\d{3}\s?\d{5}\b'
+        score: 0.6
+
+  - name: German Social Security Number
+    entity_type: DE_SOCIAL_SECURITY
+    language: de
+    patterns:
+      - name: de_social_security
+        regex: '\b\d{2}\s?\d{6}\s?[A-Z]\s?\d{3}\b'
+        score: 0.6
