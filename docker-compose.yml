@@ -338,6 +338,9 @@ services:
       REQUEST_TIMEOUT:         ${REQUEST_TIMEOUT:-120}
       FAIL_MODE:               ${FAIL_MODE:-closed}
       METRICS_PORT:            "9092"
+      INGESTION_URL:           http://ingestion:8081
+      PII_SCAN_ENABLED:        ${PII_SCAN_ENABLED:-true}
+      PII_SCAN_FORCED:         ${PII_SCAN_FORCED:-false}
     volumes:
       - ./pb-proxy/litellm_config.yaml:/app/litellm_config.yaml:ro
     depends_on:
@@ -345,6 +348,8 @@ services:
         condition: service_started
       opa:
         condition: service_healthy
+      ingestion:
+        condition: service_started
     networks:
       - kb-net
     restart: unless-stopped
