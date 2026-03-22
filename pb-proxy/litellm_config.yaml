@@ -42,10 +42,22 @@ model_list:
   #     api_key: "os.environ/OPENAI_API_KEY"
 
   # ── Anthropic ──────────────────────────────────────────────
-  # - model_name: "claude-sonnet"
-  #   litellm_params:
-  #     model: "anthropic/claude-sonnet-4-20250514"
-  #     api_key: "os.environ/ANTHROPIC_API_KEY"
+  # Using direct Anthropic model IDs (not LiteLLM aliases).
+  # Get latest models from https://docs.anthropic.com/en/docs/about/models
+  - model_name: "claude-opus"
+    litellm_params:
+      model: "anthropic/claude-opus-4-20250514"
+      api_key: "os.environ/ANTHROPIC_API_KEY"
+
+  - model_name: "claude-sonnet"
+    litellm_params:
+      model: "anthropic/claude-3-5-sonnet-20241022"
+      api_key: "os.environ/ANTHROPIC_API_KEY"
+
+  - model_name: "claude-haiku"
+    litellm_params:
+      model: "anthropic/claude-3-5-haiku-20241022"
+      api_key: "os.environ/ANTHROPIC_API_KEY"
 
   # ── Existing LiteLLM Proxy ─────────────────────────────────
   # If you already run a LiteLLM Proxy server, route through it.

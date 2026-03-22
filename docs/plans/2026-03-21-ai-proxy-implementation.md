@@ -1679,6 +1679,6 @@ and deferred to future sprints:
 
 - **KB REST API** — Separate service for human users
 - **Multi-MCP-Server** — Proxy aggregates tools from N MCP servers
-- **SSE streaming** — Streaming passthrough with tool-call interception
+- ~~**SSE streaming**~~ — ✅ Implemented (simulated SSE streaming)
 - **Client tool passthrough** — Forward unknown tool calls to client
 - **Proxy auth** — API key or OAuth2 authentication for proxy consumers

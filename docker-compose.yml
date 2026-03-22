@@ -30,6 +30,8 @@ secrets:
     file: ./secrets/forgejo_token.txt
   github_pat:
     file: ./secrets/github_pat.txt
+  anthropic_api_key:
+    file: ./secrets/anthropic_api_key.txt
 
 services:
 
@@ -329,6 +331,7 @@ services:
       - "${PROXY_PORT:-8090}:8090"
     secrets:
       - github_pat
+      - anthropic_api_key
     environment:
       MCP_SERVER_URL:          http://mcp-server:8080/mcp
       MCP_AUTH_TOKEN:           ${MCP_AUTH_TOKEN:-kb_dev_localonly_do_not_use_in_production}
@@ -347,6 +350,7 @@ services:
       PII_SCAN_FORCED:         ${PII_SCAN_FORCED:-false}
       TOOL_INJECTION_ENABLED:  ${TOOL_INJECTION_ENABLED:-true}
       GITHUB_PAT_FILE:         /run/secrets/github_pat
+      ANTHROPIC_API_KEY_FILE:  /run/secrets/anthropic_api_key
     volumes:
       - ./pb-proxy/litellm_config.yaml:/app/litellm_config.yaml:ro
     depends_on:

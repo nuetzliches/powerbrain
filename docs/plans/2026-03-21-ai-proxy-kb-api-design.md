@@ -197,9 +197,9 @@ Prevents runaway loops.
 - MCP server unreachable → fail open (forward request without injection)
   or fail closed (return 503) — configurable
 
-**Streaming:** Initial implementation is non-streaming (synchronous
-request-response). Streaming support (SSE passthrough with tool-call
-interception) is a backlog item.
+**Streaming:** Supported via simulated SSE streaming — the proxy runs
+the agent loop to completion, then streams the response as SSE chunks.
+Model discovery via `GET /v1/models` returns all configured models.
 
 ### 3g. OPA policies
 
@@ -417,7 +417,9 @@ benefits the MCP server and proxy).
 | Item | Priority | Dependency |
 |------|----------|------------|
 | Multi-MCP-Server support for proxy | Medium | Proxy MVP |
-| SSE streaming through proxy | Medium | Proxy MVP |
+| ~~SSE streaming through proxy~~ | ~~Medium~~ | ✅ Implemented |
+| Model discovery (wildcard/passthrough routing) | Medium | Proxy MVP |
+| Proxy authentication (separate from provider keys) | Medium | Proxy MVP |
 | Client tool passthrough | Low | Proxy MVP |
 | KB REST API service | Medium | Service layer extraction |
 | KB Web UI (React/Next.js) | Low | KB REST API |
@@ -438,7 +440,7 @@ benefits the MCP server and proxy).
 ## 8. Out of Scope
 
 - Multi-MCP-Server aggregation (backlog)
-- SSE streaming passthrough (backlog)
+- ~~SSE streaming passthrough~~ (✅ implemented)
 - KB REST API (backlog)
 - Web UI for knowledge base (backlog)
 - Custom LiteLLM plugins (use SDK directly)

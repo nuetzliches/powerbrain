@@ -38,6 +38,18 @@ def mock_tool_injector():
     injector = MagicMock()
     injector.tool_names = {"search_knowledge", "check_policy"}
     injector.call_tool = AsyncMock(return_value='{"results": []}')
+    # resolve_tool_name returns the name if known, None otherwise
+    def _resolve(name):
+        known = {"search_knowledge", "check_policy"}
+        if name in known:
+            return name
+        # Strip prefix: "anything_toolname" → "toolname"
+        if "_" in name:
+            suffix = name.split("_", 1)[1]
+            if suffix in known:
+                return suffix
+        return None
+    injector.resolve_tool_name = MagicMock(side_effect=_resolve)
     return injector
 
 

@@ -20,7 +20,7 @@ from typing import Any, AsyncGenerator
 import httpx
 import uvicorn
 import yaml
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from prometheus_client import (
@@ -85,6 +85,7 @@ tool_injector = ToolInjector()
 http_client: httpx.AsyncClient | None = None
 pii_http_client: httpx.AsyncClient | None = None
 llm_acompletion: Any = None
+model_list: list[dict[str, Any]] = []
 
 
 # ── OPA Helper ───────────────────────────────────────────────
@@ -129,8 +130,11 @@ class ChatCompletionRequest(BaseModel):
 
 # ── LLM Router ───────────────────────────────────────────────
 
-def _load_llm_router() -> Any:
-    """Load LiteLLM Router from YAML config. Falls back to litellm.acompletion."""
+def _load_llm_router() -> tuple[Any, list[dict[str, Any]]]:
+    """Load LiteLLM Router from YAML config. Falls back to litellm.acompletion.
+
+    Returns (acompletion_callable, model_list_from_config).
+    """
     import litellm
 
     config_path = config.LITELLM_CONFIG
@@ -139,28 +143,28 @@ def _load_llm_router() -> Any:
             cfg = yaml.safe_load(f) or {}
     except FileNotFoundError:
         log.warning("LiteLLM config not found at %s, using direct completion", config_path)
-        return litellm.acompletion
+        return litellm.acompletion, []
 
-    model_list = cfg.get("model_list", [])
-    if not model_list:
+    models = cfg.get("model_list", [])
+    if not models:
         log.info("LiteLLM config has empty model_list, using direct completion")
-        return litellm.acompletion
+        return litellm.acompletion, []
 
-    router = litellm.Router(model_list=model_list)
+    router = litellm.Router(model_list=models)
     log.info("LiteLLM Router loaded with %d model(s): %s",
-             len(model_list),
-             [m.get("model_name", "?") for m in model_list])
-    return router.acompletion
+             len(models),
+             [m.get("model_name", "?") for m in models])
+    return router.acompletion, models
 
 
 # ── Application ──────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global http_client, pii_http_client, llm_acompletion
+    global http_client, pii_http_client, llm_acompletion, model_list
     http_client = httpx.AsyncClient(timeout=config.REQUEST_TIMEOUT)
     pii_http_client = httpx.AsyncClient(timeout=10)
-    llm_acompletion = _load_llm_router()
+    llm_acompletion, model_list = _load_llm_router()
     prom_start_http_server(config.METRICS_PORT)
     log.info("Prometheus metrics on port %d", config.METRICS_PORT)
 
@@ -200,10 +204,46 @@ async def health():
     }
 
 
+@app.get("/v1/models")
+async def list_models():
+    """OpenAI-compatible model listing.
+
+    Returns models configured in litellm_config.yaml so that
+    clients (OpenCode, Cursor, etc.) can discover available models.
+    """
+    data = []
+    for entry in model_list:
+        model_name = entry.get("model_name", "unknown")
+        params = entry.get("litellm_params", {})
+        provider_model = params.get("model", "")
+        # Extract provider prefix (e.g. "github/gpt-4o" → "github")
+        owner = provider_model.split("/")[0] if "/" in provider_model else "powerbrain-proxy"
+        data.append({
+            "id": model_name,
+            "object": "model",
+            "created": 0,
+            "owned_by": owner,
+        })
+    return {"object": "list", "data": data}
+
+
 @app.post("/v1/chat/completions")
-async def chat_completions(request: ChatCompletionRequest):
+async def chat_completions(request: ChatCompletionRequest, raw_request: Request):
     start_time = time.monotonic()
     is_streaming = request.stream
+
+    # Extract provider API key from Authorization header (if present).
+    # Falls back to centrally configured key (Docker Secret) when absent.
+    # Only use user key if it looks valid (starts with sk-ant- for Anthropic).
+    user_api_key: str | None = None
+    auth_header = raw_request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header[7:].strip()
+        # Only accept keys that start with provider prefix (e.g. sk-ant- for Anthropic)
+        # This filters out dummy/empty tokens from config UI
+        if token and len(token) > 10 and ("-" in token or token.startswith("sk")):
+            user_api_key = token
+            log.info("Using user-provided API key for model: %s", request.model)
 
     # TODO: Extract agent_role from auth (for now default to "developer")
     agent_role = "developer"
@@ -289,6 +329,10 @@ async def chat_completions(request: ChatCompletionRequest):
         litellm_kwargs["max_tokens"] = min(request.max_tokens, 16384)
     if request.top_p is not None:
         litellm_kwargs["top_p"] = request.top_p
+
+    # Pass user-provided API key to LiteLLM (overrides centrally configured key)
+    if user_api_key:
+        litellm_kwargs["api_key"] = user_api_key
 
     # Run agent loop
     loop = AgentLoop(

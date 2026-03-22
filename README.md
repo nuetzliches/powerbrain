@@ -91,6 +91,9 @@ That's it. Your agent now has access to `search_knowledge`, `query_data`, `graph
 # 2. Set API keys in .env (e.g. OPENAI_API_KEY=sk-...)
 docker compose --profile proxy up -d
 
+# List available models:
+curl http://localhost:8090/v1/models
+
 # Use the proxy — Powerbrain tools are injected automatically:
 curl http://localhost:8090/v1/chat/completions \
   -H "Content-Type: application/json" \

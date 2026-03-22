@@ -122,6 +122,24 @@ class ToolInjector:
         """Names of all currently known Powerbrain tools."""
         return set(self._mcp_tools.keys())
 
+    def resolve_tool_name(self, name: str) -> str | None:
+        """Resolve a tool name, stripping common prefixes added by MCP clients.
+
+        Clients like OpenCode prefix MCP tool names with the server name
+        (e.g. ``powerbrain_search_knowledge`` for ``search_knowledge``).
+        This method tries the exact name first, then strips known prefixes.
+
+        Returns the canonical tool name or None if not found.
+        """
+        if name in self._mcp_tools:
+            return name
+        # Strip prefix: "anything_toolname" → "toolname"
+        if "_" in name:
+            suffix = name.split("_", 1)[1]
+            if suffix in self._mcp_tools:
+                return suffix
+        return None
+
     async def call_tool(self, name: str, arguments: dict) -> str:
         """Execute a tool call against the MCP server. Returns result as string."""
         async with streamablehttp_client(

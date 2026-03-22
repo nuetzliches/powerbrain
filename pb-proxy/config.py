@@ -61,7 +61,11 @@ PII_SCAN_FORCED = os.getenv("PII_SCAN_FORCED", "false").lower() == "true"
 
 # ── LLM Provider Keys ───────────────────────────────────────
 # Read from Docker Secret and export to os.environ so LiteLLM
-# can pick it up via "os.environ/GITHUB_PAT" in litellm_config.yaml.
+# can pick it up via "os.environ/<VAR>" in litellm_config.yaml.
 GITHUB_PAT = _read_secret("GITHUB_PAT", "")
 if GITHUB_PAT:
     os.environ["GITHUB_PAT"] = GITHUB_PAT
+
+ANTHROPIC_API_KEY = _read_secret("ANTHROPIC_API_KEY", "")
+if ANTHROPIC_API_KEY:
+    os.environ["ANTHROPIC_API_KEY"] = ANTHROPIC_API_KEY

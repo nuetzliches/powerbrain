@@ -199,6 +199,12 @@ Sits between AI consumers and LLM providers:
 4. When LLM returns tool calls → proxy executes against MCP server
 5. Repeats until final response, then returns to client
 
+Endpoints:
+- `GET /v1/models` — Lists configured models (OpenAI-compatible)
+- `POST /v1/chat/completions` — Chat endpoint with tool injection + agent loop
+- `GET /health` — Health check
+
+Supports SSE streaming (`"stream": true`).
 OPA policies (`kb.proxy`) control: provider access, required tools, max iterations.
 Configuration: `pb-proxy/litellm_config.yaml` for LLM provider setup.
 
@@ -270,6 +276,8 @@ cd mcp-server && python3 -m pytest tests/ -v
 8. ✅ **TLS Profile** — Optional Caddy reverse proxy (`docker compose --profile tls up`)
 9. ✅ **AI Provider Proxy** — Optional LLM gateway with transparent tool injection (`docker compose --profile proxy`)
 10. ✅ **Chat-Path PII Protection** — Reversible pseudonymization in proxy chat path (`pb-proxy/pii_middleware.py`, OPA-controlled)
+11. ✅ **Proxy Model Discovery** — `GET /v1/models` endpoint for OpenAI-compatible client integration
+12. ✅ **Proxy SSE Streaming** — Simulated streaming via SSE chunks for `stream: true` requests
 
 Details on all features: see `docs/architektur.md`
 

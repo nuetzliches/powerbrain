@@ -127,3 +127,44 @@ def test_merge_tools_empty_client_tools():
 
     merged2 = injector.merge_tools([])
     assert len(merged2) == 1
+
+
+# ── Tool name resolution ─────────────────────────────────────
+
+
+def _make_injector_with_tools(*names: str) -> ToolInjector:
+    """Create a ToolInjector with given tool names (no MCP connection)."""
+    injector = ToolInjector.__new__(ToolInjector)
+    injector._mcp_tools = {n: MagicMock() for n in names}
+    injector._openai_tools = {}
+    return injector
+
+
+def test_resolve_exact_name():
+    """Exact tool name resolves directly."""
+    injector = _make_injector_with_tools("search_knowledge", "query_data")
+    assert injector.resolve_tool_name("search_knowledge") == "search_knowledge"
+    assert injector.resolve_tool_name("query_data") == "query_data"
+
+
+def test_resolve_prefixed_name():
+    """Prefixed tool names are stripped and resolved."""
+    injector = _make_injector_with_tools("search_knowledge", "query_data")
+    assert injector.resolve_tool_name("powerbrain_search_knowledge") == "search_knowledge"
+    assert injector.resolve_tool_name("kb_query_data") == "query_data"
+
+
+def test_resolve_unknown_name():
+    """Unknown tool name returns None."""
+    injector = _make_injector_with_tools("search_knowledge")
+    assert injector.resolve_tool_name("nonexistent_tool") is None
+    assert injector.resolve_tool_name("totally_unknown") is None
+
+
+def test_resolve_no_false_positive_on_underscored_tools():
+    """Tool names containing underscores don't match incorrectly."""
+    injector = _make_injector_with_tools("get_code_context")
+    # "get_code_context" should match exactly
+    assert injector.resolve_tool_name("get_code_context") == "get_code_context"
+    # "powerbrain_get_code_context" → strips "powerbrain_" → "get_code_context"
+    assert injector.resolve_tool_name("powerbrain_get_code_context") == "get_code_context"

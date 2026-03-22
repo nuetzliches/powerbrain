@@ -231,7 +231,13 @@ curl http://localhost:8090/health
 
 ### Usage
 
-Send requests using OpenAI-compatible format:
+**List available models** (OpenAI-compatible):
+
+```bash
+curl http://localhost:8090/v1/models
+```
+
+**Send chat requests** — Powerbrain tools are injected automatically:
 
 ```bash
 curl http://localhost:8090/v1/chat/completions \
@@ -241,6 +247,8 @@ curl http://localhost:8090/v1/chat/completions \
     "messages": [{"role": "user", "content": "What are our data retention policies?"}]
   }'
 ```
+
+Streaming is supported via `"stream": true` (SSE format).
 
 The proxy automatically injects Powerbrain tools. If the LLM decides to
 use `search_knowledge` or any other Powerbrain tool, the proxy executes

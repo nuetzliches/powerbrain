@@ -73,6 +73,58 @@ def test_health_endpoint(client):
     assert data["status"] == "healthy"
 
 
+def test_list_models_returns_configured_models(mock_deps):
+    """GET /v1/models returns models from litellm_config.yaml."""
+    import proxy
+    original = proxy.model_list
+    proxy.model_list = [
+        {
+            "model_name": "gpt-4o",
+            "litellm_params": {"model": "github/gpt-4o", "api_key": "test"},
+        },
+        {
+            "model_name": "claude-sonnet",
+            "litellm_params": {"model": "anthropic/claude-sonnet-4-20250514"},
+        },
+    ]
+    try:
+        from proxy import app
+        client = TestClient(app)
+        response = client.get("/v1/models")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["object"] == "list"
+        assert len(data["data"]) == 2
+        ids = [m["id"] for m in data["data"]]
+        assert "gpt-4o" in ids
+        assert "claude-sonnet" in ids
+        # Check owned_by is extracted from provider prefix
+        owners = {m["id"]: m["owned_by"] for m in data["data"]}
+        assert owners["gpt-4o"] == "github"
+        assert owners["claude-sonnet"] == "anthropic"
+        # All entries have correct object type
+        assert all(m["object"] == "model" for m in data["data"])
+    finally:
+        proxy.model_list = original
+
+
+def test_list_models_empty_when_no_config(mock_deps):
+    """GET /v1/models returns empty list when no models configured."""
+    import proxy
+    original = proxy.model_list
+    proxy.model_list = []
+    try:
+        from proxy import app
+        client = TestClient(app)
+        response = client.get("/v1/models")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["object"] == "list"
+        assert data["data"] == []
+    finally:
+        proxy.model_list = original
+
+
 def test_chat_completions_requires_model(client):
     response = client.post(
         "/v1/chat/completions",
@@ -128,8 +180,8 @@ def test_chat_completions_denied_by_opa(client, mock_deps):
     assert response.status_code == 403
 
 
-def test_streaming_returns_501(client, mock_deps):
-    """Streaming requests return 501 Not Implemented."""
+def test_streaming_returns_sse(client, mock_deps):
+    """Streaming requests return SSE event stream."""
     response = client.post(
         "/v1/chat/completions",
         json={
@@ -138,7 +190,11 @@ def test_streaming_returns_501(client, mock_deps):
             "stream": True,
         },
     )
-    assert response.status_code == 501
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    body = response.text
+    assert "data: " in body
+    assert "data: [DONE]" in body
 
 
 def test_agent_loop_receives_acompletion(client, mock_deps):
@@ -154,6 +210,54 @@ def test_agent_loop_receives_acompletion(client, mock_deps):
     mock_deps["loop_cls"].assert_called_once()
     call_kwargs = mock_deps["loop_cls"].call_args
     assert call_kwargs.kwargs.get("acompletion") is mock_deps["acompletion"]
+
+
+# ── User API Key Passthrough Tests ───────────────────────────
+
+
+def test_user_api_key_passed_to_agent_loop(client, mock_deps):
+    """Bearer token from Authorization header is forwarded as api_key."""
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "claude-sonnet",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+        headers={"Authorization": "Bearer sk-ant-user-key-123"},
+    )
+    assert response.status_code == 200
+    # Verify api_key was passed through litellm_kwargs to loop.run
+    run_call = mock_deps["loop"].run.call_args
+    assert run_call.kwargs.get("api_key") == "sk-ant-user-key-123"
+
+
+def test_no_auth_header_means_no_api_key_override(client, mock_deps):
+    """Without Authorization header, no api_key is passed (central key used)."""
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+    assert response.status_code == 200
+    run_call = mock_deps["loop"].run.call_args
+    assert "api_key" not in run_call.kwargs
+
+
+def test_empty_bearer_token_ignored(client, mock_deps):
+    """Empty Bearer token is treated as no key (fallback to central)."""
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+        headers={"Authorization": "Bearer "},
+    )
+    assert response.status_code == 200
+    run_call = mock_deps["loop"].run.call_args
+    assert "api_key" not in run_call.kwargs
 
 
 # ── PII Protection Tests ─────────────────────────────────────

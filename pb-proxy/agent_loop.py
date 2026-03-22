@@ -111,26 +111,33 @@ class AgentLoop:
                         arguments, self._pii_reverse_map
                     )
 
-                if tool_name in self._injector.tool_names:
+                # Resolve tool name (handles prefixed names like
+                # "powerbrain_search_knowledge" → "search_knowledge")
+                resolved_name = self._injector.resolve_tool_name(tool_name)
+
+                if resolved_name:
+                    if resolved_name != tool_name:
+                        log.info("Resolved prefixed tool name: %s → %s",
+                                 tool_name, resolved_name)
                     # Execute against MCP server
                     try:
                         tool_result = await asyncio.wait_for(
-                            self._injector.call_tool(tool_name, arguments),
+                            self._injector.call_tool(resolved_name, arguments),
                             timeout=self._tool_call_timeout,
                         )
                         result.tool_calls_executed += 1
-                        result.tools_used.append(tool_name)
+                        result.tools_used.append(resolved_name)
                     except asyncio.TimeoutError:
                         tool_result = json.dumps({
-                            "error": f"Tool '{tool_name}' timed out after "
+                            "error": f"Tool '{resolved_name}' timed out after "
                                      f"{self._tool_call_timeout}s"
                         })
-                        log.warning("Tool call timed out: %s", tool_name)
+                        log.warning("Tool call timed out: %s", resolved_name)
                     except Exception as e:
                         tool_result = json.dumps({
-                            "error": f"Tool '{tool_name}' failed: {str(e)}"
+                            "error": f"Tool '{resolved_name}' failed: {str(e)}"
                         })
-                        log.error("Tool call failed: %s — %s", tool_name, e)
+                        log.error("Tool call failed: %s — %s", resolved_name, e)
                 else:
                     # Unknown tool
                     tool_result = json.dumps({
