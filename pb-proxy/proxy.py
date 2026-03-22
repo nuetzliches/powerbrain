@@ -11,6 +11,7 @@ Endpoint: POST /v1/chat/completions (OpenAI-compatible)
 
 import asyncio
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -29,6 +30,13 @@ from prometheus_client import (
 import config
 from tool_injection import ToolInjector
 from agent_loop import AgentLoop, AgentLoopResult
+from pii_middleware import (
+    pseudonymize_messages,
+    depseudonymize_text,
+    filter_non_text_content,
+    generate_session_salt,
+    build_system_hint,
+)
 
 # ── Logging ──────────────────────────────────────────────────
 
@@ -59,11 +67,22 @@ PROXY_ITERATIONS = Histogram(
     "pbproxy_loop_iterations",
     "Agent loop iterations per request",
 )
+PII_ENTITIES_PSEUDONYMIZED = Counter(
+    "pbproxy_pii_entities_pseudonymized_total",
+    "Total PII entities pseudonymized in chat messages",
+    ["entity_type"],
+)
+PII_SCAN_FAILURES = Counter(
+    "pbproxy_pii_scan_failures_total",
+    "PII scan failures (ingestion service unreachable)",
+    ["fail_mode"],
+)
 
 # ── Globals ──────────────────────────────────────────────────
 
 tool_injector = ToolInjector()
 http_client: httpx.AsyncClient | None = None
+pii_http_client: httpx.AsyncClient | None = None
 llm_acompletion: Any = None
 
 
@@ -137,8 +156,9 @@ def _load_llm_router() -> Any:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global http_client, llm_acompletion
+    global http_client, pii_http_client, llm_acompletion
     http_client = httpx.AsyncClient(timeout=config.REQUEST_TIMEOUT)
+    pii_http_client = httpx.AsyncClient(timeout=10)
     llm_acompletion = _load_llm_router()
     prom_start_http_server(config.METRICS_PORT)
     log.info("Prometheus metrics on port %d", config.METRICS_PORT)
@@ -156,6 +176,7 @@ async def lifespan(app: FastAPI):
 
     await tool_injector.stop()
     await http_client.aclose()
+    await pii_http_client.aclose()
     log.info("pb-proxy shut down")
 
 
@@ -203,6 +224,61 @@ async def chat_completions(request: ChatCompletionRequest):
 
     max_iterations = policy.get("max_iterations", config.MAX_ITERATIONS)
 
+    # ── PII Protection ───────────────────────────────────────
+    pii_reverse_map: dict[str, str] = {}
+    pii_enabled = policy.get("pii_scan_enabled", config.PII_SCAN_ENABLED)
+    pii_forced = policy.get("pii_scan_forced", config.PII_SCAN_FORCED)
+
+    if pii_enabled:
+        # Filter non-text content first (images, files)
+        non_text_action = policy.get("non_text_content_action", "placeholder")
+        try:
+            filtered_messages, had_non_text = filter_non_text_content(
+                request.messages, action=non_text_action
+            )
+            if had_non_text:
+                request.messages = filtered_messages
+                log.info("Non-text content filtered (action=%s)", non_text_action)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # Pseudonymize PII in messages
+        session_salt = generate_session_salt()
+        try:
+            pseudonymized_messages, pii_reverse_map = await pseudonymize_messages(
+                request.messages, session_salt, pii_http_client
+            )
+            # Inject system hint if PII was found
+            if pii_reverse_map:
+                entity_types = list({
+                    m.group(1) for m in re.finditer(
+                        r"\[([A-Z_]+):[a-f0-9]{8}\]",
+                        " ".join(
+                            m.get("content", "") for m in pseudonymized_messages
+                            if isinstance(m.get("content"), str)
+                        ),
+                    )
+                })
+                for et in entity_types:
+                    PII_ENTITIES_PSEUDONYMIZED.labels(entity_type=et).inc()
+                hint = build_system_hint(entity_types)
+                if hint:
+                    pseudonymized_messages.insert(0, {
+                        "role": "system",
+                        "content": hint,
+                    })
+            request.messages = pseudonymized_messages
+        except Exception as e:
+            if pii_forced:
+                log.error("PII scan forced but failed: %s", e)
+                PII_SCAN_FAILURES.labels(fail_mode="closed").inc()
+                raise HTTPException(
+                    status_code=503,
+                    detail="PII protection required but scanner unavailable",
+                )
+            PII_SCAN_FAILURES.labels(fail_mode="open").inc()
+            log.warning("PII scan failed (non-forced, continuing): %s", e)
+
     # Merge Powerbrain tools into request
     merged_tools = tool_injector.merge_tools(request.tools)
 
@@ -216,7 +292,12 @@ async def chat_completions(request: ChatCompletionRequest):
         litellm_kwargs["top_p"] = request.top_p
 
     # Run agent loop
-    loop = AgentLoop(tool_injector, acompletion=llm_acompletion, max_iterations=max_iterations)
+    loop = AgentLoop(
+        tool_injector,
+        acompletion=llm_acompletion,
+        max_iterations=max_iterations,
+        pii_reverse_map=pii_reverse_map,
+    )
     try:
         result: AgentLoopResult = await asyncio.wait_for(
             loop.run(
@@ -245,6 +326,13 @@ async def chat_completions(request: ChatCompletionRequest):
 
     # Build response
     response_data = result.response.model_dump()
+
+    # ── De-pseudonymize response ─────────────────────────────
+    if pii_reverse_map:
+        for choice in response_data.get("choices", []):
+            msg = choice.get("message", {})
+            if isinstance(msg.get("content"), str):
+                msg["content"] = depseudonymize_text(msg["content"], pii_reverse_map)
 
     # Add proxy metadata headers
     headers = {
