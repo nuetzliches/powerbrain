@@ -5,18 +5,27 @@ Erkennt personenbezogene Daten in eingehenden Dokumenten und Datensätzen.
 Verwendet Microsoft Presidio (Open Source) für die NER-basierte Erkennung
 und ergänzt regex-basierte Muster für DE-spezifische Formate.
 
+Konfiguration über pii_config.yaml (Pfad via PII_CONFIG_PATH env var).
+
 Abhängigkeiten (requirements.txt):
   presidio-analyzer
   presidio-anonymizer
   spacy
+  pydantic
+  pyyaml
   # Nach Installation: python -m spacy download de_core_news_md
 """
 
+import os
 import re
 import hashlib
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+import yaml
+from pydantic import BaseModel
 
 from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
 from presidio_analyzer.nlp_engine import NlpEngineProvider
@@ -26,47 +35,82 @@ from presidio_anonymizer import AnonymizerEngine
 log = logging.getLogger("kb-pii")
 
 
-# ── Konfiguration ───────────────────────────────────────────
-
-# PII-Typen, nach denen gescannt wird
-PII_ENTITY_TYPES = [
-    "PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "IBAN_CODE",
-    "CREDIT_CARD", "IP_ADDRESS", "LOCATION", "DATE_OF_BIRTH",
-    # Eigene deutsche Muster (unten definiert):
-    "DE_TAX_ID", "DE_SOCIAL_SECURITY",
-]
-
-# Minimaler Konfidenzwert für Erkennung
-MIN_CONFIDENCE = 0.7
+# ── Pydantic Config Models ─────────────────────────────────
 
 
-# ── Deutsche PII-Muster ────────────────────────────────────
+class PatternConfig(BaseModel):
+    """A single regex pattern for a custom recognizer."""
+    name: str
+    regex: str
+    score: float = 0.6
 
-de_tax_id_pattern = Pattern(
-    name="de_tax_id",
-    regex=r"\b\d{2}\s?\d{3}\s?\d{5}\b",
-    score=0.6,
-)
 
-de_social_security_pattern = Pattern(
-    name="de_social_security",
-    regex=r"\b\d{2}\s?\d{6}\s?[A-Z]\s?\d{3}\b",
-    score=0.6,
-)
+class RecognizerConfig(BaseModel):
+    """A custom regex-based entity recognizer."""
+    name: str
+    entity_type: str
+    language: str = "de"
+    patterns: list[PatternConfig]
 
-de_tax_id_recognizer = PatternRecognizer(
-    supported_entity="DE_TAX_ID",
-    name="German Tax ID Recognizer",
-    patterns=[de_tax_id_pattern],
-    supported_language="de",
-)
 
-de_social_security_recognizer = PatternRecognizer(
-    supported_entity="DE_SOCIAL_SECURITY",
-    name="German Social Security Number Recognizer",
-    patterns=[de_social_security_pattern],
-    supported_language="de",
-)
+class LanguageConfig(BaseModel):
+    """NLP language with its spaCy model."""
+    code: str
+    model: str
+
+
+class PIIScannerConfig(BaseModel):
+    """Top-level PII scanner configuration."""
+    min_confidence: float = 0.7
+    languages: list[LanguageConfig] = [
+        LanguageConfig(code="de", model="de_core_news_md"),
+        LanguageConfig(code="en", model="en_core_web_lg"),
+    ]
+    entity_types: list[str] = [
+        "PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "IBAN_CODE",
+        "CREDIT_CARD", "IP_ADDRESS", "LOCATION", "DATE_OF_BIRTH",
+    ]
+    custom_recognizers: list[RecognizerConfig] = []
+
+    @property
+    def all_entity_types(self) -> list[str]:
+        """Return deduplicated entity types including custom recognizers."""
+        seen: set[str] = set()
+        result: list[str] = []
+        for et in self.entity_types:
+            if et not in seen:
+                seen.add(et)
+                result.append(et)
+        for rec in self.custom_recognizers:
+            if rec.entity_type not in seen:
+                seen.add(rec.entity_type)
+                result.append(rec.entity_type)
+        return result
+
+
+# ── Config Loading ──────────────────────────────────────────
+
+
+def load_config(path: str | Path | None = None) -> PIIScannerConfig:
+    """Load PII scanner config from YAML file.
+
+    Resolution order:
+    1. Explicit *path* argument
+    2. ``PII_CONFIG_PATH`` environment variable
+    3. ``pii_config.yaml`` next to this file
+    """
+    if path is None:
+        path = os.environ.get(
+            "PII_CONFIG_PATH",
+            str(Path(__file__).parent / "pii_config.yaml"),
+        )
+    config_path = Path(path)
+    if not config_path.exists():
+        log.warning("PII config file not found at %s, using defaults", config_path)
+        return PIIScannerConfig()
+    with open(config_path) as f:
+        data = yaml.safe_load(f)
+    return PIIScannerConfig(**data)
 
 
 # ── Scan-Ergebnis ──────────────────────────────────────────
@@ -106,15 +150,36 @@ class PIIScanner:
         # → pseudo = "a3f8c1d2 bestellt", mapping = {"Max Mustermann": "a3f8c1d2"}
     """
 
-    def __init__(self, languages: list[str] | None = None):
-        self.languages = languages or ["de", "en"]
+    def __init__(
+        self,
+        languages: list[str] | None = None,
+        *,
+        config: PIIScannerConfig | None = None,
+    ):
+        if config is not None:
+            self.config = config
+        elif languages is not None:
+            # Legacy path: build config from languages parameter for backward compat
+            self.config = PIIScannerConfig(
+                languages=[
+                    LanguageConfig(code=lang, model={
+                        "de": "de_core_news_md",
+                        "en": "en_core_web_lg",
+                    }.get(lang, f"{lang}_core_news_md"))
+                    for lang in languages
+                ],
+            )
+        else:
+            self.config = PIIScannerConfig()
+
+        self.languages = [lang.code for lang in self.config.languages]
 
         # Configure Presidio NLP engine with spaCy models for each language
         nlp_config = {
             "nlp_engine_name": "spacy",
             "models": [
-                {"lang_code": "de", "model_name": "de_core_news_md"},
-                {"lang_code": "en", "model_name": "en_core_web_lg"},
+                {"lang_code": lang.code, "model_name": lang.model}
+                for lang in self.config.languages
             ],
         }
         provider = NlpEngineProvider(nlp_configuration=nlp_config)
@@ -126,9 +191,19 @@ class PIIScanner:
         )
         self.anonymizer = AnonymizerEngine()
 
-        # Deutsche Muster registrieren
-        self.analyzer.registry.add_recognizer(de_tax_id_recognizer)
-        self.analyzer.registry.add_recognizer(de_social_security_recognizer)
+        # Register custom recognizers from config
+        for rec_cfg in self.config.custom_recognizers:
+            patterns = [
+                Pattern(name=p.name, regex=p.regex, score=p.score)
+                for p in rec_cfg.patterns
+            ]
+            recognizer = PatternRecognizer(
+                supported_entity=rec_cfg.entity_type,
+                name=rec_cfg.name,
+                patterns=patterns,
+                supported_language=rec_cfg.language,
+            )
+            self.analyzer.registry.add_recognizer(recognizer)
 
     def scan_text(self, text: str, language: str = "de") -> PIIScanResult:
         """Scannt Freitext auf PII."""
@@ -138,8 +213,8 @@ class PIIScanner:
         results = self.analyzer.analyze(
             text=text,
             language=language,
-            entities=PII_ENTITY_TYPES,
-            score_threshold=MIN_CONFIDENCE,
+            entities=self.config.all_entity_types,
+            score_threshold=self.config.min_confidence,
         )
 
         if not results:
@@ -191,8 +266,8 @@ class PIIScanner:
         results = self.analyzer.analyze(
             text=text,
             language=language,
-            entities=PII_ENTITY_TYPES,
-            score_threshold=MIN_CONFIDENCE,
+            entities=self.config.all_entity_types,
+            score_threshold=self.config.min_confidence,
         )
 
         anonymized = self.anonymizer.anonymize(
@@ -214,8 +289,8 @@ class PIIScanner:
         results = self.analyzer.analyze(
             text=text,
             language=language,
-            entities=PII_ENTITY_TYPES,
-            score_threshold=MIN_CONFIDENCE,
+            entities=self.config.all_entity_types,
+            score_threshold=self.config.min_confidence,
         )
 
         def make_pseudonym(entity_text: str, entity_type: str) -> str:
@@ -285,5 +360,6 @@ def get_scanner() -> PIIScanner:
     """Gibt eine Singleton-Instanz des Scanners zurück."""
     global _default_scanner
     if _default_scanner is None:
-        _default_scanner = PIIScanner()
+        config = load_config()
+        _default_scanner = PIIScanner(config=config)
     return _default_scanner
