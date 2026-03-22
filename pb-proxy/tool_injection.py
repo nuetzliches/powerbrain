@@ -15,6 +15,14 @@ import config
 log = logging.getLogger("pb-proxy.tools")
 
 
+def _mcp_headers() -> dict[str, str]:
+    """Build auth headers for MCP server connection."""
+    headers: dict[str, str] = {}
+    if config.MCP_AUTH_TOKEN:
+        headers["Authorization"] = f"Bearer {config.MCP_AUTH_TOKEN}"
+    return headers
+
+
 def mcp_tool_to_openai(tool: Any) -> dict:
     """Convert an MCP Tool object to OpenAI function-calling format."""
     return {
@@ -53,7 +61,10 @@ class ToolInjector:
     async def _refresh_tools(self) -> None:
         """Connect to MCP server and fetch current tool list."""
         try:
-            async with streamablehttp_client(config.MCP_SERVER_URL) as (
+            async with streamablehttp_client(
+                config.MCP_SERVER_URL,
+                headers=_mcp_headers(),
+            ) as (
                 read_stream,
                 write_stream,
                 _,
@@ -113,7 +124,10 @@ class ToolInjector:
 
     async def call_tool(self, name: str, arguments: dict) -> str:
         """Execute a tool call against the MCP server. Returns result as string."""
-        async with streamablehttp_client(config.MCP_SERVER_URL) as (
+        async with streamablehttp_client(
+            config.MCP_SERVER_URL,
+            headers=_mcp_headers(),
+        ) as (
             read_stream,
             write_stream,
             _,

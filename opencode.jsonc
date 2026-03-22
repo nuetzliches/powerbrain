@@ -1,0 +1,39 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // ── Powerbrain Proxy Provider ─────────────────────────────
+  // Routes LLM requests through pb-proxy (PII pseudonymization +
+  // Powerbrain tool injection) to GitHub Models API.
+  // Activate: docker compose --profile proxy up -d
+  // Auth: run /connect → Other → id "powerbrain-proxy" → any dummy key
+  "provider": {
+    "powerbrain-proxy": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Powerbrain Proxy",
+      "options": {
+        "baseURL": "http://localhost:8090/v1"
+      },
+      "models": {
+        "gpt-4o": {
+          "name": "GPT-4o (via Powerbrain)",
+          "limit": {
+            "context": 128000,
+            "output": 16384
+          }
+        }
+        // gpt-4o-mini removed: GitHub Models free tier has 8000 token
+        // input limit, too small for Powerbrain tool injection (~1000+ tokens)
+      }
+    }
+  },
+  "mcp": {
+    "powerbrain": {
+      "type": "remote",
+      "url": "http://localhost:8080/mcp",
+      "enabled": true,
+      "oauth": false,
+      "headers": {
+        "Authorization": "Bearer kb_dev_localonly_do_not_use_in_production"
+      }
+    }
+  }
+}

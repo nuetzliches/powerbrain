@@ -9,6 +9,26 @@
 # routing (model name = provider/model, e.g. "openai/gpt-4o").
 
 model_list:
+  # ── GitHub Models (via PAT) ────────────────────────────────
+  # Uses GitHub Models API at models.inference.ai.azure.com.
+  # Requires a GitHub PAT stored in secrets/github_pat.txt.
+  - model_name: "gpt-4o"
+    litellm_params:
+      model: "github/gpt-4o"
+      api_key: "os.environ/GITHUB_PAT"
+
+  - model_name: "gpt-4o-mini"
+    litellm_params:
+      model: "github/gpt-4o-mini"
+      api_key: "os.environ/GITHUB_PAT"
+
+  # Claude is not available on all GitHub Models accounts.
+  # Uncomment if your PAT has access:
+  # - model_name: "claude-sonnet"
+  #   litellm_params:
+  #     model: "github/claude-sonnet-4-20250514"
+  #     api_key: "os.environ/GITHUB_PAT"
+
   # ── Local Ollama (works out of the box with Docker Compose) ──
   # - model_name: "llama"
   #   litellm_params:

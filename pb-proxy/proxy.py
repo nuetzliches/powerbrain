@@ -10,17 +10,18 @@ Endpoint: POST /v1/chat/completions (OpenAI-compatible)
 """
 
 import asyncio
+import json
 import logging
 import re
 import time
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, AsyncGenerator
 
 import httpx
 import uvicorn
 import yaml
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from prometheus_client import (
     Counter, Histogram,
@@ -202,13 +203,7 @@ async def health():
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
     start_time = time.monotonic()
-
-    # Streaming not yet supported
-    if request.stream:
-        raise HTTPException(
-            status_code=501,
-            detail="Streaming not yet supported. Set stream=false.",
-        )
+    is_streaming = request.stream
 
     # TODO: Extract agent_role from auth (for now default to "developer")
     agent_role = "developer"
@@ -279,15 +274,19 @@ async def chat_completions(request: ChatCompletionRequest):
             PII_SCAN_FAILURES.labels(fail_mode="open").inc()
             log.warning("PII scan failed (non-forced, continuing): %s", e)
 
-    # Merge Powerbrain tools into request
-    merged_tools = tool_injector.merge_tools(request.tools)
+    # Merge Powerbrain tools into request (skip if disabled or client sends own tools)
+    if config.TOOL_INJECTION_ENABLED:
+        merged_tools = tool_injector.merge_tools(request.tools)
+    else:
+        merged_tools = request.tools or []
 
     # Build LiteLLM kwargs from extra fields
     litellm_kwargs: dict[str, Any] = {}
     if request.temperature is not None:
         litellm_kwargs["temperature"] = request.temperature
     if request.max_tokens is not None:
-        litellm_kwargs["max_tokens"] = request.max_tokens
+        # Cap max_tokens to avoid provider rejections (GitHub Models: 16384)
+        litellm_kwargs["max_tokens"] = min(request.max_tokens, 16384)
     if request.top_p is not None:
         litellm_kwargs["top_p"] = request.top_p
 
@@ -342,7 +341,102 @@ async def chat_completions(request: ChatCompletionRequest):
     if result.max_iterations_reached:
         headers["X-Proxy-Max-Iterations-Reached"] = "true"
 
+    if is_streaming:
+        return StreamingResponse(
+            _generate_sse_stream(response_data),
+            media_type="text/event-stream",
+            headers={
+                **headers,
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     return JSONResponse(content=response_data, headers=headers)
+
+
+# ── SSE Streaming Helpers ────────────────────────────────────
+
+def _sse_chunk(data: dict) -> str:
+    """Format a dict as an SSE data line."""
+    return f"data: {json.dumps(data)}\n\n"
+
+
+async def _generate_sse_stream(
+    response_data: dict,
+) -> AsyncGenerator[str, None]:
+    """Convert a complete chat response to SSE stream chunks.
+
+    Splits the content into small pieces so the client sees
+    incremental output, matching OpenAI's streaming format.
+    """
+    chat_id = response_data.get("id", f"chatcmpl-proxy-{int(time.time())}")
+    model = response_data.get("model", "unknown")
+    created = response_data.get("created", int(time.time()))
+
+    for choice in response_data.get("choices", []):
+        msg = choice.get("message", {})
+        content = msg.get("content") or ""
+        index = choice.get("index", 0)
+        finish_reason = choice.get("finish_reason", "stop")
+
+        # Chunk 1: role
+        yield _sse_chunk({
+            "id": chat_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{
+                "index": index,
+                "delta": {"role": msg.get("role", "assistant")},
+                "finish_reason": None,
+            }],
+        })
+
+        # Content chunks: split into ~20-char pieces
+        if content:
+            chunk_size = 20
+            for i in range(0, len(content), chunk_size):
+                piece = content[i : i + chunk_size]
+                yield _sse_chunk({
+                    "id": chat_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [{
+                        "index": index,
+                        "delta": {"content": piece},
+                        "finish_reason": None,
+                    }],
+                })
+
+        # Final chunk: finish_reason
+        yield _sse_chunk({
+            "id": chat_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{
+                "index": index,
+                "delta": {},
+                "finish_reason": finish_reason,
+            }],
+        })
+
+    # Usage chunk (some clients expect this)
+    usage = response_data.get("usage")
+    if usage:
+        yield _sse_chunk({
+            "id": chat_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [],
+            "usage": usage,
+        })
+
+    yield "data: [DONE]\n\n"
 
 
 # ── Entrypoint ───────────────────────────────────────────────
