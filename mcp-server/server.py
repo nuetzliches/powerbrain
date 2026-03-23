@@ -40,6 +40,10 @@ import uvicorn
 import hashlib
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from shared.llm_provider import EmbeddingProvider, CompletionProvider
+
 import graph_service as graph
 from graph_service import validate_identifier
 
@@ -55,12 +59,28 @@ def _read_secret(env_var: str, default: str = "") -> str:
 QDRANT_URL    = os.getenv("QDRANT_URL",    "http://localhost:6333")
 POSTGRES_URL  = os.getenv("POSTGRES_URL",  "postgresql://kb_admin:changeme@localhost:5432/knowledgebase")
 OPA_URL       = os.getenv("OPA_URL",       "http://localhost:8181")
-OLLAMA_URL    = os.getenv("OLLAMA_URL",    "http://localhost:11434")
 FORGEJO_URL   = os.getenv("FORGEJO_URL",   "http://forgejo.local:3000")
 FORGEJO_TOKEN = _read_secret("FORGEJO_TOKEN")
 RERANKER_URL  = os.getenv("RERANKER_URL",  "http://reranker:8082")
 RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
 INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8081")
+
+# ── Backward-compat fallback ──
+_OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+
+# ── Embedding provider ──
+EMBEDDING_PROVIDER_URL = os.getenv("EMBEDDING_PROVIDER_URL", _OLLAMA_URL)
+EMBEDDING_MODEL        = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+EMBEDDING_API_KEY      = os.getenv("EMBEDDING_API_KEY", "")
+
+# ── LLM / Summarization provider ──
+LLM_PROVIDER_URL       = os.getenv("LLM_PROVIDER_URL", _OLLAMA_URL)
+LLM_MODEL              = os.getenv("LLM_MODEL", os.getenv("SUMMARIZATION_MODEL", "qwen2.5:3b"))
+LLM_API_KEY            = os.getenv("LLM_API_KEY", "")
+SUMMARIZATION_ENABLED  = os.getenv("SUMMARIZATION_ENABLED", "true").lower() == "true"
+
+embedding_provider = EmbeddingProvider(base_url=EMBEDDING_PROVIDER_URL, api_key=EMBEDDING_API_KEY)
+llm_provider       = CompletionProvider(base_url=LLM_PROVIDER_URL, api_key=LLM_API_KEY)
 
 MCP_HOST       = os.getenv("MCP_HOST", "0.0.0.0")
 MCP_PORT       = int(os.getenv("MCP_PORT", "8080"))
@@ -69,8 +89,6 @@ METRICS_PORT   = int(os.getenv("METRICS_PORT", "9091"))
 OTEL_ENABLED   = os.getenv("OTEL_ENABLED", "false").lower() == "true"
 OTLP_ENDPOINT  = os.getenv("OTLP_ENDPOINT", "http://tempo:4317")
 AUTH_REQUIRED  = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
-SUMMARIZATION_MODEL   = os.getenv("SUMMARIZATION_MODEL", "qwen2.5:3b")
-SUMMARIZATION_ENABLED = os.getenv("SUMMARIZATION_ENABLED", "true").lower() == "true"
 
 RATE_LIMIT_ENABLED    = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
 RATE_LIMIT_ANALYST    = int(os.getenv("RATE_LIMIT_ANALYST", "60"))
@@ -81,8 +99,6 @@ RATE_LIMITS_BY_ROLE   = {
     "developer": RATE_LIMIT_DEVELOPER,
     "admin": RATE_LIMIT_ADMIN,
 }
-
-EMBEDDING_MODEL    = "nomic-embed-text"
 DEFAULT_TOP_K      = 10
 OVERSAMPLE_FACTOR  = 5
 
@@ -318,11 +334,7 @@ class ApiKeyVerifier(TokenVerifier):
 )
 async def embed_text(text: str) -> list[float]:
     with _otel_span("embed_text"):
-        resp = await http.post(f"{OLLAMA_URL}/api/embed", json={
-            "model": EMBEDDING_MODEL, "input": text
-        })
-        resp.raise_for_status()
-        return resp.json()["embeddings"][0]
+        return await embedding_provider.embed(http, text, EMBEDDING_MODEL)
 
 
 async def summarize_text(
@@ -330,7 +342,7 @@ async def summarize_text(
     query: str,
     detail: str = "standard",
 ) -> str | None:
-    """Summarize chunks using Ollama. Returns None on failure (graceful degradation)."""
+    """Summarize chunks via LLM provider. Returns None on failure (graceful degradation)."""
     if not chunks:
         return None
 
@@ -348,18 +360,16 @@ async def summarize_text(
     )
 
     combined = "\n\n---\n\n".join(f"Chunk {i+1}:\n{c}" for i, c in enumerate(chunks))
-    prompt = f"Query: {query}\n\nText chunks to summarize:\n\n{combined}"
+    user_prompt = f"Query: {query}\n\nText chunks to summarize:\n\n{combined}"
 
     with _otel_span("summarize_text"):
         try:
-            resp = await http.post(f"{OLLAMA_URL}/api/generate", json={
-                "model": SUMMARIZATION_MODEL,
-                "system": system_prompt,
-                "prompt": prompt,
-                "stream": False,
-            })
-            resp.raise_for_status()
-            return resp.json().get("response", "").strip() or None
+            return await llm_provider.generate(
+                http,
+                model=LLM_MODEL,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
         except Exception as e:
             log.warning(f"Summarization failed, returning raw chunks: {e}")
             return None

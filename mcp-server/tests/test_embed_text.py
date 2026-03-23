@@ -1,4 +1,4 @@
-"""Tests for embed_text with mocked Ollama HTTP calls."""
+"""Tests for embed_text with mocked LLM provider HTTP calls."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
@@ -21,7 +21,7 @@ class TestEmbedText:
         expected = [0.1, 0.2, 0.3]
         response = MagicMock()
         response.raise_for_status = MagicMock()
-        response.json.return_value = {"embeddings": [expected]}
+        response.json.return_value = {"data": [{"embedding": expected}]}
         _patch_http.post.return_value = response
 
         result = await embed_text("test query")
@@ -29,7 +29,7 @@ class TestEmbedText:
         assert result == expected
         _patch_http.post.assert_called_once()
         call_args = _patch_http.post.call_args
-        assert "/api/embed" in call_args[0][0]
+        assert "/v1/embeddings" in call_args[0][0]
         assert call_args[1]["json"]["model"] == "nomic-embed-text"
         assert call_args[1]["json"]["input"] == "test query"
 
@@ -47,7 +47,7 @@ class TestEmbedText:
         """embed_text should retry on ConnectError (tenacity)."""
         response_ok = MagicMock()
         response_ok.raise_for_status = MagicMock()
-        response_ok.json.return_value = {"embeddings": [[0.1]]}
+        response_ok.json.return_value = {"data": [{"embedding": [0.1]}]}
 
         _patch_http.post.side_effect = [
             httpx.ConnectError("connection refused"),
@@ -65,7 +65,7 @@ class TestEmbedText:
         """embed_text should retry on TimeoutException."""
         response_ok = MagicMock()
         response_ok.raise_for_status = MagicMock()
-        response_ok.json.return_value = {"embeddings": [[0.5]]}
+        response_ok.json.return_value = {"data": [{"embedding": [0.5]}]}
 
         _patch_http.post.side_effect = [
             httpx.TimeoutException("timeout"),

@@ -16,11 +16,13 @@ def _patch_http(monkeypatch):
 
 class TestSummarizeText:
     async def test_returns_summary(self, _patch_http, monkeypatch):
-        monkeypatch.setattr(server, "SUMMARIZATION_MODEL", "qwen2.5:3b")
+        monkeypatch.setattr(server, "LLM_MODEL", "qwen2.5:3b")
 
         response = MagicMock()
         response.raise_for_status = MagicMock()
-        response.json.return_value = {"response": "This is a summary."}
+        response.json.return_value = {
+            "choices": [{"message": {"content": "This is a summary."}}],
+        }
         _patch_http.post.return_value = response
 
         result = await summarize_text(
@@ -31,11 +33,13 @@ class TestSummarizeText:
         assert result == "This is a summary."
 
     async def test_sends_correct_payload(self, _patch_http, monkeypatch):
-        monkeypatch.setattr(server, "SUMMARIZATION_MODEL", "test-model")
+        monkeypatch.setattr(server, "LLM_MODEL", "test-model")
 
         response = MagicMock()
         response.raise_for_status = MagicMock()
-        response.json.return_value = {"response": "Summary"}
+        response.json.return_value = {
+            "choices": [{"message": {"content": "Summary"}}],
+        }
         _patch_http.post.return_value = response
 
         await summarize_text(
@@ -45,14 +49,17 @@ class TestSummarizeText:
         )
 
         call_args = _patch_http.post.call_args
-        assert "/api/generate" in call_args[0][0]
+        assert "/v1/chat/completions" in call_args[0][0]
         payload = call_args[1]["json"]
         assert payload["model"] == "test-model"
-        assert "brief" in payload["system"].lower() or "concise" in payload["system"].lower()
+        assert payload["stream"] is False
+        # System message should contain brief/concise instruction
+        system_msg = payload["messages"][0]["content"]
+        assert "concise" in system_msg.lower() or "brief" in system_msg.lower()
 
     async def test_graceful_fallback_on_error(self, _patch_http, monkeypatch):
-        monkeypatch.setattr(server, "SUMMARIZATION_MODEL", "test-model")
-        _patch_http.post.side_effect = Exception("Ollama down")
+        monkeypatch.setattr(server, "LLM_MODEL", "test-model")
+        _patch_http.post.side_effect = Exception("LLM provider down")
 
         result = await summarize_text(
             chunks=["A", "B"],
@@ -62,7 +69,7 @@ class TestSummarizeText:
         assert result is None
 
     async def test_empty_chunks_returns_none(self, _patch_http, monkeypatch):
-        monkeypatch.setattr(server, "SUMMARIZATION_MODEL", "test-model")
+        monkeypatch.setattr(server, "LLM_MODEL", "test-model")
 
         result = await summarize_text(
             chunks=[],
