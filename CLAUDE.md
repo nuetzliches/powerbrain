@@ -28,8 +28,8 @@ Agent/Skill
  (vectors)  (data+vault+graph) (policies) (Cross-Enc.)
     │
     ▼
- Ollama
- (embeddings + summarization)
+ Ollama / vLLM / TEI
+ (embeddings + summarization, configurable)
 ```
 
 ## Directory Structure
@@ -40,6 +40,11 @@ powerbrain/
 ├── README.md              ← Quick start and overview
 ├── docker-compose.yml     ← All services
 ├── .env.example           ← Environment variables
+├── shared/
+│   ├── __init__.py
+│   ├── llm_provider.py    ← OpenAI-compat LLM provider abstraction
+│   └── tests/
+│       └── test_llm_provider.py
 ├── mcp-server/
 │   ├── server.py          ← MCP Server (10 tools)
 │   ├── graph_service.py   ← Knowledge Graph (Apache AGE)
@@ -104,6 +109,8 @@ powerbrain/
 | postgres      | 5432  | PostgreSQL 16 + Apache AGE         | Structured data + graph + audit  |
 | opa           | 8181  | Open Policy Agent                  | Policy engine + access control   |
 | ollama        | 11434 | Ollama                             | Local embeddings + summarization |
+| vllm          | 8000  | vLLM (optional, `gpu` profile)     | Production LLM serving           |
+| tei           | 8010  | HF TEI (optional, `gpu` profile)   | Production embedding serving     |
 | caddy         | 80/443| Caddy 2 (optional, `tls` profile)  | TLS reverse proxy                |
 | forgejo       | 3000  | Forgejo (external, not in Compose) | Git repos, policies, schemas     |
 | prometheus    | 9090  | Prometheus                         | Metrics collection               |
@@ -137,9 +144,10 @@ After search and reranking, summarization is policy-controlled:
 
 Agents use `summarize=true` and `summary_detail` parameters on `search_knowledge` and `get_code_context`.
 Response includes `summary` (text) and `summary_policy` (`requested` | `enforced` | `denied`).
-Graceful degradation: if Ollama summarization fails → raw chunks returned.
+Graceful degradation: if LLM summarization fails → raw chunks returned.
 
-Config: `SUMMARIZATION_MODEL` (default: `qwen2.5:3b`), `SUMMARIZATION_ENABLED` (default: `true`).
+Config: `LLM_MODEL` (default: `qwen2.5:3b`), `SUMMARIZATION_ENABLED` (default: `true`).
+Backward compat: `SUMMARIZATION_MODEL` still read as fallback if `LLM_MODEL` not set.
 
 ### Sealed Vault (Dual Storage)
 PII data is stored in two tiers:
@@ -190,6 +198,17 @@ No separate git container — uses existing Forgejo:
 - `kb-policies` repo → OPA bundle polling
 - `kb-schemas` repo → JSON schema validation
 - `kb-docs` + project repos → Ingestion pipeline
+
+### LLM Provider Abstraction
+Embedding and Summarization use the OpenAI-compatible API (`/v1/embeddings`, `/v1/chat/completions`).
+Each can be pointed to a different backend via environment variables:
+- `EMBEDDING_PROVIDER_URL` + `EMBEDDING_MODEL` — for vector embeddings
+- `LLM_PROVIDER_URL` + `LLM_MODEL` — for summarization/generation
+- Optional API keys: `EMBEDDING_API_KEY`, `LLM_API_KEY`
+
+Falls back to `OLLAMA_URL` if provider URLs not set. Supports Ollama, vLLM, HF TEI, infinity, OpenAI.
+Implementation: `shared/llm_provider.py` — `EmbeddingProvider` and `CompletionProvider` classes.
+Optional GPU stack: `docker compose --profile gpu up -d` (vLLM + HF TEI).
 
 ### AI Provider Proxy (optional)
 Optional gateway activated via `docker compose --profile proxy up`.
@@ -278,7 +297,7 @@ cd mcp-server && python3 -m pytest tests/ -v
 3. ✅ **Evaluation + Feedback Loop** — `init-db/004_evaluation.sql`, MCP tools `submit_feedback`/`get_eval_stats`
 4. ✅ **Knowledge Versioning** — `init-db/005_versioning.sql`, `ingestion/snapshot_service.py`
 5. ✅ **Monitoring** — Prometheus + Grafana + Tempo
-6. ✅ **Context Summarization** — OPA-controlled, Ollama-powered (`kb.summarization` policy)
+6. ✅ **Context Summarization** — OPA-controlled, LLM-powered (`kb.summarization` policy)
 7. ✅ **Docker Secrets** — `/run/secrets/` with env var fallback
 8. ✅ **TLS Profile** — Optional Caddy reverse proxy (`docker compose --profile tls up`)
 9. ✅ **AI Provider Proxy** — Optional LLM gateway with transparent tool injection (`docker compose --profile proxy`)
@@ -286,6 +305,7 @@ cd mcp-server && python3 -m pytest tests/ -v
 11. ✅ **Proxy Model Discovery** — `GET /v1/models` endpoint for OpenAI-compatible client integration
 12. ✅ **Proxy SSE Streaming** — Simulated streaming via SSE chunks for `stream: true` requests
 13. ✅ **Passthrough Routing** — Dual-mode model routing: aliases via Router + `provider/model` passthrough via direct LiteLLM
+14. ✅ **LLM Provider Abstraction** — OpenAI-compatible provider layer (`shared/llm_provider.py`), configurable backends for embedding + summarization, optional GPU stack (vLLM + TEI)
 
 Details on all features: see `docs/architektur.md`
 
@@ -316,3 +336,4 @@ Details on all features: see `docs/architektur.md`
 | PII Storage | Sealed Vault (Dual) | Destructive masking, full encryption | Reversible, searchable, GDPR-compliant |
 | TLS | Caddy (optional profile) | Nginx, Traefik | Zero-config HTTPS, simple Caddyfile |
 | Secrets | Docker Secrets + env fallback | Vault, SOPS | Simple, no extra infrastructure |
+| LLM Provider | OpenAI-compat (`shared/llm_provider.py`) | Direct Ollama API | Supports vLLM, TEI, infinity, any OpenAI-compat |
