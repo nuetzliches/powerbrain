@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 
 [tool.pytest.ini_options]
 testpaths = [
+    "shared/tests",
     "mcp-server/tests",
     "ingestion/tests",
     "reranker/tests",
