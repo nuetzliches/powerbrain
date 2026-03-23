@@ -11,6 +11,7 @@ import urllib.request
 
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+EMBEDDING_PROVIDER_URL = os.environ.get("EMBEDDING_PROVIDER_URL", OLLAMA_URL)
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
 
@@ -42,10 +43,10 @@ def ensure_collection(name: str) -> None:
 def embed_text(text: str) -> list[float]:
     response = request_json(
         "POST",
-        f"{OLLAMA_URL}/api/embed",
+        f"{EMBEDDING_PROVIDER_URL}/v1/embeddings",
         {"model": EMBEDDING_MODEL, "input": text},
     )
-    return response["embeddings"][0]
+    return response["data"][0]["embedding"]
 
 
 def upsert_demo_document(vector: list[float]) -> None:

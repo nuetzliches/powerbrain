@@ -133,7 +133,14 @@ def wait_for_all_services() -> None:
 
 
 def ensure_ollama_model() -> None:
-    """Pull the embedding model if not already present."""
+    """Pull the embedding model if not already present (Ollama only)."""
+    # Model pull is an Ollama-specific operation.
+    # Skip if using a non-Ollama embedding provider.
+    embedding_url = os.environ.get("EMBEDDING_PROVIDER_URL", "")
+    if embedding_url and embedding_url != OLLAMA_URL:
+        print(f"Skipping Ollama model pull (using external provider: {embedding_url})")
+        return
+
     tags = http_get(f"{OLLAMA_URL}/api/tags")
     if tags:
         models = [m.get("name", "").split(":")[0] for m in tags.get("models", [])]

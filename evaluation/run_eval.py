@@ -32,11 +32,25 @@ log = logging.getLogger("kb-eval")
 POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://kb_admin:changeme@postgres:5432/knowledgebase")
 MCP_BASE_URL = os.getenv("MCP_EVAL_URL", "http://mcp-server:8080")   # Direkt gegen Ingestion/Qdrant
 QDRANT_URL   = os.getenv("QDRANT_URL",   "http://qdrant:6333")
-OLLAMA_URL   = os.getenv("OLLAMA_URL",   "http://ollama:11434")
 RERANKER_URL = os.getenv("RERANKER_URL", "http://reranker:8082")
 OPA_URL      = os.getenv("OPA_URL",      "http://opa:8181")
 
-EMBEDDING_MODEL    = "nomic-embed-text"
+# ── Backward-compat fallback ──
+_OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
+
+# ── Embedding provider ──
+EMBEDDING_PROVIDER_URL = os.getenv("EMBEDDING_PROVIDER_URL", _OLLAMA_URL)
+EMBEDDING_MODEL        = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+EMBEDDING_API_KEY      = os.getenv("EMBEDDING_API_KEY", "")
+
+import sys as _sys
+_sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from shared.llm_provider import EmbeddingProvider
+
+_embedding_provider = EmbeddingProvider(
+    base_url=EMBEDDING_PROVIDER_URL, api_key=EMBEDDING_API_KEY
+)
+
 EVAL_AGENT_ID      = "eval-bot"
 EVAL_AGENT_ROLE    = "analyst"
 OVERSAMPLE_FACTOR  = 5
@@ -107,11 +121,7 @@ def keyword_coverage(returned_texts: list[str], expected_keywords: list[str]) ->
 # ── Embedding + Suche ─────────────────────────────────────────
 
 async def embed_text(client: httpx.AsyncClient, text: str) -> list[float]:
-    resp = await client.post(f"{OLLAMA_URL}/api/embed", json={
-        "model": EMBEDDING_MODEL, "input": text
-    })
-    resp.raise_for_status()
-    return resp.json()["embeddings"][0]
+    return await _embedding_provider.embed(client, text, EMBEDDING_MODEL)
 
 
 _opa_access_cache: dict[str, bool] = {}
