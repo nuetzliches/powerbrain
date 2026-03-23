@@ -36,10 +36,23 @@ from snapshot_service import create_snapshot
 QDRANT_URL   = os.getenv("QDRANT_URL",   "http://qdrant:6333")
 POSTGRES_URL = os.getenv("POSTGRES_URL",  "postgresql://kb_admin:changeme@postgres:5432/knowledgebase")
 OPA_URL      = os.getenv("OPA_URL",       "http://opa:8181")
-OLLAMA_URL   = os.getenv("OLLAMA_URL",    "http://ollama:11434")
 RERANKER_URL = os.getenv("RERANKER_URL",  "http://reranker:8082")
 
-EMBEDDING_MODEL = "nomic-embed-text"
+# ── Backward-compat fallback ──
+_OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
+
+# ── Embedding provider ──
+EMBEDDING_PROVIDER_URL = os.getenv("EMBEDDING_PROVIDER_URL", _OLLAMA_URL)
+EMBEDDING_MODEL        = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+EMBEDDING_API_KEY      = os.getenv("EMBEDDING_API_KEY", "")
+
+import sys as _sys
+_sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from shared.llm_provider import EmbeddingProvider
+
+embedding_provider = EmbeddingProvider(
+    base_url=EMBEDDING_PROVIDER_URL, api_key=EMBEDDING_API_KEY
+)
 
 DEFAULT_COLLECTION = "knowledge_general"
 
@@ -130,13 +143,8 @@ class ChunkIngestRequest(BaseModel):
 # ── Hilfsfunktionen ─────────────────────────────────────────
 
 async def get_embedding(text: str) -> list[float]:
-    """Erzeugt Embedding über Ollama."""
-    resp = await http_client.post(
-        f"{OLLAMA_URL}/api/embeddings",
-        json={"model": EMBEDDING_MODEL, "prompt": text},
-    )
-    resp.raise_for_status()
-    return resp.json()["embedding"]
+    """Erzeugt Embedding über den konfigurierten Provider (OpenAI-compat)."""
+    return await embedding_provider.embed(http_client, text, EMBEDDING_MODEL)
 
 
 def chunk_text(text: str, max_chars: int = 1000, overlap: int = 200) -> list[str]:
@@ -535,12 +543,12 @@ async def health():
     else:
         checks["services"]["postgres"] = "not_connected"
 
-    # Ollama
+    # Embedding provider
     try:
-        await http_client.get(f"{OLLAMA_URL}/api/tags")
-        checks["services"]["ollama"] = "ok"
+        healthy = await embedding_provider.health_check(http_client)
+        checks["services"]["embedding_provider"] = "ok" if healthy else "error"
     except Exception:
-        checks["services"]["ollama"] = "error"
+        checks["services"]["embedding_provider"] = "error"
 
     return checks
 
