@@ -20,6 +20,8 @@ volumes:
   tempo_data:
   caddy_data:
   caddy_config:
+  vllm_models:
+  tei_models:
 
 secrets:
   pg_password:
@@ -166,8 +168,8 @@ services:
   # ── MCP-Server (Agenten-Schnittstelle) ────────────────────
   mcp-server:
     build:
-      context: ./mcp-server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: mcp-server/Dockerfile
     container_name: kb-mcp-server
     ports:
       - "8080:8080"   # MCP Streamable HTTP
@@ -181,6 +183,12 @@ services:
       POSTGRES_URL:    postgresql://kb_admin:${PG_PASSWORD:-changeme_in_production}@postgres:5432/knowledgebase
       OPA_URL:         http://opa:8181
       OLLAMA_URL:      http://ollama:11434
+      EMBEDDING_PROVIDER_URL: ${EMBEDDING_PROVIDER_URL:-http://ollama:11434}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      LLM_PROVIDER_URL: ${LLM_PROVIDER_URL:-http://ollama:11434}
+      LLM_MODEL:       ${LLM_MODEL:-${SUMMARIZATION_MODEL:-qwen2.5:3b}}
+      LLM_API_KEY:     ${LLM_API_KEY:-}
       FORGEJO_URL:     ${FORGEJO_URL:-http://forgejo.local:3000}
       FORGEJO_TOKEN:   ${FORGEJO_TOKEN:-}
       FORGEJO_TOKEN_FILE: /run/secrets/forgejo_token
@@ -194,7 +202,6 @@ services:
       METRICS_PORT:    "9091"
       OTEL_ENABLED:    ${OTEL_ENABLED:-false}
       OTLP_ENDPOINT:   http://tempo:4317
-      SUMMARIZATION_MODEL:   ${SUMMARIZATION_MODEL:-qwen2.5:3b}
       SUMMARIZATION_ENABLED: ${SUMMARIZATION_ENABLED:-true}
     depends_on:
       qdrant:
@@ -210,8 +217,8 @@ services:
   # ── Ingestion Pipeline ────────────────────────────────────
   ingestion:
     build:
-      context: ./ingestion
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ingestion/Dockerfile
     container_name: kb-ingestion
     ports:
       - "8081:8081"
@@ -223,6 +230,9 @@ services:
       POSTGRES_URL:  postgresql://kb_admin:${PG_PASSWORD:-changeme_in_production}@postgres:5432/knowledgebase
       OPA_URL:       http://opa:8181
       OLLAMA_URL:    http://ollama:11434
+      EMBEDDING_PROVIDER_URL: ${EMBEDDING_PROVIDER_URL:-http://ollama:11434}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       FORGEJO_URL:   ${FORGEJO_URL:-http://forgejo.local:3000}
       FORGEJO_TOKEN: ${FORGEJO_TOKEN:-}
       FORGEJO_TOKEN_FILE: /run/secrets/forgejo_token
@@ -301,9 +311,10 @@ services:
     environment:
       INGESTION_URL:   http://ingestion:8081
       OLLAMA_URL:      http://ollama:11434
+      EMBEDDING_PROVIDER_URL: ${EMBEDDING_PROVIDER_URL:-http://ollama:11434}
       QDRANT_URL:      http://qdrant:6333
       MCP_URL:         http://mcp-server:8080
-      EMBEDDING_MODEL: nomic-embed-text
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       MAX_WAIT_SECONDS: "180"
     depends_on:
       qdrant:
@@ -368,6 +379,60 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # ── vLLM (optional, replaces Ollama for LLM/VLM) ──────────
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: kb-vllm
+    profiles: ["gpu"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - vllm_models:/root/.cache/huggingface
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
+    command:
+      - "--model"
+      - "${VLLM_MODEL:-llava-hf/llava-1.5-7b-hf}"
+      - "--dtype"
+      - "bfloat16"
+      - "--max-model-len"
+      - "4096"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - kb-net
+    restart: unless-stopped
+
+  # ── HF Text Embeddings Inference (optional) ───────────────
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:latest
+    container_name: kb-tei
+    profiles: ["gpu"]
+    ports:
+      - "8010:80"
+    volumes:
+      - tei_models:/data
+    command:
+      - "--model-id"
+      - "${TEI_MODEL:-nomic-ai/nomic-embed-text-v1}"
+      - "--port"
+      - "80"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - kb-net
+    restart: unless-stopped
 
   # ── Caddy (TLS Reverse Proxy, optional) ───────────────────
   caddy:
