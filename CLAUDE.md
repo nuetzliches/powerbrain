@@ -69,7 +69,8 @@ powerbrain/
 │   ├── access.rego         ← Access control
 │   ├── rules.rego          ← Business rules
 │   ├── privacy.rego        ← GDPR policies
-│   └── summarization.rego  ← Context summarization policies
+│   ├── summarization.rego  ← Context summarization policies
+│   └── proxy.rego          ← Proxy policies (provider access, MCP server ACL)
 ├── caddy/
 │   └── Caddyfile           ← Reverse proxy config (optional TLS profile)
 ├── secrets/
@@ -82,10 +83,13 @@ powerbrain/
 │   └── grafana-datasources/← Provisioned data sources
 ├── pb-proxy/
 │   ├── proxy.py           ← Main FastAPI application
-│   ├── tool_injection.py  ← MCP tool discovery + merge
-│   ├── agent_loop.py      ← Tool-call execution loop
+│   ├── auth.py            ← API-key auth (ProxyKeyVerifier, asyncpg)
+│   ├── tool_injection.py  ← Multi-server MCP tool discovery + merge
+│   ├── agent_loop.py      ← Tool-call execution loop with server routing
+│   ├── mcp_config.py      ← MCP server config model + YAML loader
 │   ├── config.py          ← Configuration
 │   ├── litellm_config.yaml← LLM provider config
+│   ├── mcp_servers.yaml   ← MCP server connections (name, URL, auth)
 │   ├── Dockerfile
 │   └── requirements.txt
 └── docs/
@@ -214,26 +218,39 @@ Optional GPU stack: `docker compose --profile gpu up -d` (vLLM + HF TEI).
 ### AI Provider Proxy (optional)
 Optional gateway activated via `docker compose --profile proxy up`.
 Sits between AI consumers and LLM providers:
-1. Client sends OpenAI-compatible request to proxy (port 8090)
-2. Proxy injects Powerbrain MCP tools into `tools[]` array
+1. Client authenticates with `kb_` API key (same keys as MCP server, stored in `api_keys` table)
+2. Proxy injects Powerbrain MCP tools into `tools[]` array (from N configured MCP servers)
 3. Forwards augmented request to LLM (via LiteLLM, 100+ providers)
-4. When LLM returns tool calls → proxy executes against MCP server
+4. When LLM returns tool calls → proxy routes to correct MCP server via prefix-based namespacing
 5. Repeats until final response, then returns to client
+
+**Authentication:**
+- `AUTH_REQUIRED=true` (default) — every request needs `Authorization: Bearer kb_<key>`
+- `ProxyKeyVerifier` (`pb-proxy/auth.py`) validates against PostgreSQL `api_keys` table
+- Identity propagation: user's `kb_` key is forwarded to MCP servers (each tool call authenticated as the user)
+- LLM provider keys come from central config (env vars / Docker Secrets), never from user tokens
+
+**Multi-MCP-Server Aggregation:**
+- Configured via `pb-proxy/mcp_servers.yaml` (mounted as Docker volume)
+- Each server has: `name`, `url`, `auth_mode` (`bearer` / `none`), optional `prefix`
+- Tools are namespaced with prefix: `servername__toolname` (double underscore separator)
+- OPA policy `kb.proxy.mcp_servers_allowed` controls which servers each role can access
+- `ToolInjector` discovers tools from all configured servers, merges with prefix dedup
 
 **Dual-mode model routing:**
 - **Aliases** — short names from `litellm_config.yaml` (e.g., `"claude-opus"` → `anthropic/claude-opus-4-20250514`)
 - **Passthrough** — any `provider/model` format (e.g., `"anthropic/claude-3-5-haiku-20241022"`) routes directly via LiteLLM without config entries
 
-API key resolution (passthrough): user Bearer token → `PROVIDER_KEY_MAP` env var → 401.
+API key resolution: LLM provider keys from env vars / Docker Secrets (NOT from user Bearer tokens).
 
 Endpoints:
 - `GET /v1/models` — Lists configured model aliases (OpenAI-compatible)
-- `POST /v1/chat/completions` — Chat endpoint with tool injection + agent loop
+- `POST /v1/chat/completions` — Chat endpoint with auth + tool injection + agent loop
 - `GET /health` — Health check
 
 Supports SSE streaming (`"stream": true`).
-OPA policies (`kb.proxy`) control: provider access, required tools, max iterations.
-Configuration: `pb-proxy/litellm_config.yaml` for curated aliases (passthrough needs no config).
+OPA policies (`kb.proxy`) control: provider access, required tools, max iterations, MCP server access.
+Configuration: `pb-proxy/litellm_config.yaml` for aliases, `pb-proxy/mcp_servers.yaml` for MCP servers.
 
 ## Development
 
@@ -308,6 +325,8 @@ cd mcp-server && python3 -m pytest tests/ -v
 13. ✅ **Passthrough Routing** — Dual-mode model routing: aliases via Router + `provider/model` passthrough via direct LiteLLM
 14. ✅ **LLM Provider Abstraction** — OpenAI-compatible provider layer (`shared/llm_provider.py`), configurable backends for embedding + summarization, optional GPU stack (vLLM + TEI)
 15. ✅ **Context Layers (L0/L1/L2)** — Pre-computed abstracts (L0, ~100 tokens) and overviews (L1, ~500 tokens) at ingestion, `layer` param on search, `get_document` tool for drill-down, OPA layer access control (`kb.layers`)
+16. ✅ **Proxy Authentication** — API-key auth for proxy (`pb-proxy/auth.py`), identity propagation to MCP servers
+17. ✅ **Multi-MCP-Server Aggregation** — Proxy aggregates tools from N MCP servers with per-server auth, prefix namespacing, and OPA-controlled access (`kb.proxy.mcp_servers_allowed`)
 
 Details on all features: see `docs/architektur.md`
 
