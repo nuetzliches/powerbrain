@@ -1,33 +1,9 @@
 """Tests for multi-server ToolInjector."""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from dataclasses import dataclass
+import os
+from unittest.mock import patch
 
 from mcp_config import McpServerConfig
-
-
-@dataclass
-class FakeTool:
-    name: str
-    description: str = "A test tool"
-    inputSchema: dict | None = None
-
-
-@pytest.fixture
-def two_server_config():
-    """Two MCP server configs."""
-    return [
-        McpServerConfig(
-            name="powerbrain", url="http://mcp:8080/mcp",
-            auth="bearer", prefix="powerbrain", required=True,
-        ),
-        McpServerConfig(
-            name="github", url="http://github:3000/mcp",
-            auth="static", auth_token_env="GITHUB_TOKEN",
-            prefix="github", required=False,
-        ),
-    ]
 
 
 def test_tool_entry_from_prefix():
@@ -47,8 +23,8 @@ def test_tool_entry_from_prefix():
     assert entry.original_name == "search_knowledge"
 
 
-def test_resolve_tool_name_with_prefix():
-    """resolve_tool strips prefix and returns server + original name."""
+def test_resolve_tool_with_prefix():
+    """resolve_tool looks up ToolEntry by prefixed name."""
     from tool_injection import ToolInjector, ToolEntry
 
     injector = ToolInjector.__new__(ToolInjector)
@@ -132,3 +108,47 @@ def test_merge_tools_filters_by_allowed_servers():
     names = {t["function"]["name"] for t in merged}
     assert "powerbrain_search" in names
     assert "github_list" not in names
+
+
+# ── _mcp_headers auth logic tests ────────────────────────────
+
+
+def test_mcp_headers_bearer_with_user_token():
+    """Bearer auth uses user_token when provided."""
+    from tool_injection import _mcp_headers
+
+    server = McpServerConfig(name="s", url="http://s:8080/mcp", auth="bearer")
+    headers = _mcp_headers(server, user_token="kb_user_key_123")
+    assert headers["Authorization"] == "Bearer kb_user_key_123"
+
+
+def test_mcp_headers_bearer_fallback():
+    """Bearer auth falls back to config.MCP_AUTH_TOKEN when no user_token."""
+    from tool_injection import _mcp_headers
+
+    server = McpServerConfig(name="s", url="http://s:8080/mcp", auth="bearer")
+    with patch("config.MCP_AUTH_TOKEN", "admin-token"):
+        headers = _mcp_headers(server, user_token=None)
+    assert headers["Authorization"] == "Bearer admin-token"
+
+
+def test_mcp_headers_static_from_env():
+    """Static auth reads token from env var."""
+    from tool_injection import _mcp_headers
+
+    server = McpServerConfig(
+        name="s", url="http://s:8080/mcp",
+        auth="static", auth_token_env="TEST_MCP_TOKEN",
+    )
+    with patch.dict(os.environ, {"TEST_MCP_TOKEN": "static-secret"}):
+        headers = _mcp_headers(server)
+    assert headers["Authorization"] == "Bearer static-secret"
+
+
+def test_mcp_headers_none():
+    """Auth mode 'none' produces no headers."""
+    from tool_injection import _mcp_headers
+
+    server = McpServerConfig(name="s", url="http://s:8080/mcp", auth="none")
+    headers = _mcp_headers(server)
+    assert headers == {}
