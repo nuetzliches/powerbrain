@@ -21,10 +21,12 @@ VerifiedKey = dict[str, str]  # {"agent_id": ..., "agent_role": ...}
 class ProxyKeyVerifier:
     """Verifies API keys against PostgreSQL with in-memory caching."""
 
-    def __init__(self, cache_ttl: int = 60, max_cache_size: int = 10_000) -> None:
+    def __init__(self, cache_ttl: int = 60, negative_cache_ttl: int = 10,
+                 max_cache_size: int = 10_000) -> None:
         self._pool: asyncpg.Pool | None = None
         self._cache: dict[str, tuple[VerifiedKey | None, float]] = {}
         self._cache_ttl = cache_ttl
+        self._negative_cache_ttl = negative_cache_ttl
         self._max_cache_size = max_cache_size
 
     async def start(self) -> None:
@@ -61,7 +63,8 @@ class ProxyKeyVerifier:
         cached = self._cache.get(key_hash)
         if cached is not None:
             result, timestamp = cached
-            if time.monotonic() - timestamp < self._cache_ttl:
+            ttl = self._cache_ttl if result is not None else self._negative_cache_ttl
+            if time.monotonic() - timestamp < ttl:
                 return result
 
         # DB lookup
@@ -116,5 +119,5 @@ class ProxyKeyVerifier:
                     "OR last_used_at < now() - interval '5 minutes')",
                     key_hash,
                 )
-        except Exception:
-            pass  # Non-critical
+        except Exception as e:
+            log.debug("Non-critical: last_used_at update failed: %s", e)
