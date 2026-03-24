@@ -1,0 +1,14 @@
+# MCP server configuration for the Powerbrain AI Provider Proxy.
+# Each server provides tools that are aggregated and injected into LLM requests.
+#
+# Auth modes:
+#   bearer  — forwards the user's kb_ API key as Bearer token
+#   static  — uses a fixed token from the env var specified in auth_token_env
+#   none    — no Authorization header
+
+servers:
+  - name: powerbrain
+    url: http://mcp-server:8080/mcp
+    auth: bearer
+    prefix: powerbrain
+    required: true
