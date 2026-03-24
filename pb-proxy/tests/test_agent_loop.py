@@ -4,6 +4,8 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from agent_loop import AgentLoop, AgentLoopResult
+from tool_injection import ToolEntry
+from mcp_config import McpServerConfig
 
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -30,26 +32,51 @@ def _make_tool_call(call_id, name, arguments='{}'):
     return tc
 
 
+# ── Shared server config for test ToolEntry objects ──────────
+
+_DEFAULT_SERVER_CONFIG = McpServerConfig(
+    name="powerbrain",
+    url="http://mcp:8080/mcp",
+    auth="bearer",
+    prefix="powerbrain",
+    required=True,
+)
+
+_SEARCH_ENTRY = ToolEntry(
+    server_name="powerbrain",
+    original_name="search_knowledge",
+    schema={},
+    server_config=_DEFAULT_SERVER_CONFIG,
+)
+
+_POLICY_ENTRY = ToolEntry(
+    server_name="powerbrain",
+    original_name="check_policy",
+    schema={},
+    server_config=_DEFAULT_SERVER_CONFIG,
+)
+
+# Map of prefixed names to ToolEntry objects
+_TOOL_ENTRIES = {
+    "search_knowledge": _SEARCH_ENTRY,
+    "powerbrain_search_knowledge": _SEARCH_ENTRY,
+    "check_policy": _POLICY_ENTRY,
+    "powerbrain_check_policy": _POLICY_ENTRY,
+}
+
+
 # ── Fixtures ─────────────────────────────────────────────────
 
 
 @pytest.fixture
 def mock_tool_injector():
     injector = MagicMock()
-    injector.tool_names = {"search_knowledge", "check_policy"}
+    injector.tool_names = {"powerbrain_search_knowledge", "powerbrain_check_policy"}
     injector.call_tool = AsyncMock(return_value='{"results": []}')
-    # resolve_tool_name returns the name if known, None otherwise
+    # resolve_tool returns ToolEntry if known, None otherwise
     def _resolve(name):
-        known = {"search_knowledge", "check_policy"}
-        if name in known:
-            return name
-        # Strip prefix: "anything_toolname" → "toolname"
-        if "_" in name:
-            suffix = name.split("_", 1)[1]
-            if suffix in known:
-                return suffix
-        return None
-    injector.resolve_tool_name = MagicMock(side_effect=_resolve)
+        return _TOOL_ENTRIES.get(name)
+    injector.resolve_tool = MagicMock(side_effect=_resolve)
     return injector
 
 
@@ -93,7 +120,7 @@ async def test_tool_call_is_executed(mock_tool_injector):
     assert result.iterations == 2
     assert result.tool_calls_executed == 1
     mock_tool_injector.call_tool.assert_called_once_with(
-        "search_knowledge", {"query": "test"}
+        _SEARCH_ENTRY, {"query": "test"}, user_token=None,
     )
 
 
@@ -183,3 +210,50 @@ async def test_tool_call_exception_feeds_error_to_llm(mock_tool_injector):
     assert result.iterations == 2
     # Tool call failed — not counted as executed
     assert result.tool_calls_executed == 0
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_routes_to_correct_server():
+    """Tool calls are routed to the correct MCP server via ToolEntry."""
+    # Setup mock injector
+    injector = MagicMock()
+    pb_entry = ToolEntry(
+        server_name="powerbrain",
+        original_name="search_knowledge",
+        schema={},
+        server_config=McpServerConfig(
+            name="powerbrain", url="http://mcp:8080/mcp",
+            auth="bearer", prefix="powerbrain", required=True,
+        ),
+    )
+    injector.resolve_tool.return_value = pb_entry
+    injector.call_tool = AsyncMock(return_value='{"results": []}')
+
+    # Mock LLM: first call returns tool_call, second returns final response
+    tool_call = _make_tool_call(
+        "call_1",
+        "powerbrain_search_knowledge",
+        '{"query": "test"}',
+    )
+    llm_call_1 = _make_response(tool_calls=[tool_call], finish_reason="tool_calls")
+    llm_call_2 = _make_response()
+    mock_acompletion = AsyncMock(side_effect=[llm_call_1, llm_call_2])
+
+    loop = AgentLoop(
+        injector,
+        acompletion=mock_acompletion,
+        max_iterations=5,
+        user_token="kb_test_token_123",
+    )
+    result = await loop.run(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "search for test"}],
+        tools=[],
+    )
+
+    # Verify tool was called with entry and user_token
+    injector.call_tool.assert_called_once_with(
+        pb_entry, {"query": "test"}, user_token="kb_test_token_123",
+    )
+    assert result.tool_calls_executed == 1
+    assert result.tools_used == ["search_knowledge"]

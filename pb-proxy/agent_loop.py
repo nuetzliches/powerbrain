@@ -1,7 +1,7 @@
 """
 Agent loop: executes tool calls from LLM responses against
-the Powerbrain MCP server and re-submits results until
-the LLM produces a final response.
+MCP servers (routed via ToolInjector) and re-submits results
+until the LLM produces a final response.
 """
 
 import json
@@ -16,7 +16,7 @@ import config
 
 log = logging.getLogger("pb-proxy.loop")
 
-# Type alias for the async completion callable (litellm.acompletion or Router.acompletion)
+# Type alias for the async completion callable
 ACompletion = Callable[..., Any]
 
 
@@ -31,7 +31,7 @@ class AgentLoopResult:
 
 
 class AgentLoop:
-    """Executes the tool-call loop between LLM and MCP server."""
+    """Executes the tool-call loop between LLM and MCP servers."""
 
     def __init__(
         self,
@@ -41,12 +41,14 @@ class AgentLoop:
         max_iterations: int = 10,
         tool_call_timeout: int | None = None,
         pii_reverse_map: dict[str, str] | None = None,
+        user_token: str | None = None,
     ) -> None:
         self._injector = tool_injector
         self._acompletion = acompletion
         self._max_iterations = max_iterations
         self._tool_call_timeout = tool_call_timeout or config.TOOL_CALL_TIMEOUT
         self._pii_reverse_map = pii_reverse_map or {}
+        self._user_token = user_token
 
     async def run(
         self,
@@ -111,33 +113,37 @@ class AgentLoop:
                         arguments, self._pii_reverse_map
                     )
 
-                # Resolve tool name (handles prefixed names like
-                # "powerbrain_search_knowledge" → "search_knowledge")
-                resolved_name = self._injector.resolve_tool_name(tool_name)
+                # Resolve tool: look up ToolEntry by prefixed name
+                entry = self._injector.resolve_tool(tool_name)
 
-                if resolved_name:
-                    if resolved_name != tool_name:
-                        log.info("Resolved prefixed tool name: %s → %s",
-                                 tool_name, resolved_name)
-                    # Execute against MCP server
+                if entry:
+                    log.info("Routing tool '%s' → server '%s', tool '%s'",
+                             tool_name, entry.server_name, entry.original_name)
                     try:
                         tool_result = await asyncio.wait_for(
-                            self._injector.call_tool(resolved_name, arguments),
+                            self._injector.call_tool(
+                                entry, arguments,
+                                user_token=self._user_token,
+                            ),
                             timeout=self._tool_call_timeout,
                         )
                         result.tool_calls_executed += 1
-                        result.tools_used.append(resolved_name)
+                        result.tools_used.append(entry.original_name)
                     except asyncio.TimeoutError:
                         tool_result = json.dumps({
-                            "error": f"Tool '{resolved_name}' timed out after "
+                            "error": f"Tool '{entry.original_name}' on server "
+                                     f"'{entry.server_name}' timed out after "
                                      f"{self._tool_call_timeout}s"
                         })
-                        log.warning("Tool call timed out: %s", resolved_name)
+                        log.warning("Tool call timed out: %s/%s",
+                                    entry.server_name, entry.original_name)
                     except Exception as e:
                         tool_result = json.dumps({
-                            "error": f"Tool '{resolved_name}' failed: {str(e)}"
+                            "error": f"Tool '{entry.original_name}' on server "
+                                     f"'{entry.server_name}' failed: {str(e)}"
                         })
-                        log.error("Tool call failed: %s — %s", resolved_name, e)
+                        log.error("Tool call failed: %s/%s — %s",
+                                  entry.server_name, entry.original_name, e)
                 else:
                     # Unknown tool
                     tool_result = json.dumps({
