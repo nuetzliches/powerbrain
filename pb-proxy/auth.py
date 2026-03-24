@@ -3,10 +3,10 @@ Proxy API-key authentication.
 Verifies kb_ API keys against the shared api_keys PostgreSQL table.
 """
 
+import asyncio
 import hashlib
 import logging
 import time
-from typing import Any
 
 import asyncpg
 
@@ -21,10 +21,11 @@ VerifiedKey = dict[str, str]  # {"agent_id": ..., "agent_role": ...}
 class ProxyKeyVerifier:
     """Verifies API keys against PostgreSQL with in-memory caching."""
 
-    def __init__(self, cache_ttl: int = 60) -> None:
+    def __init__(self, cache_ttl: int = 60, max_cache_size: int = 10_000) -> None:
         self._pool: asyncpg.Pool | None = None
         self._cache: dict[str, tuple[VerifiedKey | None, float]] = {}
         self._cache_ttl = cache_ttl
+        self._max_cache_size = max_cache_size
 
     async def start(self) -> None:
         """Create the connection pool."""
@@ -76,6 +77,7 @@ class ProxyKeyVerifier:
         )
 
         if row is None:
+            self._evict_if_full()
             self._cache[key_hash] = (None, time.monotonic())
             return None
 
@@ -83,21 +85,36 @@ class ProxyKeyVerifier:
             "agent_id": row["agent_id"],
             "agent_role": row["agent_role"],
         }
+        self._evict_if_full()
         self._cache[key_hash] = (result, time.monotonic())
 
         # Update last_used_at (fire-and-forget, throttled)
-        try:
-            await self._pool.execute(
-                "UPDATE api_keys SET last_used_at = now() "
-                "WHERE key_hash = $1 AND (last_used_at IS NULL "
-                "OR last_used_at < now() - interval '5 minutes')",
-                key_hash,
-            )
-        except Exception:
-            pass  # Non-critical
+        asyncio.create_task(self._update_last_used(key_hash))
 
         return result
 
     def invalidate_cache(self) -> None:
         """Clear the entire cache (e.g., after downstream 401)."""
         self._cache.clear()
+
+    def _evict_if_full(self) -> None:
+        """Evict oldest cache entries if cache exceeds max size."""
+        if len(self._cache) >= self._max_cache_size:
+            # Remove oldest 25% of entries
+            items = sorted(self._cache.items(), key=lambda x: x[1][1])
+            to_remove = len(items) // 4 or 1
+            for key, _ in items[:to_remove]:
+                del self._cache[key]
+
+    async def _update_last_used(self, key_hash: str) -> None:
+        """Update last_used_at in background (throttled, non-critical)."""
+        try:
+            if self._pool:
+                await self._pool.execute(
+                    "UPDATE api_keys SET last_used_at = now() "
+                    "WHERE key_hash = $1 AND (last_used_at IS NULL "
+                    "OR last_used_at < now() - interval '5 minutes')",
+                    key_hash,
+                )
+        except Exception:
+            pass  # Non-critical

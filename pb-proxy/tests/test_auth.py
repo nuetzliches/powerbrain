@@ -2,7 +2,7 @@
 
 import hashlib
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 
 @pytest.fixture
@@ -20,6 +20,7 @@ def verifier(mock_pool):
     v._pool = mock_pool
     v._cache = {}
     v._cache_ttl = 60
+    v._max_cache_size = 10_000
     return v
 
 
