@@ -70,3 +70,13 @@ default non_text_content_action := "placeholder"
 non_text_content_action := "allow" if {
     input.agent_role == "admin"
 }
+
+# ── MCP Server Access ────────────────────────────────────────
+# Controls which MCP servers each role may access.
+# Default: only powerbrain. Developer and admin: all configured servers.
+
+default mcp_servers_allowed := ["powerbrain"]
+
+mcp_servers_allowed := input.configured_servers if {
+    input.agent_role in {"developer", "admin"}
+}

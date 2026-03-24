@@ -116,3 +116,26 @@ test_non_text_admin_allow if {
 test_non_text_developer_placeholder if {
     proxy.non_text_content_action == "placeholder" with input as {"agent_role": "developer"}
 }
+
+# ── MCP Servers Allowed ──────────────────────────────────────
+
+test_mcp_servers_default_powerbrain if {
+    proxy.mcp_servers_allowed == ["powerbrain"] with input as {
+        "agent_role": "analyst",
+        "configured_servers": ["powerbrain", "github"],
+    }
+}
+
+test_mcp_servers_developer_all if {
+    proxy.mcp_servers_allowed == ["powerbrain", "github"] with input as {
+        "agent_role": "developer",
+        "configured_servers": ["powerbrain", "github"],
+    }
+}
+
+test_mcp_servers_admin_all if {
+    proxy.mcp_servers_allowed == ["powerbrain", "github", "tools"] with input as {
+        "agent_role": "admin",
+        "configured_servers": ["powerbrain", "github", "tools"],
+    }
+}
