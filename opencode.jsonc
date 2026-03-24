@@ -51,6 +51,25 @@
       }
     }
   },
+  "agent": {
+    // ── Subagents ──
+    "general": {
+      "model": "github-copilot/claude-sonnet-4"
+    },
+    "explore": {
+      "model": "github-copilot/claude-haiku-4"
+    },
+    // ── System agents (hidden, automatic) ──
+    "compaction": {
+      "model": "github-copilot/claude-haiku-4"
+    },
+    "title": {
+      "model": "github-copilot/claude-haiku-4"
+    },
+    "summary": {
+      "model": "github-copilot/claude-haiku-4"
+    }
+  },
   "mcp": {
     "powerbrain": {
       "type": "remote",
