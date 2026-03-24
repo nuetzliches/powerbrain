@@ -316,3 +316,36 @@ Optional via `OTEL_ENABLED=true` im MCP-Server. Traces werden per OTLP gRPC an G
 3. ✅ Evaluation + Feedback-Loop (`evaluation/run_eval.py`, MCP-Tools `submit_feedback`/`get_eval_stats`)
 4. ✅ Wissens-Versionierung (`ingestion/snapshot_service.py`, MCP-Tools `create_snapshot`/`list_snapshots`)
 5. ✅ Monitoring (Prometheus + Grafana + Tempo, `monitoring/`)
+
+---
+
+### Context Layers (L0/L1/L2)
+
+Jedes Dokument wird bei der Ingestion in drei Kontext-Ebenen gespeichert:
+
+| Layer | Inhalt | Tokens | Zweck |
+|-------|--------|--------|-------|
+| L0 | Abstract (1 Satz) | ~100 | Schnelle Relevanzprüfung |
+| L1 | Markdown-Übersicht | ~500 | Entscheidung ob Volltext nötig |
+| L2 | Volltext-Chunks | variabel | Detailinformationen (bisheriges Verhalten) |
+
+**Ablauf:**
+1. Ingestion erzeugt L2-Chunks (wie bisher)
+2. LLM generiert L0 (Abstract) und L1 (Overview) aus den L2-Chunks
+3. Alle drei Layer werden als separate Qdrant-Punkte mit `layer`-Payload gespeichert
+4. Agents können per `layer`-Parameter gezielt eine Ebene abfragen
+
+**MCP-Integration:**
+- `search_knowledge` und `get_code_context`: optionaler `layer`-Parameter (L0/L1/L2)
+- `get_document`: Drill-Down von L0 → L1 → L2 per `doc_id`
+
+**OPA-Zugriffssteuerung** (`kb.layers`):
+- Admin: immer L2
+- Nicht-Admin + confidential: max. L1
+- Nicht-Admin + restricted: max. L0
+- Viewer + internal: max. L0
+
+**Konfiguration:**
+- `LAYER_GENERATION_ENABLED` (default: `true`) — Feature-Flag
+- `LLM_MODEL` (default: `qwen2.5:3b`) — Modell für L0/L1-Generierung
+- Backfill-Script: `ingestion/backfill_layers.py` für bestehende Daten

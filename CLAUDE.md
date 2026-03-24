@@ -162,7 +162,7 @@ Access to originals requires:
 
 Art. 17 deletion: delete vault mapping → pseudonyms become irreversible.
 
-### MCP Tools (10)
+### MCP Tools (11)
 - `search_knowledge` — Semantic search (Qdrant + reranking); supports `summarize` and `summary_detail` parameters; optional PII originals via vault token
 - `query_data` — Structured queries (PostgreSQL)
 - `get_rules` — Business rules for a context
@@ -173,6 +173,7 @@ Art. 17 deletion: delete vault mapping → pseudonyms become irreversible.
 - `get_code_context` — Code search (Qdrant + reranking); supports `summarize` and `summary_detail` parameters
 - `graph_query` — Knowledge graph queries (nodes, relationships, paths)
 - `graph_mutate` — Knowledge graph mutations (developer/admin only)
+- `get_document` — Retrieve document by ID at specific context layer (L0/L1/L2) for progressive loading
 
 ### Privacy (GDPR)
 - **PII Scanner** (Microsoft Presidio) at ingestion — configurable via `ingestion/pii_config.yaml` (entity types, custom recognizers, confidence, languages)
@@ -306,6 +307,7 @@ cd mcp-server && python3 -m pytest tests/ -v
 12. ✅ **Proxy SSE Streaming** — Simulated streaming via SSE chunks for `stream: true` requests
 13. ✅ **Passthrough Routing** — Dual-mode model routing: aliases via Router + `provider/model` passthrough via direct LiteLLM
 14. ✅ **LLM Provider Abstraction** — OpenAI-compatible provider layer (`shared/llm_provider.py`), configurable backends for embedding + summarization, optional GPU stack (vLLM + TEI)
+15. ✅ **Context Layers (L0/L1/L2)** — Pre-computed abstracts (L0, ~100 tokens) and overviews (L1, ~500 tokens) at ingestion, `layer` param on search, `get_document` tool for drill-down, OPA layer access control (`kb.layers`)
 
 Details on all features: see `docs/architektur.md`
 
