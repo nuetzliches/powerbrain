@@ -13,6 +13,9 @@ import config
 log = logging.getLogger("pb-proxy.mcp-config")
 
 
+_VALID_AUTH_MODES = {"bearer", "static", "none"}
+
+
 @dataclass
 class McpServerConfig:
     """Configuration for a single MCP server."""
@@ -20,9 +23,13 @@ class McpServerConfig:
     url: str
     auth: str = "none"              # "bearer", "static", "none"
     auth_token_env: str | None = None  # env var name for static auth
-    prefix: str = ""                # tool name prefix
+    prefix: str | None = None       # tool name prefix (defaults to name)
     required: bool = False          # fail-fast if unreachable
     tool_whitelist: list[str] | None = None  # None = all tools
+
+    def __post_init__(self) -> None:
+        if self.prefix is None:
+            self.prefix = self.name
 
 
 def load_mcp_servers(config_path: str) -> list[McpServerConfig]:
@@ -54,13 +61,28 @@ def load_mcp_servers(config_path: str) -> list[McpServerConfig]:
         raise ValueError("MCP servers config has empty 'servers' list")
 
     servers = []
-    for entry in servers_data:
+    for i, entry in enumerate(servers_data):
+        if "name" not in entry or "url" not in entry:
+            missing = [f for f in ("name", "url") if f not in entry]
+            raise ValueError(
+                f"Server entry #{i + 1} missing required field(s): {missing}"
+            )
+        url = entry["url"]
+        if not url.startswith(("http://", "https://")):
+            raise ValueError(
+                f"Server '{entry['name']}': url must start with http:// or https://, got '{url}'"
+            )
+        auth = entry.get("auth", "none")
+        if auth not in _VALID_AUTH_MODES:
+            raise ValueError(
+                f"Server '{entry['name']}': auth must be one of {_VALID_AUTH_MODES}, got '{auth}'"
+            )
         servers.append(McpServerConfig(
             name=entry["name"],
-            url=entry["url"],
-            auth=entry.get("auth", "none"),
+            url=url,
+            auth=auth,
             auth_token_env=entry.get("auth_token_env"),
-            prefix=entry.get("prefix", entry["name"]),
+            prefix=entry.get("prefix"),
             required=entry.get("required", False),
             tool_whitelist=entry.get("tool_whitelist"),
         ))
