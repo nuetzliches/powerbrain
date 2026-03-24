@@ -48,10 +48,20 @@ EMBEDDING_API_KEY      = os.getenv("EMBEDDING_API_KEY", "")
 
 import sys as _sys
 _sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from shared.llm_provider import EmbeddingProvider
+from shared.llm_provider import EmbeddingProvider, CompletionProvider
 
 embedding_provider = EmbeddingProvider(
     base_url=EMBEDDING_PROVIDER_URL, api_key=EMBEDDING_API_KEY
+)
+
+# ── LLM / Layer generation provider ──
+LLM_PROVIDER_URL = os.getenv("LLM_PROVIDER_URL", os.getenv("OLLAMA_URL", "http://kb-ollama:11434"))
+LLM_MODEL = os.getenv("LLM_MODEL", os.getenv("SUMMARIZATION_MODEL", "qwen2.5:3b"))
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+LAYER_GENERATION_ENABLED = os.getenv("LAYER_GENERATION_ENABLED", "true").lower() == "true"
+
+completion_provider = CompletionProvider(
+    base_url=LLM_PROVIDER_URL, api_key=LLM_API_KEY
 )
 
 DEFAULT_COLLECTION = "knowledge_general"
@@ -284,6 +294,73 @@ async def log_pii_scan(
         log.warning(f"pii_scan_log insert failed: {e}")
 
 
+L0_SYSTEM_PROMPT = (
+    "You are a document abstraction engine. Generate a single-sentence abstract "
+    "(max 100 tokens) that captures the essence of the document. The abstract must "
+    "enable quick relevance assessment. Do not include specific details — only the "
+    "topic and scope. Respond with the abstract only, no preamble."
+)
+
+L1_SYSTEM_PROMPT = (
+    "You are a document overview engine. Generate a structured Markdown overview "
+    "(max 500 tokens) that covers:\n"
+    "1. What this document is about (1 sentence)\n"
+    "2. Key sections/topics as bullet points\n"
+    "3. Most important facts or numbers\n"
+    "4. What kind of detailed information is available in the full document\n\n"
+    "The overview enables an AI agent to decide whether to load the full document. "
+    "Respond with the overview only, no preamble. Use Markdown formatting."
+)
+
+
+async def generate_l0(chunks: list[str]) -> str | None:
+    """Generate a short L0 abstract (~100 tokens) from document chunks.
+
+    Returns None if LLM is unavailable or generation fails (graceful degradation).
+    """
+    if not LAYER_GENERATION_ENABLED:
+        return None
+    try:
+        full_text = "\n\n".join(chunks)
+        # Truncate to ~4000 chars to stay within context limits
+        if len(full_text) > 4000:
+            full_text = full_text[:4000] + "\n\n[truncated]"
+        result = await completion_provider.generate(
+            http_client,
+            model=LLM_MODEL,
+            system_prompt=L0_SYSTEM_PROMPT,
+            user_prompt=full_text,
+        )
+        return result
+    except Exception as e:
+        log.warning(f"L0 generation failed (graceful degradation): {e}")
+        return None
+
+
+async def generate_l1(chunks: list[str]) -> str | None:
+    """Generate a structured L1 Markdown overview (~500 tokens) from document chunks.
+
+    Returns None if LLM is unavailable or generation fails (graceful degradation).
+    """
+    if not LAYER_GENERATION_ENABLED:
+        return None
+    try:
+        full_text = "\n\n".join(chunks)
+        # Truncate to ~8000 chars to allow more detail for overview
+        if len(full_text) > 8000:
+            full_text = full_text[:8000] + "\n\n[truncated]"
+        result = await completion_provider.generate(
+            http_client,
+            model=LLM_MODEL,
+            system_prompt=L1_SYSTEM_PROMPT,
+            user_prompt=full_text,
+        )
+        return result
+    except Exception as e:
+        log.warning(f"L1 generation failed (graceful degradation): {e}")
+        return None
+
+
 async def ingest_text_chunks(
     chunks: list[str],
     collection: str,
@@ -425,6 +502,8 @@ async def ingest_text_chunks(
             "ingested_at": datetime.now(timezone.utc).isoformat(),
             "contains_pii": scan_result.contains_pii,
             "vault_ref": vault_ref,
+            "layer": "L2",
+            "doc_id": doc_id,
             **metadata,
         }
         points.append(PointStruct(
@@ -432,19 +511,88 @@ async def ingest_text_chunks(
         ))
         vault_refs.append(vault_ref)
 
-    # 5. In Qdrant upserten
+    # 5. In Qdrant upserten (L2 chunks)
     if points:
         await qdrant.upsert(collection_name=collection, points=points)
-        log.info(f"{len(points)} Punkte in '{collection}' eingefügt")
+        log.info(f"{len(points)} L2 Punkte in '{collection}' eingefügt")
 
-    # 6. documents_meta aktualisieren mit finalen Werten
+    # 6. Generate L0/L1 layers and upsert as separate Qdrant points
+    l0_point_id: str | None = None
+    l1_point_id: str | None = None
+
+    if points:
+        # Collect the final (possibly pseudonymized/masked) chunk texts for LLM input
+        processed_chunks = [p.payload["text"] for p in points]
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        # L0: Abstract
+        l0_text = await generate_l0(processed_chunks)
+        if l0_text:
+            try:
+                l0_embedding = await get_embedding(l0_text)
+                l0_point_id = str(uuid.uuid4())
+                l0_point = PointStruct(
+                    id=l0_point_id,
+                    vector=l0_embedding,
+                    payload={
+                        "text": l0_text,
+                        "source": source,
+                        "classification": classification,
+                        "project": project or "",
+                        "chunk_index": 0,
+                        "ingested_at": now_iso,
+                        "contains_pii": False,
+                        "vault_ref": None,
+                        "layer": "L0",
+                        "doc_id": doc_id,
+                        **metadata,
+                    },
+                )
+                await qdrant.upsert(collection_name=collection, points=[l0_point])
+                log.info(f"L0 abstract upserted for doc {doc_id}")
+            except Exception as e:
+                log.warning(f"L0 upsert failed (graceful degradation): {e}")
+                l0_point_id = None
+
+        # L1: Overview
+        l1_text = await generate_l1(processed_chunks)
+        if l1_text:
+            try:
+                l1_embedding = await get_embedding(l1_text)
+                l1_point_id = str(uuid.uuid4())
+                l1_point = PointStruct(
+                    id=l1_point_id,
+                    vector=l1_embedding,
+                    payload={
+                        "text": l1_text,
+                        "source": source,
+                        "classification": classification,
+                        "project": project or "",
+                        "chunk_index": 0,
+                        "ingested_at": now_iso,
+                        "contains_pii": False,
+                        "vault_ref": None,
+                        "layer": "L1",
+                        "doc_id": doc_id,
+                        **metadata,
+                    },
+                )
+                await qdrant.upsert(collection_name=collection, points=[l1_point])
+                log.info(f"L1 overview upserted for doc {doc_id}")
+            except Exception as e:
+                log.warning(f"L1 upsert failed (graceful degradation): {e}")
+                l1_point_id = None
+
+    # 7. documents_meta aktualisieren mit finalen Werten
     if pg_pool:
         try:
             await pg_pool.execute("""
                 UPDATE documents_meta
                 SET chunk_count = $2,
                     contains_pii = $3,
-                    metadata = $4
+                    metadata = $4,
+                    l0_point_id = $5,
+                    l1_point_id = $6
                 WHERE id = $1
             """,
                 doc_id,
@@ -455,6 +603,8 @@ async def ingest_text_chunks(
                     "pii_detected": pii_detected,
                     "vault_refs": [v for v in vault_refs if v],
                 }),
+                uuid.UUID(l0_point_id) if l0_point_id else None,
+                uuid.UUID(l1_point_id) if l1_point_id else None,
             )
         except Exception as e:
             log.error(f"PG documents_meta Update fehlgeschlagen: {e}")
@@ -465,6 +615,8 @@ async def ingest_text_chunks(
         "chunks_ingested": len(points),
         "pii_detected": pii_detected,
         "dual_storage": any(v is not None for v in vault_refs),
+        "l0_point_id": l0_point_id,
+        "l1_point_id": l1_point_id,
     }
 
 
