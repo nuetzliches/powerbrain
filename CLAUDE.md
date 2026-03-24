@@ -357,6 +357,31 @@ Details on all features: see `docs/architektur.md`
 - Graceful degradation: every service must work without the reranker
 - Docker Secrets supported via `_read_secret()` with env var fallback
 
+### Naming Prefix Convention (`pb`)
+
+All project-specific identifiers use the `pb` (Powerbrain) prefix consistently:
+
+| Category | Pattern | Examples |
+|---|---|---|
+| Container names | `pb-<service>` | `pb-qdrant`, `pb-mcp-server`, `pb-proxy` |
+| Docker network | `pb-net` | |
+| API token prefix | `pb_` | `pb_dev_localonly_...`, `pb_<key>` |
+| OPA packages | `pb.<domain>` | `pb.access`, `pb.proxy`, `pb.privacy` |
+| OPA data paths | `/v1/data/pb/` | `/v1/data/pb/access/allow` |
+| DB user | `pb_admin` | |
+| DB name | `powerbrain` | |
+| Prometheus metrics | `pb_<service>_` | `pb_mcp_requests_total`, `pb_reranker_duration_seconds` |
+| Qdrant collections | `pb_<type>` | `pb_general`, `pb_code`, `pb_rules` |
+| Logger names | `pb-<component>` | `pb-mcp`, `pb-ingestion`, `pb-graph` |
+| Forgejo org/repos | `pb-org/pb-<name>` | `pb-org/pb-policies`, `pb-org/pb-schemas` |
+
+### Plans and Specs
+
+Implementation plans and design specs are stored centrally:
+
+- **Plans:** `docs/plans/YYYY-MM-DD-<feature-name>.md`
+- **Specs:** `docs/specs/YYYY-MM-DD-<feature-name>.md`
+
 ## Key Decisions
 
 | Decision | Chosen | Alternatives | Reason |

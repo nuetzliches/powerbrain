@@ -41,7 +41,7 @@ and loads policies at startup via `/policies` argument.
 ### ~~P1-1: No authentication — roles are self-declared~~ — RESOLVED
 
 **Status:** RESOLVED — API key authentication implemented. Every agent
-requires an `Authorization: Bearer kb_...` header. Keys are stored as SHA-256
+requires an `Authorization: Bearer pb_...` header. Keys are stored as SHA-256
 hashes in the `api_keys` table and map to a fixed role
 (analyst/developer/admin). `agent_id` and `agent_role` are no longer
 tool parameters but derived from the verified token.
@@ -103,7 +103,7 @@ delegates correctly to this endpoint.
 
 **Status:** RESOLVED — `business_rules` was removed from `PG_SNAPSHOT_TABLES` in
 `snapshot_service.py`. Business rules are provided exclusively via
-OPA policies (`kb.rules`), not via PostgreSQL.
+OPA policies (`pb.rules`), not via PostgreSQL.
 
 ---
 
@@ -147,7 +147,7 @@ Qdrant client with `timeout=30`. Reranker retains existing graceful fallback.
 **Status:** RESOLVED — In-memory token bucket rate limiting implemented.
 Per-agent throttling based on `agent_id` from auth context.
 Configurable via env vars (`RATE_LIMIT_RPM`, `RATE_LIMIT_BURST`,
-`RATE_LIMIT_ENABLED`). Prometheus counter `kb_rate_limit_rejected_total`
+`RATE_LIMIT_ENABLED`). Prometheus counter `pb_rate_limit_rejected_total`
 for monitoring. On limit exceeded: HTTP 429 with Retry-After header.
 
 ---
@@ -198,9 +198,9 @@ The following topics were prioritized as phase 2 work and are now resolved:
 
 The following issues were resolved as part of the sealed vault implementation:
 
-### RESOLVED: OPA `kb.privacy.pii_action` never called
+### RESOLVED: OPA `pb.privacy.pii_action` never called
 
-**Status:** RESOLVED — The ingestion pipeline now calls `kb.privacy.pii_action`
+**Status:** RESOLVED — The ingestion pipeline now calls `pb.privacy.pii_action`
 to determine the correct action (pseudonymize, redact, block) for PII-containing data.
 The dual_storage path uses the result to control vault storage.
 

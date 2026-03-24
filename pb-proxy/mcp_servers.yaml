@@ -2,7 +2,7 @@
 # Each server provides tools that are aggregated and injected into LLM requests.
 #
 # Auth modes:
-#   bearer  — forwards the user's kb_ API key as Bearer token
+#   bearer  — forwards the user's pb_ API key as Bearer token
 #   static  — uses a fixed token from the env var specified in auth_token_env
 #   none    — no Authorization header
 
