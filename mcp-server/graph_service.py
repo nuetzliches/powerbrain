@@ -69,6 +69,70 @@ SET search_path = ag_catalog, "$user", public;
 """
 
 
+def _parse_return_columns(cypher: str) -> list[str]:
+    """Extract column names from the RETURN clause of a Cypher query.
+
+    Apache AGE requires the SQL wrapper to declare the exact number of
+    return columns in the ``AS (...)`` clause.  This function parses a
+    Cypher RETURN clause and returns the list of alias names so we can
+    generate e.g. ``AS (a agtype, r agtype, b agtype)`` instead of
+    hard-coding a single ``(result agtype)``.
+    """
+    # Find the last RETURN (case-insensitive) — skip RETURN inside WITH etc.
+    match = re.search(r'\bRETURN\b\s+(.*)', cypher, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return ["result"]
+
+    clause = match.group(1).strip()
+    # Remove leading DISTINCT keyword
+    clause = re.sub(r'^DISTINCT\s+', '', clause, flags=re.IGNORECASE)
+
+    # Split on commas that are not inside parentheses or brackets
+    cols: list[str] = []
+    depth = 0
+    current = ""
+    for ch in clause:
+        if ch in ("(", "[", "{"):
+            depth += 1
+            current += ch
+        elif ch in (")", "]", "}"):
+            depth -= 1
+            current += ch
+        elif ch == "," and depth == 0:
+            cols.append(current.strip())
+            current = ""
+        else:
+            current += ch
+    if current.strip():
+        cols.append(current.strip())
+
+    # Use column expression as alias (take last identifier-like token)
+    aliases = []
+    for col in cols:
+        # If the column has an AS alias, use that
+        as_match = re.search(r'\bAS\s+(\w+)\s*$', col, re.IGNORECASE)
+        if as_match:
+            aliases.append(as_match.group(1))
+        else:
+            # Use a sanitised version of the column expression
+            ident = re.sub(r'[^a-zA-Z0-9_]', '', col.split(".")[-1])
+            aliases.append(ident if ident else f"col{len(aliases)}")
+
+    # Deduplicate aliases (rare, but possible)
+    seen: set[str] = set()
+    unique: list[str] = []
+    for a in aliases:
+        orig = a
+        i = 2
+        while a in seen:
+            a = f"{orig}{i}"
+            i += 1
+        seen.add(a)
+        unique.append(a)
+
+    return unique or ["result"]
+
+
 async def _execute_cypher(pool: asyncpg.Pool, cypher: str, params: dict | None = None) -> list[dict]:
     """
     Führt eine Cypher-Query über Apache AGE aus.
@@ -83,10 +147,14 @@ async def _execute_cypher(pool: asyncpg.Pool, cypher: str, params: dict | None =
             safe_value = _escape_cypher_value(value)
             query = query.replace(f"${key}", safe_value)
 
+    # Dynamically build the AS clause from RETURN columns
+    columns = _parse_return_columns(query)
+    as_clause = ", ".join(f"{col} agtype" for col in columns)
+
     sql = f"""
     SELECT * FROM cypher('{GRAPH_NAME}', $$
         {query}
-    $$) AS (result agtype)
+    $$) AS ({as_clause})
     """
 
     async with pool.acquire() as conn:
@@ -95,20 +163,27 @@ async def _execute_cypher(pool: asyncpg.Pool, cypher: str, params: dict | None =
 
     results = []
     for row in rows:
-        raw = row["result"]
-        if raw is not None:
-            try:
-                raw_str = str(raw)
-                # Strip AGE agtype suffixes before JSON parsing.
-                # Note: operates on full string, may strip inside JSON values (low-risk).
-                cleaned = re.sub(
-                    r'::(vertex|edge|path|numeric|agtype|bool|null|string|list|map|integer|float)\b',
-                    '', raw_str,
-                )
-                parsed = json.loads(cleaned)
-                results.append(parsed)
-            except (json.JSONDecodeError, TypeError):
-                results.append({"raw": str(raw)})
+        # If single column, return the value directly; if multiple, return a dict
+        row_data: dict | Any = {}
+        for col in columns:
+            raw = row[col]
+            if raw is not None:
+                try:
+                    raw_str = str(raw)
+                    # Strip AGE agtype suffixes before JSON parsing.
+                    cleaned = re.sub(
+                        r'::(vertex|edge|path|numeric|agtype|bool|null|string|list|map|integer|float)\b',
+                        '', raw_str,
+                    )
+                    row_data[col] = json.loads(cleaned)
+                except (json.JSONDecodeError, TypeError):
+                    row_data[col] = {"raw": str(raw)}
+
+        if len(columns) == 1:
+            # Single column: return the value directly (backward compat)
+            results.append(row_data.get(columns[0], {}))
+        else:
+            results.append(row_data)
 
     return results
 

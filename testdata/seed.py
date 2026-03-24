@@ -43,12 +43,16 @@ DOCUMENTS_FILE = Path(__file__).parent / "documents.json"
 # ── HTTP helpers ─────────────────────────────────────────────────────────────
 
 
-def http_get(url: str, timeout: int = 10) -> dict | None:
-    """GET request, returns parsed JSON or None on failure."""
+def http_get(url: str, timeout: int = 10) -> dict | str | None:
+    """GET request, returns parsed JSON (dict) or raw text on success, None on failure."""
     try:
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode())
+            body = resp.read().decode()
+            try:
+                return json.loads(body)
+            except (json.JSONDecodeError, ValueError):
+                return body  # plain text response (e.g. Qdrant healthz)
     except Exception:
         return None
 

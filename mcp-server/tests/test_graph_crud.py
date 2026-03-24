@@ -45,7 +45,7 @@ def mock_pool():
 class TestCreateNode:
     async def test_creates_node_with_properties(self, mock_pool):
         pool, conn = mock_pool
-        conn.fetch.return_value = [{"result": '{"id": 1, "properties": {"name": "Test"}}'}]
+        conn.fetch.return_value = [{"n": '{"id": 1, "properties": {"name": "Test"}}'}]
 
         result = await create_node(pool, "Project", {"name": "Test"})
 
@@ -67,8 +67,8 @@ class TestFindNode:
     async def test_returns_matching_nodes(self, mock_pool):
         pool, conn = mock_pool
         conn.fetch.return_value = [
-            {"result": '{"id": 1, "properties": {"name": "A"}}'},
-            {"result": '{"id": 2, "properties": {"name": "B"}}'},
+            {"n": '{"id": 1, "properties": {"name": "A"}}'},
+            {"n": '{"id": 2, "properties": {"name": "B"}}'},
         ]
 
         result = await find_node(pool, "Project", {"name": "A"})
@@ -99,7 +99,7 @@ class TestExecuteCypher:
     async def test_parses_agtype_result(self, mock_pool):
         pool, conn = mock_pool
         conn.fetch.return_value = [
-            {"result": '{"id": 1, "label": "Project", "properties": {"name": "X"}}::vertex'}
+            {"n": '{"id": 1, "label": "Project", "properties": {"name": "X"}}::vertex'}
         ]
 
         result = await _execute_cypher(pool, "MATCH (n) RETURN n")
@@ -108,7 +108,7 @@ class TestExecuteCypher:
 
     async def test_handles_parse_error_gracefully(self, mock_pool):
         pool, conn = mock_pool
-        conn.fetch.return_value = [{"result": "not-json"}]
+        conn.fetch.return_value = [{"n": "not-json"}]
 
         result = await _execute_cypher(pool, "MATCH (n) RETURN n")
         assert len(result) == 1

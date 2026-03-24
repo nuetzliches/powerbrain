@@ -1294,10 +1294,9 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         code_results = [
             {
                 "id": str(hit.id), "score": round(hit.score, 4),
-                "content": hit.payload.get("content", ""),
-                "metadata": {"repo": hit.payload.get("repo"),
-                             "path": hit.payload.get("path"),
-                             "language": hit.payload.get("language")},
+                "content": hit.payload.get("text", hit.payload.get("content", "")),
+                "metadata": {k: v for k, v in hit.payload.items()
+                             if k not in ("content", "text")},
             }
             for hit in allowed_hits
         ]
@@ -1429,8 +1428,10 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         pool   = await get_pg_pool()
         try:
             if action == "create_node":
-                result = await graph.create_node(pool, arguments["label"],
-                                                  arguments.get("properties", {}))
+                props = dict(arguments.get("properties", {}))
+                if arguments.get("node_id"):
+                    props.setdefault("id", arguments["node_id"])
+                result = await graph.create_node(pool, arguments["label"], props)
                 data = {"created": result}
             elif action == "delete_node":
                 await graph.delete_node(pool, arguments["label"], arguments["node_id"])
