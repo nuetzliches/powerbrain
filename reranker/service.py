@@ -33,22 +33,22 @@ log = logging.getLogger("reranker")
 
 # ── Prometheus Metriken ──────────────────────────────────────
 reranker_requests_total = Counter(
-    "kb_reranker_requests_total",
+    "pb_reranker_requests_total",
     "Gesamtzahl Reranking-Requests",
     ["status"],
 )
 reranker_duration = Histogram(
-    "kb_reranker_duration_seconds",
+    "pb_reranker_duration_seconds",
     "Dauer eines Reranking-Requests",
     buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0],
 )
 reranker_batch_size = Histogram(
-    "kb_reranker_batch_size",
+    "pb_reranker_batch_size",
     "Batch-Größe (Anzahl Dokumente) pro Request",
     buckets=[1, 5, 10, 20, 50, 100, 128],
 )
 reranker_model_load_seconds = Histogram(
-    "kb_reranker_model_load_seconds",
+    "pb_reranker_model_load_seconds",
     "Dauer des Modell-Ladens beim Start",
     buckets=[1, 5, 10, 20, 30, 60],
 )
@@ -72,7 +72,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="KB Reranker Service",
+    title="Powerbrain Reranker Service",
     description="Cross-Encoder Reranking für die Wissensdatenbank",
     version="1.0.0",
     lifespan=lifespan,

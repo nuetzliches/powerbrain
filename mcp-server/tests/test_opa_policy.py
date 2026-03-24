@@ -69,7 +69,7 @@ class TestCheckOpaPolicy:
         await check_opa_policy("agent-1", "analyst", "res", "public")
 
         call_args = _patch_http.post.call_args
-        assert "/v1/data/kb/access/allow" in call_args[0][0]
+        assert "/v1/data/pb/access/allow" in call_args[0][0]
 
 
 def _make_hit(hit_id, classification="internal"):

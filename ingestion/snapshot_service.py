@@ -24,15 +24,15 @@ from datetime import datetime, timezone
 import httpx
 import asyncpg
 
-log = logging.getLogger("kb-snapshot")
+log = logging.getLogger("pb-snapshot")
 
 # ── Konfiguration ────────────────────────────────────────────
 QDRANT_URL   = os.getenv("QDRANT_URL",   "http://qdrant:6333")
-POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://kb_admin:changeme@postgres:5432/knowledgebase")
+POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://pb_admin:changeme@postgres:5432/powerbrain")
 FORGEJO_URL  = os.getenv("FORGEJO_URL",  "http://forgejo.local:3000")
 FORGEJO_TOKEN = os.getenv("FORGEJO_TOKEN", "")
 
-QDRANT_COLLECTIONS = ["knowledge_general", "knowledge_code", "knowledge_rules"]
+QDRANT_COLLECTIONS = ["pb_general", "pb_code", "pb_rules"]
 PG_SNAPSHOT_TABLES = ["datasets", "dataset_rows", "documents_meta"]
 KEEP_LAST_N        = int(os.getenv("SNAPSHOT_KEEP_LAST_N", "10"))
 
@@ -113,7 +113,7 @@ async def get_policy_commit(client: httpx.AsyncClient) -> str | None:
     try:
         headers = {"Authorization": f"token {FORGEJO_TOKEN}"}
         resp = await client.get(
-            f"{FORGEJO_URL}/api/v1/repos/kb-org/kb-policies/branches/main",
+            f"{FORGEJO_URL}/api/v1/repos/pb-org/pb-policies/branches/main",
             headers=headers,
         )
         resp.raise_for_status()

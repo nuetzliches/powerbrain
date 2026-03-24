@@ -118,8 +118,8 @@ def test_mcp_headers_bearer_with_user_token():
     from tool_injection import _mcp_headers
 
     server = McpServerConfig(name="s", url="http://s:8080/mcp", auth="bearer")
-    headers = _mcp_headers(server, user_token="kb_user_key_123")
-    assert headers["Authorization"] == "Bearer kb_user_key_123"
+    headers = _mcp_headers(server, user_token="pb_user_key_123")
+    assert headers["Authorization"] == "Bearer pb_user_key_123"
 
 
 def test_mcp_headers_bearer_fallback():

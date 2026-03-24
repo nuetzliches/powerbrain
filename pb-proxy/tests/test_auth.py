@@ -28,7 +28,7 @@ def verifier(mock_pool):
 @pytest.mark.asyncio
 async def test_verify_valid_key(verifier, mock_pool):
     """Valid key returns agent_id and agent_role."""
-    key = "kb_test_valid_key_12345678901234567890"
+    key = "pb_test_valid_key_12345678901234567890"
     key_hash = hashlib.sha256(key.encode()).hexdigest()
 
     mock_pool.fetchrow.return_value = {
@@ -49,7 +49,7 @@ async def test_verify_invalid_key(verifier, mock_pool):
     """Invalid key returns None."""
     mock_pool.fetchrow.return_value = None
 
-    result = await verifier.verify("kb_invalid_key_does_not_exist")
+    result = await verifier.verify("pb_invalid_key_does_not_exist")
 
     assert result is None
 
@@ -64,7 +64,7 @@ async def test_verify_empty_key(verifier):
 @pytest.mark.asyncio
 async def test_verify_cached(verifier, mock_pool):
     """Second call uses cache, not DB."""
-    key = "kb_cached_key_123456789012345678901234"
+    key = "pb_cached_key_123456789012345678901234"
     mock_pool.fetchrow.return_value = {
         "agent_id": "cached-agent",
         "agent_role": "admin",
@@ -78,7 +78,7 @@ async def test_verify_cached(verifier, mock_pool):
 
 
 @pytest.mark.asyncio
-async def test_verify_non_kb_prefix(verifier):
-    """Non-kb_ prefixed tokens are rejected immediately."""
+async def test_verify_non_pb_prefix(verifier):
+    """Non-pb_ prefixed tokens are rejected immediately."""
     result = await verifier.verify("sk-ant-some-anthropic-key")
     assert result is None

@@ -92,7 +92,7 @@ class TestCheckOpaAccess:
 
         call_args = client.post.call_args
         url = call_args[0][0]
-        assert "/v1/data/kb/access/allow" in url
+        assert "/v1/data/pb/access/allow" in url
 
     async def test_input_includes_action_read(self):
         client = AsyncMock()

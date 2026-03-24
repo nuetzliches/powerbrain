@@ -243,7 +243,7 @@ async def test_agent_loop_routes_to_correct_server():
         injector,
         acompletion=mock_acompletion,
         max_iterations=5,
-        user_token="kb_test_token_123",
+        user_token="pb_test_token_123",
     )
     result = await loop.run(
         model="gpt-4o",
@@ -253,7 +253,7 @@ async def test_agent_loop_routes_to_correct_server():
 
     # Verify tool was called with entry and user_token
     injector.call_tool.assert_called_once_with(
-        pb_entry, {"query": "test"}, user_token="kb_test_token_123",
+        pb_entry, {"query": "test"}, user_token="pb_test_token_123",
     )
     assert result.tool_calls_executed == 1
     assert result.tools_used == ["search_knowledge"]

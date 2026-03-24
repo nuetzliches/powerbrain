@@ -34,7 +34,7 @@ from snapshot_service import create_snapshot
 
 # ── Konfiguration ────────────────────────────────────────────
 QDRANT_URL   = os.getenv("QDRANT_URL",   "http://qdrant:6333")
-POSTGRES_URL = os.getenv("POSTGRES_URL",  "postgresql://kb_admin:changeme@postgres:5432/knowledgebase")
+POSTGRES_URL = os.getenv("POSTGRES_URL",  "postgresql://pb_admin:changeme@postgres:5432/powerbrain")
 OPA_URL      = os.getenv("OPA_URL",       "http://opa:8181")
 RERANKER_URL = os.getenv("RERANKER_URL",  "http://reranker:8082")
 
@@ -55,7 +55,7 @@ embedding_provider = EmbeddingProvider(
 )
 
 # ── LLM / Layer generation provider ──
-LLM_PROVIDER_URL = os.getenv("LLM_PROVIDER_URL", os.getenv("OLLAMA_URL", "http://kb-ollama:11434"))
+LLM_PROVIDER_URL = os.getenv("LLM_PROVIDER_URL", os.getenv("OLLAMA_URL", "http://pb-ollama:11434"))
 LLM_MODEL = os.getenv("LLM_MODEL", os.getenv("SUMMARIZATION_MODEL", "qwen2.5:3b"))
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LAYER_GENERATION_ENABLED = os.getenv("LAYER_GENERATION_ENABLED", "true").lower() == "true"
@@ -64,13 +64,13 @@ completion_provider = CompletionProvider(
     base_url=LLM_PROVIDER_URL, api_key=LLM_API_KEY
 )
 
-DEFAULT_COLLECTION = "knowledge_general"
+DEFAULT_COLLECTION = "pb_general"
 
 logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("kb-ingestion")
+log = logging.getLogger("pb-ingestion")
 
 # ── FastAPI App ──────────────────────────────────────────────
-app = FastAPI(title="KB Ingestion API", version="1.0.0")
+app = FastAPI(title="Powerbrain Ingestion API", version="1.0.0")
 
 # ── Clients (lifecycle-managed) ─────────────────────────────
 qdrant: AsyncQdrantClient | None = None
@@ -144,7 +144,7 @@ class ChunkIngestRequest(BaseModel):
     """Request for adapter-based chunk ingestion. Internal use only."""
     chunks: list[str]
     project: str
-    collection: str = "knowledge_general"
+    collection: str = "pb_general"
     classification: str = "internal"
     metadata: dict[str, Any] = {}
     source: str
@@ -205,7 +205,7 @@ async def check_opa_privacy(
 ) -> dict:
     """Fragt OPA nach pii_action und dual_storage_enabled.
 
-    OPA endpoint: /v1/data/kb/privacy/pii_action, /v1/data/kb/privacy/dual_storage_enabled
+    OPA endpoint: /v1/data/pb/privacy/pii_action, /v1/data/pb/privacy/dual_storage_enabled
     """
     input_data = {
         "classification": classification,
@@ -215,7 +215,7 @@ async def check_opa_privacy(
     result = {"pii_action": "block", "dual_storage_enabled": False}
     try:
         resp = await http_client.post(
-            f"{OPA_URL}/v1/data/kb/privacy",
+            f"{OPA_URL}/v1/data/pb/privacy",
             json={"input": input_data},
         )
         resp.raise_for_status()

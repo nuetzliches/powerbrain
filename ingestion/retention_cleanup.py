@@ -25,7 +25,7 @@ from qdrant_client.models import PointIdsList
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("retention")
 
-POSTGRES_URL = "postgresql://kb_admin:changeme@localhost:5432/knowledgebase"
+POSTGRES_URL = "postgresql://pb_admin:changeme@localhost:5432/powerbrain"
 QDRANT_URL = "http://localhost:6333"
 AUDIT_RETENTION_DAYS = int(os.getenv("AUDIT_RETENTION_DAYS", "365"))
 

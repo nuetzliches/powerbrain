@@ -1,6 +1,6 @@
 """
 Proxy API-key authentication.
-Verifies kb_ API keys against the shared api_keys PostgreSQL table.
+Verifies pb_ API keys against the shared api_keys PostgreSQL table.
 """
 
 import asyncio
@@ -51,11 +51,11 @@ class ProxyKeyVerifier:
     async def verify(self, token: str) -> VerifiedKey | None:
         """Verify an API key. Returns {"agent_id": ..., "agent_role": ...} or None.
 
-        - Rejects empty tokens and non-kb_ prefixed tokens immediately
+        - Rejects empty tokens and non-pb_ prefixed tokens immediately
         - Uses in-memory cache with TTL
         - Updates last_used_at (throttled, fire-and-forget)
         """
-        if not token or not token.startswith("kb_"):
+        if not token or not token.startswith("pb_"):
             return None
 
         # Check cache

@@ -31,7 +31,7 @@ from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_anonymizer import AnonymizerEngine
 # OperatorConfig no longer needed — pseudonymize_text does manual replacement
 
-log = logging.getLogger("kb-pii")
+log = logging.getLogger("pb-pii")
 
 
 # ── Pydantic Config Models ─────────────────────────────────

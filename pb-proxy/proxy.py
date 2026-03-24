@@ -109,7 +109,7 @@ async def check_opa_policy(
     }
     try:
         resp = await http_client.post(
-            f"{config.OPA_URL}/v1/data/kb/proxy",
+            f"{config.OPA_URL}/v1/data/pb/proxy",
             json=opa_input,
         )
         resp.raise_for_status()

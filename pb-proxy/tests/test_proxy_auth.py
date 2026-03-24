@@ -90,7 +90,7 @@ def test_auth_required_invalid_key(mock_base_deps, mock_verifier):
         response = client.post(
             "/v1/chat/completions",
             json={"model": "gpt-4o", "messages": [{"role": "user", "content": "hi"}]},
-            headers={"Authorization": "Bearer kb_invalid_key_12345678901234567890"},
+            headers={"Authorization": "Bearer pb_invalid_key_12345678901234567890"},
         )
         assert response.status_code == 401
 
@@ -108,7 +108,7 @@ def test_auth_required_valid_key(mock_base_deps, mock_verifier):
         response = client.post(
             "/v1/chat/completions",
             json={"model": "gpt-4o", "messages": [{"role": "user", "content": "hi"}]},
-            headers={"Authorization": "Bearer kb_valid_key_123456789012345678901"},
+            headers={"Authorization": "Bearer pb_valid_key_123456789012345678901"},
         )
         assert response.status_code == 200
         # OPA should have been called with verified agent_role

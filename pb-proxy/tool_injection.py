@@ -32,7 +32,7 @@ def _mcp_headers(server: McpServerConfig, user_token: str | None = None) -> dict
 
     Args:
         server: The MCP server config.
-        user_token: The user's kb_ API key (for bearer auth mode).
+        user_token: The user's pb_ API key (for bearer auth mode).
     """
     headers: dict[str, str] = {}
     if server.auth == "bearer":
@@ -217,7 +217,7 @@ class ToolInjector:
         Args:
             entry: The ToolEntry (from resolve_tool).
             arguments: Tool arguments dict.
-            user_token: User's kb_ key for bearer auth propagation.
+            user_token: User's pb_ key for bearer auth propagation.
         """
         headers = _mcp_headers(entry.server_config, user_token=user_token)
 

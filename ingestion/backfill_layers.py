@@ -12,7 +12,7 @@ Idempotent — checks for existing L0/L1 before generating.
 Usage:
     python backfill_layers.py                         # all collections
     python backfill_layers.py --dry-run               # report only
-    python backfill_layers.py --collection knowledge_code
+    python backfill_layers.py --collection pb_code
     python backfill_layers.py --batch-size 50
 """
 
@@ -45,7 +45,7 @@ from shared.llm_provider import CompletionProvider, EmbeddingProvider
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 POSTGRES_URL = os.getenv(
     "POSTGRES_URL",
-    "postgresql://kb_admin:changeme_in_production@localhost:5432/knowledgebase",
+    "postgresql://pb_admin:changeme_in_production@localhost:5432/powerbrain",
 )
 
 _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
@@ -57,7 +57,7 @@ EMBEDDING_PROVIDER_URL = os.getenv("EMBEDDING_PROVIDER_URL", _OLLAMA_URL)
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", "")
 
-ALL_COLLECTIONS = ["knowledge_general", "knowledge_code", "knowledge_rules"]
+ALL_COLLECTIONS = ["pb_general", "pb_code", "pb_rules"]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -492,7 +492,7 @@ async def main():
         default=None,
         help=(
             "Process a single collection (default: all three — "
-            "knowledge_general, knowledge_code, knowledge_rules)"
+            "pb_general, pb_code, pb_rules)"
         ),
     )
     parser.add_argument(

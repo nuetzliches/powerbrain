@@ -50,7 +50,7 @@ class TestCheckOpaPrivacy:
         await check_opa_privacy("confidential", False, "legal_obligation")
 
         call_args = _patch_http.post.call_args
-        assert "/v1/data/kb/privacy" in call_args[0][0]
+        assert "/v1/data/pb/privacy" in call_args[0][0]
         input_data = call_args[1]["json"]["input"]
         assert input_data["classification"] == "confidential"
         assert input_data["contains_pii"] is False

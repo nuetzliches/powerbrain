@@ -181,7 +181,7 @@ class TestIngestTextChunksLayerIntegration:
 
         result = await ingest_text_chunks(
             chunks=["chunk one", "chunk two"],
-            collection="knowledge_general",
+            collection="pb_general",
             source="test:inline",
             classification="internal",
             project="test-project",
@@ -212,7 +212,7 @@ class TestIngestTextChunksLayerIntegration:
 
         result = await ingest_text_chunks(
             chunks=["hello world"],
-            collection="knowledge_general",
+            collection="pb_general",
             source="test:inline",
             classification="internal",
             project=None,
@@ -249,7 +249,7 @@ class TestIngestTextChunksLayerIntegration:
 
         await ingest_text_chunks(
             chunks=["content"],
-            collection="knowledge_code",
+            collection="pb_code",
             source="git:repo/file.py",
             classification="confidential",
             project="my-project",
@@ -275,7 +275,7 @@ class TestIngestTextChunksLayerIntegration:
 
         result = await ingest_text_chunks(
             chunks=["hello"],
-            collection="knowledge_general",
+            collection="pb_general",
             source="test:inline",
             classification="internal",
             project=None,
@@ -311,7 +311,7 @@ class TestIngestTextChunksLayerIntegration:
 
         result = await ingest_text_chunks(
             chunks=["hello"],
-            collection="knowledge_general",
+            collection="pb_general",
             source="test:inline",
             classification="internal",
             project=None,
@@ -335,7 +335,7 @@ class TestIngestTextChunksLayerIntegration:
 
         await ingest_text_chunks(
             chunks=["content"],
-            collection="knowledge_general",
+            collection="pb_general",
             source="test:inline",
             classification="internal",
             project=None,
@@ -372,7 +372,7 @@ class TestIngestTextChunksLayerIntegration:
 
         await ingest_text_chunks(
             chunks=["content"],
-            collection="knowledge_general",
+            collection="pb_general",
             source="test:inline",
             classification="internal",
             project=None,
@@ -402,7 +402,7 @@ class TestIngestTextChunksLayerIntegration:
 
         await ingest_text_chunks(
             chunks=["original text"],
-            collection="knowledge_general",
+            collection="pb_general",
             source="test:inline",
             classification="internal",
             project=None,
@@ -440,7 +440,7 @@ class TestIngestTextChunksLayerIntegration:
 
         result = await ingest_text_chunks(
             chunks=["John Doe is here"],
-            collection="knowledge_general",
+            collection="pb_general",
             source="test:inline",
             classification="internal",
             project=None,

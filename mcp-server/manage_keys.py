@@ -1,5 +1,5 @@
 """
-API-Key Management CLI for the KB MCP Server.
+API-Key Management CLI for the Powerbrain MCP Server.
 
 Usage:
     python manage_keys.py create --agent-id my-agent --role analyst [--description "..."] [--expires-in-days 90]
@@ -19,14 +19,14 @@ import asyncpg
 
 POSTGRES_URL = os.getenv(
     "POSTGRES_URL",
-    "postgresql://kb_admin:changeme@localhost:5432/knowledgebase",
+    "postgresql://pb_admin:changeme@localhost:5432/powerbrain",
 )
-KEY_PREFIX = "kb_"
+KEY_PREFIX = "pb_"
 KEY_BYTES = 32  # 32 bytes = 64 hex chars
 
 
 def generate_key() -> str:
-    """Generate a new API key with kb_ prefix."""
+    """Generate a new API key with pb_ prefix."""
     return KEY_PREFIX + secrets.token_hex(KEY_BYTES)
 
 
@@ -112,7 +112,7 @@ async def cmd_revoke(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="KB MCP Server API Key Management")
+    parser = argparse.ArgumentParser(description="Powerbrain MCP Server API Key Management")
     sub = parser.add_subparsers(dest="command", required=True)
 
     create = sub.add_parser("create", help="Create a new API key")

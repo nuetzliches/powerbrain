@@ -22,14 +22,14 @@ def mock_pool(monkeypatch):
 
 class TestApiKeyVerifier:
     async def test_valid_key_returns_access_token(self, verifier, mock_pool):
-        key_hash = hashlib.sha256("kb_test_key".encode()).hexdigest()
+        key_hash = hashlib.sha256("pb_test_key".encode()).hexdigest()
         mock_pool.fetchrow.return_value = {
             "agent_id": "agent-1",
             "agent_role": "analyst",
         }
         mock_pool.execute.return_value = None
 
-        result = await verifier.verify_token("kb_test_key")
+        result = await verifier.verify_token("pb_test_key")
 
         assert result is not None
         assert result.client_id == "agent-1"
@@ -41,7 +41,7 @@ class TestApiKeyVerifier:
     async def test_invalid_key_returns_none(self, verifier, mock_pool):
         mock_pool.fetchrow.return_value = None
 
-        result = await verifier.verify_token("kb_invalid_key")
+        result = await verifier.verify_token("pb_invalid_key")
         assert result is None
 
     async def test_empty_token_returns_none(self, verifier, mock_pool):
@@ -56,7 +56,7 @@ class TestApiKeyVerifier:
         }
         mock_pool.execute.side_effect = Exception("DB write failed")
 
-        result = await verifier.verify_token("kb_test_key")
+        result = await verifier.verify_token("pb_test_key")
         assert result is not None
         assert result.client_id == "agent-1"
 
@@ -67,5 +67,5 @@ class TestApiKeyVerifier:
         }
         mock_pool.execute.return_value = None
 
-        result = await verifier.verify_token("kb_my_token")
-        assert result.token == "kb_my_token"
+        result = await verifier.verify_token("pb_my_token")
+        assert result.token == "pb_my_token"

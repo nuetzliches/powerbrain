@@ -32,7 +32,7 @@ from typing import Any
 
 import asyncpg
 
-log = logging.getLogger("kb-graph")
+log = logging.getLogger("pb-graph")
 
 # ── Identifier-Validierung (Injection Prevention) ───────────
 

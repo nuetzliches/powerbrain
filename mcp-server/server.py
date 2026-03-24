@@ -57,7 +57,7 @@ def _read_secret(env_var: str, default: str = "") -> str:
     return os.getenv(env_var, default)
 
 QDRANT_URL    = os.getenv("QDRANT_URL",    "http://localhost:6333")
-POSTGRES_URL  = os.getenv("POSTGRES_URL",  "postgresql://kb_admin:changeme@localhost:5432/knowledgebase")
+POSTGRES_URL  = os.getenv("POSTGRES_URL",  "postgresql://pb_admin:changeme@localhost:5432/powerbrain")
 OPA_URL       = os.getenv("OPA_URL",       "http://localhost:8181")
 FORGEJO_URL   = os.getenv("FORGEJO_URL",   "http://forgejo.local:3000")
 FORGEJO_TOKEN = _read_secret("FORGEJO_TOKEN")
@@ -107,41 +107,41 @@ FEEDBACK_WARN_THRESHOLD = 2.5
 FEEDBACK_WARN_MIN_COUNT = 3
 
 logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("kb-mcp")
+log = logging.getLogger("pb-mcp")
 
 # ── Prometheus Metriken ──────────────────────────────────────
 mcp_requests_total = Counter(
-    "kb_mcp_requests_total",
+    "pb_mcp_requests_total",
     "MCP-Requests pro Tool und Status",
     ["tool", "status"],
 )
 mcp_request_duration = Histogram(
-    "kb_mcp_request_duration_seconds",
+    "pb_mcp_request_duration_seconds",
     "Latenz pro MCP-Tool",
     ["tool"],
     buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0],
 )
 mcp_policy_decisions_total = Counter(
-    "kb_mcp_policy_decisions_total",
+    "pb_mcp_policy_decisions_total",
     "OPA Policy-Entscheidungen",
     ["result"],
 )
 mcp_search_results_count = Histogram(
-    "kb_mcp_search_results_count",
+    "pb_mcp_search_results_count",
     "Anzahl Suchergebnisse nach Reranking",
     ["collection"],
     buckets=[0, 1, 3, 5, 10, 20, 50],
 )
 mcp_rerank_fallback_total = Counter(
-    "kb_mcp_rerank_fallback_total",
+    "pb_mcp_rerank_fallback_total",
     "Anzahl Reranker-Fallbacks (nicht erreichbar)",
 )
 mcp_feedback_avg_rating = Gauge(
-    "kb_feedback_avg_rating",
+    "pb_feedback_avg_rating",
     "Aktueller Durchschnitt des Feedback-Ratings (letzte 24h)",
 )
 mcp_rate_limit_rejected = Counter(
-    "kb_rate_limit_rejected_total",
+    "pb_rate_limit_rejected_total",
     "Requests rejected by rate limiter",
     ["agent_role"],
 )
@@ -158,7 +158,7 @@ if OTEL_ENABLED:
         provider = TracerProvider()
         provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=OTLP_ENDPOINT)))
         trace.set_tracer_provider(provider)
-        tracer = trace.get_tracer("kb-mcp-server")
+        tracer = trace.get_tracer("pb-mcp-server")
         log.info(f"OpenTelemetry Tracing aktiviert → {OTLP_ENDPOINT}")
     except ImportError:
         log.warning("opentelemetry-* Pakete nicht installiert, Tracing deaktiviert")
@@ -411,21 +411,21 @@ async def check_opa_summarization_policy(
     }
     try:
         allowed_resp = await http.post(
-            f"{OPA_URL}/v1/data/kb/summarization/summarize_allowed",
+            f"{OPA_URL}/v1/data/pb/summarization/summarize_allowed",
             json={"input": input_data},
         )
         allowed_resp.raise_for_status()
         allowed = allowed_resp.json().get("result", False)
 
         required_resp = await http.post(
-            f"{OPA_URL}/v1/data/kb/summarization/summarize_required",
+            f"{OPA_URL}/v1/data/pb/summarization/summarize_required",
             json={"input": input_data},
         )
         required_resp.raise_for_status()
         required = required_resp.json().get("result", False)
 
         detail_resp = await http.post(
-            f"{OPA_URL}/v1/data/kb/summarization/summarize_detail",
+            f"{OPA_URL}/v1/data/pb/summarization/summarize_detail",
             json={"input": input_data},
         )
         detail_resp.raise_for_status()
@@ -485,7 +485,7 @@ async def check_opa_policy(agent_id: str, agent_role: str,
         }
         try:
             resp = await http.post(
-                f"{OPA_URL}/v1/data/kb/access/allow", json={"input": input_data}
+                f"{OPA_URL}/v1/data/pb/access/allow", json={"input": input_data}
             )
             resp.raise_for_status()
             allowed = resp.json().get("result", False)
@@ -508,7 +508,7 @@ async def _check_max_layer(agent_role: str, classification: str) -> str:
     input_data = {"agent_role": agent_role, "classification": classification}
     try:
         resp = await http.post(
-            f"{OPA_URL}/v1/data/kb/layers/max_layer", json={"input": input_data}
+            f"{OPA_URL}/v1/data/pb/layers/max_layer", json={"input": input_data}
         )
         resp.raise_for_status()
         return resp.json().get("result", "L2")
@@ -640,13 +640,13 @@ async def check_opa_vault_access(
     }
     try:
         resp = await http.post(
-            f"{OPA_URL}/v1/data/kb/privacy/vault_access_allowed",
+            f"{OPA_URL}/v1/data/pb/privacy/vault_access_allowed",
             json={"input": input_data},
         )
         resp.raise_for_status()
         allowed = resp.json().get("result", False)
         fields_resp = await http.post(
-            f"{OPA_URL}/v1/data/kb/privacy/vault_fields_to_redact",
+            f"{OPA_URL}/v1/data/pb/privacy/vault_fields_to_redact",
             json={"input": input_data},
         )
         fields_resp.raise_for_status()
@@ -752,7 +752,7 @@ async def check_feedback_warning(query: str, pool: asyncpg.Pool):
 
 
 # ── MCP-Server ───────────────────────────────────────────────
-server = Server("kb-mcp-server")
+server = Server("pb-mcp-server")
 
 
 @server.list_tools()
@@ -767,8 +767,8 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "query":      {"type": "string"},
                     "collection": {"type": "string",
-                                   "enum": ["knowledge_general", "knowledge_code", "knowledge_rules"],
-                                   "default": "knowledge_general"},
+                                   "enum": ["pb_general", "pb_code", "pb_rules"],
+                                   "default": "pb_general"},
                     "filters":    {"type": "object"},
                     "top_k":      {"type": "integer", "default": 10},
                     "pii_access_token": {
@@ -1023,7 +1023,7 @@ async def list_tools() -> list[Tool]:
                                    "description": "Document ID (from search results metadata.doc_id)"},
                     "layer":      {"type": "string", "enum": ["L0", "L1", "L2"], "default": "L1",
                                    "description": "Context layer to retrieve"},
-                    "collection": {"type": "string", "default": "knowledge_general"},
+                    "collection": {"type": "string", "default": "pb_general"},
                 },
                 "required": ["doc_id"]
             }
@@ -1072,7 +1072,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
 
     # ── search_knowledge ─────────────────────────────────────
     if name == "search_knowledge":
-        collection = arguments.get("collection", "knowledge_general")
+        collection = arguments.get("collection", "pb_general")
         query      = arguments["query"]
         top_k      = arguments.get("top_k", DEFAULT_TOP_K)
         filters    = arguments.get("filters", {})
@@ -1249,7 +1249,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         context  = arguments.get("context", {})
         try:
             resp = await http.post(
-                f"{OPA_URL}/v1/data/kb/rules/{category}",
+                f"{OPA_URL}/v1/data/pb/rules/{category}",
                 json={"input": {"context": context, "agent_role": agent_role}}
             )
             resp.raise_for_status()
@@ -1346,7 +1346,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         oversample_k  = top_k * OVERSAMPLE_FACTOR if RERANKER_ENABLED else top_k
 
         results = await qdrant.query_points(
-            collection_name="knowledge_code", query=vector,
+            collection_name="pb_code", query=vector,
             query_filter=qdrant_filter, limit=oversample_k, with_payload=True,
         )
 
@@ -1372,7 +1372,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         ]
 
         reranked = await rerank_results(query, code_results, top_n=top_k)
-        await log_access(agent_id, agent_role, "code", "knowledge_code", "search", "allow", {
+        await log_access(agent_id, agent_role, "code", "pb_code", "search", "allow", {
             "query": query, "qdrant_results": len(results.points),
             "after_policy": len(code_results), "after_rerank": len(reranked),
         })
@@ -1673,7 +1673,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
     elif name == "get_document":
         doc_id = arguments["doc_id"]
         layer = arguments.get("layer", "L1")
-        collection = arguments.get("collection", "knowledge_general")
+        collection = arguments.get("collection", "pb_general")
 
         doc_filter = Filter(must=[
             FieldCondition(key="doc_id", match=MatchValue(value=doc_id)),

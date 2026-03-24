@@ -11,7 +11,7 @@ Verwendung:
   python run_eval.py --collection code  # Nur eine Collection
 
 Als Cronjob (wöchentlich via cron oder docker exec):
-  0 3 * * 0  docker exec kb-ingestion python /app/evaluation/run_eval.py
+  0 3 * * 0  docker exec pb-ingestion python /app/evaluation/run_eval.py
 """
 
 import os
@@ -26,10 +26,10 @@ from typing import Any
 import httpx
 import asyncpg
 
-log = logging.getLogger("kb-eval")
+log = logging.getLogger("pb-eval")
 
 # ── Konfiguration ────────────────────────────────────────────
-POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://kb_admin:changeme@postgres:5432/knowledgebase")
+POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://pb_admin:changeme@postgres:5432/powerbrain")
 MCP_BASE_URL = os.getenv("MCP_EVAL_URL", "http://mcp-server:8080")   # Direkt gegen Ingestion/Qdrant
 QDRANT_URL   = os.getenv("QDRANT_URL",   "http://qdrant:6333")
 RERANKER_URL = os.getenv("RERANKER_URL", "http://reranker:8082")
@@ -133,7 +133,7 @@ async def check_opa_access(client: httpx.AsyncClient,
         return _opa_access_cache[classification]
     try:
         resp = await client.post(
-            f"{OPA_URL}/v1/data/kb/access/allow",
+            f"{OPA_URL}/v1/data/pb/access/allow",
             json={"input": {
                 "agent_id": EVAL_AGENT_ID,
                 "agent_role": EVAL_AGENT_ROLE,
@@ -224,7 +224,7 @@ async def run_evaluation(dry_run: bool = False,
 
         for tc in test_cases:
             query      = tc["query"]
-            collection = tc["collection"] or "knowledge_general"
+            collection = tc["collection"] or "pb_general"
             exp_ids    = tc["expected_ids"] or []
             exp_kws    = tc["expected_keywords"] or []
             category   = tc["category"]
