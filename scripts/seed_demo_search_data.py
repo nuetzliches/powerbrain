@@ -68,14 +68,14 @@ def upsert_demo_document(vector: list[float]) -> None:
     }
     request_json(
         "PUT",
-        f"{QDRANT_URL}/collections/knowledge_general/points?wait=true",
+        f"{QDRANT_URL}/collections/pb_general/points?wait=true",
         payload,
     )
 
 
 def main() -> int:
     try:
-        for collection in ("knowledge_general", "knowledge_code", "knowledge_rules"):
+        for collection in ("pb_general", "pb_code", "pb_rules"):
             ensure_collection(collection)
 
         vector = embed_text(DEMO_CONTENT)

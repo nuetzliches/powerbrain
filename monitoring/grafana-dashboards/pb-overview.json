@@ -1,6 +1,6 @@
 {
   "title": "KB Overview",
-  "uid": "kb-overview",
+  "uid": "pb-overview",
   "tags": ["kb", "mcp"],
   "timezone": "browser",
   "schemaVersion": 38,
@@ -14,7 +14,7 @@
       "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
       "targets": [{
         "datasource": "Prometheus",
-        "expr": "sum(rate(kb_mcp_requests_total[1m])) * 60",
+        "expr": "sum(rate(pb_mcp_requests_total[1m])) * 60",
         "legendFormat": "req/min"
       }]
     },
@@ -25,7 +25,7 @@
       "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
       "targets": [{
         "datasource": "Prometheus",
-        "expr": "sum(rate(kb_mcp_requests_total{status=\"error\"}[5m])) / sum(rate(kb_mcp_requests_total[5m]))",
+        "expr": "sum(rate(pb_mcp_requests_total{status=\"error\"}[5m])) / sum(rate(pb_mcp_requests_total[5m]))",
         "legendFormat": "Error-Rate"
       }],
       "options": { "unit": "percentunit" }
@@ -37,7 +37,7 @@
       "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
       "targets": [{
         "datasource": "Prometheus",
-        "expr": "kb_feedback_avg_rating",
+        "expr": "pb_feedback_avg_rating",
         "legendFormat": "avg rating"
       }]
     },
@@ -48,7 +48,7 @@
       "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
       "targets": [{
         "datasource": "Prometheus",
-        "expr": "increase(kb_mcp_rerank_fallback_total[1h])",
+        "expr": "increase(pb_mcp_rerank_fallback_total[1h])",
         "legendFormat": "Fallbacks/h"
       }]
     },
@@ -60,17 +60,17 @@
       "targets": [
         {
           "datasource": "Prometheus",
-          "expr": "histogram_quantile(0.50, rate(kb_mcp_request_duration_seconds_bucket{tool=\"search_knowledge\"}[5m]))",
+          "expr": "histogram_quantile(0.50, rate(pb_mcp_request_duration_seconds_bucket{tool=\"search_knowledge\"}[5m]))",
           "legendFormat": "p50"
         },
         {
           "datasource": "Prometheus",
-          "expr": "histogram_quantile(0.95, rate(kb_mcp_request_duration_seconds_bucket{tool=\"search_knowledge\"}[5m]))",
+          "expr": "histogram_quantile(0.95, rate(pb_mcp_request_duration_seconds_bucket{tool=\"search_knowledge\"}[5m]))",
           "legendFormat": "p95"
         },
         {
           "datasource": "Prometheus",
-          "expr": "histogram_quantile(0.99, rate(kb_mcp_request_duration_seconds_bucket{tool=\"search_knowledge\"}[5m]))",
+          "expr": "histogram_quantile(0.99, rate(pb_mcp_request_duration_seconds_bucket{tool=\"search_knowledge\"}[5m]))",
           "legendFormat": "p99"
         }
       ],
@@ -83,7 +83,7 @@
       "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
       "targets": [{
         "datasource": "Prometheus",
-        "expr": "sum by(tool) (rate(kb_mcp_requests_total[1m]))",
+        "expr": "sum by(tool) (rate(pb_mcp_requests_total[1m]))",
         "legendFormat": "{{tool}}"
       }]
     },
@@ -94,7 +94,7 @@
       "gridPos": { "x": 0, "y": 12, "w": 12, "h": 6 },
       "targets": [{
         "datasource": "Prometheus",
-        "expr": "sum by(result) (rate(kb_mcp_policy_decisions_total[1m]))",
+        "expr": "sum by(result) (rate(pb_mcp_policy_decisions_total[1m]))",
         "legendFormat": "{{result}}"
       }]
     },
@@ -105,7 +105,7 @@
       "gridPos": { "x": 12, "y": 12, "w": 12, "h": 6 },
       "targets": [{
         "datasource": "Prometheus",
-        "expr": "histogram_quantile(0.95, rate(kb_reranker_batch_size_bucket[5m]))",
+        "expr": "histogram_quantile(0.95, rate(pb_reranker_batch_size_bucket[5m]))",
         "legendFormat": "batch p95"
       }]
     }

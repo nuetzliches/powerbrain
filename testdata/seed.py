@@ -216,9 +216,9 @@ def verify_seeded_data() -> bool:
 
     # Search each collection
     collections = {
-        "knowledge_general": "NovaTech",
-        "knowledge_code": "Coding Standards",
-        "knowledge_rules": "Datenklassifizierung",
+        "pb_general": "NovaTech",
+        "pb_code": "Coding Standards",
+        "pb_rules": "Datenklassifizierung",
     }
 
     all_ok = True

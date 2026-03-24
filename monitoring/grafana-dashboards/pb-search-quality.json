@@ -1,6 +1,6 @@
 {
   "title": "KB Search Quality",
-  "uid": "kb-search-quality",
+  "uid": "pb-search-quality",
   "tags": ["kb", "feedback", "eval"],
   "timezone": "browser",
   "schemaVersion": 38,
@@ -14,7 +14,7 @@
       "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
       "targets": [{
         "datasource": "Prometheus",
-        "expr": "kb_feedback_avg_rating",
+        "expr": "pb_feedback_avg_rating",
         "legendFormat": "avg rating"
       }],
       "options": { "thresholds": { "steps": [
@@ -42,12 +42,12 @@
       "targets": [
         {
           "datasource": "Prometheus",
-          "expr": "histogram_quantile(0.50, sum by(le, collection) (rate(kb_mcp_search_results_count_bucket[5m])))",
+          "expr": "histogram_quantile(0.50, sum by(le, collection) (rate(pb_mcp_search_results_count_bucket[5m])))",
           "legendFormat": "p50 {{collection}}"
         },
         {
           "datasource": "Prometheus",
-          "expr": "histogram_quantile(0.95, sum by(le, collection) (rate(kb_mcp_search_results_count_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by(le, collection) (rate(pb_mcp_search_results_count_bucket[5m])))",
           "legendFormat": "p95 {{collection}}"
         }
       ]
@@ -60,12 +60,12 @@
       "targets": [
         {
           "datasource": "Prometheus",
-          "expr": "histogram_quantile(0.50, rate(kb_reranker_duration_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.50, rate(pb_reranker_duration_seconds_bucket[5m]))",
           "legendFormat": "p50"
         },
         {
           "datasource": "Prometheus",
-          "expr": "histogram_quantile(0.95, rate(kb_reranker_duration_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.95, rate(pb_reranker_duration_seconds_bucket[5m]))",
           "legendFormat": "p95"
         }
       ],
@@ -78,7 +78,7 @@
       "gridPos": { "x": 0, "y": 12, "w": 24, "h": 6 },
       "targets": [{
         "datasource": "Prometheus",
-        "expr": "increase(kb_mcp_rerank_fallback_total[10m])",
+        "expr": "increase(pb_mcp_rerank_fallback_total[10m])",
         "legendFormat": "Fallbacks / 10min"
       }]
     }

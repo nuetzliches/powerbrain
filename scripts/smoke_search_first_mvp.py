@@ -62,7 +62,7 @@ async def main():
                 'search_knowledge',
                 arguments={{
                     'query': QUERY,
-                    'collection': 'knowledge_general',
+                    'collection': 'pb_general',
                     'top_k': 3,
                     'agent_id': 'smoke-test',
                     'agent_role': 'analyst',

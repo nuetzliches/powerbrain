@@ -25,10 +25,10 @@ datasources:
     type: postgres
     access: proxy
     url: postgres:5432
-    user: kb_admin
+    user: pb_admin
     editable: false
     jsonData:
-      database: knowledgebase
+      database: powerbrain
       sslmode: disable
       maxOpenConns: 5
       maxIdleConns: 2

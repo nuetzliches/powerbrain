@@ -1,7 +1,7 @@
 [
   {
     "id": "novatech-onboarding-checklist",
-    "collection": "knowledge_general",
+    "collection": "pb_general",
     "classification": "public",
     "title": "Onboarding-Checkliste für neue Mitarbeitende",
     "source": "hr-wiki",
@@ -11,7 +11,7 @@
   },
   {
     "id": "novatech-homeoffice-policy",
-    "collection": "knowledge_general",
+    "collection": "pb_general",
     "classification": "internal",
     "title": "Homeoffice-Regelung und hybrides Arbeiten",
     "source": "hr-wiki",
@@ -21,7 +21,7 @@
   },
   {
     "id": "novatech-reisekostenrichtlinie",
-    "collection": "knowledge_general",
+    "collection": "pb_general",
     "classification": "internal",
     "title": "Reisekostenrichtlinie",
     "source": "finance-wiki",
@@ -31,7 +31,7 @@
   },
   {
     "id": "novatech-gehaltsbaender",
-    "collection": "knowledge_general",
+    "collection": "pb_general",
     "classification": "confidential",
     "title": "Gehaltsbänder und Vergütungsstruktur 2025",
     "source": "hr-compensation",
@@ -41,7 +41,7 @@
   },
   {
     "id": "novatech-datenschutz-mitarbeiter",
-    "collection": "knowledge_general",
+    "collection": "pb_general",
     "classification": "internal",
     "title": "Datenschutz-Leitfaden für Mitarbeitende",
     "source": "compliance-wiki",
@@ -51,7 +51,7 @@
   },
   {
     "id": "novatech-meeting-kultur",
-    "collection": "knowledge_general",
+    "collection": "pb_general",
     "classification": "public",
     "title": "Meeting-Kultur und Kommunikationsrichtlinien",
     "source": "culture-wiki",
@@ -61,7 +61,7 @@
   },
   {
     "id": "novatech-incident-management",
-    "collection": "knowledge_general",
+    "collection": "pb_general",
     "classification": "internal",
     "title": "Incident-Management-Prozess",
     "source": "ops-wiki",
@@ -71,7 +71,7 @@
   },
   {
     "id": "novatech-kundendaten-vertrag",
-    "collection": "knowledge_general",
+    "collection": "pb_general",
     "classification": "confidential",
     "title": "Rahmenvertrag Kundendaten-Verarbeitung (AVV)",
     "source": "legal-docs",
@@ -81,7 +81,7 @@
   },
   {
     "id": "novatech-urlaubsregelung",
-    "collection": "knowledge_general",
+    "collection": "pb_general",
     "classification": "public",
     "title": "Urlaubsregelung und Abwesenheitsmanagement",
     "source": "hr-wiki",
@@ -91,7 +91,7 @@
   },
   {
     "id": "novatech-buerohund-policy",
-    "collection": "knowledge_general",
+    "collection": "pb_general",
     "classification": "public",
     "title": "Bürohund-Regelung",
     "source": "culture-wiki",
@@ -101,7 +101,7 @@
   },
   {
     "id": "novatech-coding-standards",
-    "collection": "knowledge_code",
+    "collection": "pb_code",
     "classification": "internal",
     "title": "Coding Standards und Style Guide",
     "source": "dev-wiki",
@@ -111,7 +111,7 @@
   },
   {
     "id": "novatech-api-design-guide",
-    "collection": "knowledge_code",
+    "collection": "pb_code",
     "classification": "internal",
     "title": "REST API Design Guidelines",
     "source": "dev-wiki",
@@ -121,7 +121,7 @@
   },
   {
     "id": "novatech-deployment-pipeline",
-    "collection": "knowledge_code",
+    "collection": "pb_code",
     "classification": "internal",
     "title": "Deployment-Pipeline und Release-Prozess",
     "source": "dev-wiki",
@@ -131,7 +131,7 @@
   },
   {
     "id": "novatech-datenbank-richtlinien",
-    "collection": "knowledge_code",
+    "collection": "pb_code",
     "classification": "internal",
     "title": "Datenbank-Richtlinien und Migration",
     "source": "dev-wiki",
@@ -141,7 +141,7 @@
   },
   {
     "id": "novatech-frontend-architektur",
-    "collection": "knowledge_code",
+    "collection": "pb_code",
     "classification": "internal",
     "title": "Frontend-Architektur NovaSuite",
     "source": "dev-wiki",
@@ -151,7 +151,7 @@
   },
   {
     "id": "novatech-security-secrets",
-    "collection": "knowledge_code",
+    "collection": "pb_code",
     "classification": "confidential",
     "title": "Security-Architektur und Secrets Management",
     "source": "security-docs",
@@ -161,7 +161,7 @@
   },
   {
     "id": "novatech-datenklassifizierung",
-    "collection": "knowledge_rules",
+    "collection": "pb_rules",
     "classification": "internal",
     "title": "Datenklassifizierungs-Richtlinie",
     "source": "governance-wiki",
@@ -171,7 +171,7 @@
   },
   {
     "id": "novatech-zugriffskontrolle",
-    "collection": "knowledge_rules",
+    "collection": "pb_rules",
     "classification": "internal",
     "title": "Zugriffskontroll-Policy (RBAC)",
     "source": "governance-wiki",
@@ -181,7 +181,7 @@
   },
   {
     "id": "novatech-aufbewahrungsfristen",
-    "collection": "knowledge_rules",
+    "collection": "pb_rules",
     "classification": "internal",
     "title": "Aufbewahrungsfristen und Löschkonzept",
     "source": "governance-wiki",
@@ -191,7 +191,7 @@
   },
   {
     "id": "novatech-change-management",
-    "collection": "knowledge_rules",
+    "collection": "pb_rules",
     "classification": "internal",
     "title": "Change-Management-Prozess",
     "source": "governance-wiki",
@@ -201,7 +201,7 @@
   },
   {
     "id": "novatech-ai-usage-policy",
-    "collection": "knowledge_rules",
+    "collection": "pb_rules",
     "classification": "internal",
     "title": "KI-Nutzungsrichtlinie",
     "source": "governance-wiki",

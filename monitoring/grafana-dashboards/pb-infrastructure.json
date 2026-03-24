@@ -1,6 +1,6 @@
 {
   "title": "KB Infrastructure",
-  "uid": "kb-infrastructure",
+  "uid": "pb-infrastructure",
   "tags": ["kb", "infrastructure"],
   "timezone": "browser",
   "schemaVersion": 38,
@@ -26,7 +26,7 @@
       "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
       "targets": [{
         "datasource": "Prometheus",
-        "expr": "pg_stat_activity_count{datname=\"knowledgebase\"}",
+        "expr": "pg_stat_activity_count{datname=\"powerbrain\"}",
         "legendFormat": "{{state}}"
       }]
     },
@@ -37,7 +37,7 @@
       "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
       "targets": [{
         "datasource": "Prometheus",
-        "expr": "kb_reranker_model_load_seconds_sum / kb_reranker_model_load_seconds_count",
+        "expr": "pb_reranker_model_load_seconds_sum / pb_reranker_model_load_seconds_count",
         "legendFormat": "avg Ladezeit"
       }],
       "fieldConfig": { "defaults": { "unit": "s" } }
@@ -49,7 +49,7 @@
       "gridPos": { "x": 0, "y": 12, "w": 12, "h": 6 },
       "targets": [{
         "datasource": "Prometheus",
-        "expr": "sum by(result) (rate(kb_mcp_policy_decisions_total[1m])) * 60",
+        "expr": "sum by(result) (rate(pb_mcp_policy_decisions_total[1m])) * 60",
         "legendFormat": "{{result}}"
       }]
     },
@@ -60,7 +60,7 @@
       "gridPos": { "x": 12, "y": 12, "w": 12, "h": 6 },
       "targets": [{
         "datasource": "Prometheus",
-        "expr": "sum by(tool) (increase(kb_mcp_requests_total[1h]))",
+        "expr": "sum by(tool) (increase(pb_mcp_requests_total[1h]))",
         "legendFormat": "{{tool}}"
       }]
     }

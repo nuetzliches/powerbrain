@@ -1,11 +1,11 @@
 groups:
-  - name: kb-alerts
+  - name: pb-alerts
     rules:
 
       # ── MCP-Server ──────────────────────────────────────────
 
       - alert: HighErrorRate
-        expr: rate(kb_mcp_requests_total{status="error"}[5m]) > 0.05
+        expr: rate(pb_mcp_requests_total{status="error"}[5m]) > 0.05
         for: 5m
         labels:
           severity: warning
@@ -16,7 +16,7 @@ groups:
       - alert: HighSearchLatency
         expr: >
           histogram_quantile(0.95,
-            rate(kb_mcp_request_duration_seconds_bucket{tool="search_knowledge"}[10m])
+            rate(pb_mcp_request_duration_seconds_bucket{tool="search_knowledge"}[10m])
           ) > 2
         for: 10m
         labels:
@@ -26,7 +26,7 @@ groups:
           description: "p95-Latenz: {{ $value | humanizeDuration }}"
 
       - alert: MostToolsDown
-        expr: absent(kb_mcp_requests_total)
+        expr: absent(pb_mcp_requests_total)
         for: 5m
         labels:
           severity: critical
@@ -44,7 +44,7 @@ groups:
           summary: "Reranker nicht erreichbar"
 
       - alert: HighRerankerFallbackRate
-        expr: rate(kb_mcp_rerank_fallback_total[5m]) > 0.1
+        expr: rate(pb_mcp_rerank_fallback_total[5m]) > 0.1
         for: 5m
         labels:
           severity: warning
@@ -54,7 +54,7 @@ groups:
       # ── Retrieval-Qualität ───────────────────────────────────
 
       - alert: LowSearchQuality
-        expr: kb_feedback_avg_rating < 2.5
+        expr: pb_feedback_avg_rating < 2.5
         for: 1h
         labels:
           severity: warning
@@ -83,7 +83,7 @@ groups:
       - alert: HighRerankerLatency
         expr: >
           histogram_quantile(0.95,
-            rate(kb_reranker_duration_seconds_bucket[5m])
+            rate(pb_reranker_duration_seconds_bucket[5m])
           ) > 1
         for: 5m
         labels:
