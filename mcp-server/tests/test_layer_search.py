@@ -1,10 +1,13 @@
-"""Tests for _build_qdrant_filter and layer parameter support."""
+"""Tests for _build_qdrant_filter, _check_max_layer, and layer parameter support."""
 
 import pytest
+import respx
+import httpx
+from unittest.mock import AsyncMock, patch
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 
 import server
-from server import _build_qdrant_filter
+from server import _build_qdrant_filter, _check_max_layer
 
 
 class TestBuildQdrantFilter:
@@ -117,3 +120,72 @@ class TestToolSchemasIncludeLayer:
         # Without filters
         result = _build_qdrant_filter({})
         assert result is None
+
+
+class TestCheckMaxLayer:
+    """Unit tests for the _check_max_layer OPA integration."""
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_returns_max_layer_from_opa(self):
+        """OPA returns max_layer for analyst + confidential → L1."""
+        respx.post(f"{server.OPA_URL}/v1/data/kb/layers/max_layer").mock(
+            return_value=httpx.Response(200, json={"result": "L1"})
+        )
+        result = await _check_max_layer("analyst", "confidential")
+        assert result == "L1"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_returns_l2_for_admin(self):
+        """OPA returns L2 for admin role."""
+        respx.post(f"{server.OPA_URL}/v1/data/kb/layers/max_layer").mock(
+            return_value=httpx.Response(200, json={"result": "L2"})
+        )
+        result = await _check_max_layer("admin", "confidential")
+        assert result == "L2"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_returns_l0_for_restricted(self):
+        """OPA returns L0 for analyst + restricted."""
+        respx.post(f"{server.OPA_URL}/v1/data/kb/layers/max_layer").mock(
+            return_value=httpx.Response(200, json={"result": "L0"})
+        )
+        result = await _check_max_layer("analyst", "restricted")
+        assert result == "L0"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_defaults_to_l2_on_opa_failure(self):
+        """When OPA is unreachable, default to L2 (permissive)."""
+        respx.post(f"{server.OPA_URL}/v1/data/kb/layers/max_layer").mock(
+            side_effect=httpx.ConnectError("OPA down")
+        )
+        result = await _check_max_layer("analyst", "confidential")
+        assert result == "L2"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_defaults_to_l2_on_missing_result(self):
+        """When OPA returns empty response, default to L2."""
+        respx.post(f"{server.OPA_URL}/v1/data/kb/layers/max_layer").mock(
+            return_value=httpx.Response(200, json={})
+        )
+        result = await _check_max_layer("analyst", "confidential")
+        assert result == "L2"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_sends_correct_input(self):
+        """Verify OPA receives agent_role and classification in input."""
+        route = respx.post(f"{server.OPA_URL}/v1/data/kb/layers/max_layer").mock(
+            return_value=httpx.Response(200, json={"result": "L2"})
+        )
+        await _check_max_layer("developer", "internal")
+        assert route.called
+        request_body = route.calls[0].request.content
+        import json
+        body = json.loads(request_body)
+        assert body["input"]["agent_role"] == "developer"
+        assert body["input"]["classification"] == "internal"
