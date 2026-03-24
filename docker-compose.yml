@@ -237,6 +237,9 @@ services:
       FORGEJO_TOKEN: ${FORGEJO_TOKEN:-}
       FORGEJO_TOKEN_FILE: /run/secrets/forgejo_token
       RERANKER_URL:  http://reranker:8082
+      LLM_PROVIDER_URL: ${LLM_PROVIDER_URL:-http://ollama:11434}
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:3b}
+      LAYER_GENERATION_ENABLED: "${LAYER_GENERATION_ENABLED:-true}"
     depends_on:
       qdrant:
         condition: service_healthy
