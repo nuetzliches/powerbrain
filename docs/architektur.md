@@ -16,9 +16,9 @@ Drei Collections, jeweils 768 Dimensionen (nomic-embed-text):
 
 | Collection | Inhalt | Payload-Felder |
 |---|---|---|
-| `knowledge_general` | Allgemeines Wissen, Docs | source, type, classification, project, updated_at |
-| `knowledge_code` | Code-Snippets, API-Docs | repo, language, path, classification |
-| `knowledge_rules` | Eingebettete Regelwerke | rule_id, category, severity, active |
+| `pb_general` | Allgemeines Wissen, Docs | source, type, classification, project, updated_at |
+| `pb_code` | Code-Snippets, API-Docs | repo, language, path, classification |
+| `pb_rules` | Eingebettete Regelwerke | rule_id, category, severity, active |
 
 ### 2.2 PostgreSQL 16
 
@@ -32,11 +32,11 @@ JSONB + GIN-Index für flexible Schemas. Alle Metadaten und strukturierten Daten
 
 Drei Policy-Pakete:
 
-- `kb.access` — Zugriffskontrolle nach Klassifizierung und Rolle
-- `kb.rules` — Business Rules (Pricing, Workflow, Compliance)
-- `kb.privacy` — DSGVO: Zweckbindung, PII-Behandlung, Aufbewahrungsfristen, Löschrecht
+- `pb.access` — Zugriffskontrolle nach Klassifizierung und Rolle
+- `pb.rules` — Business Rules (Pricing, Workflow, Compliance)
+- `pb.privacy` — DSGVO: Zweckbindung, PII-Behandlung, Aufbewahrungsfristen, Löschrecht
 
-Policies werden als Bundle aus dem Forgejo-Repo `kb-policies` gepollt.
+Policies werden als Bundle aus dem Forgejo-Repo `pb-policies` gepollt.
 
 ### 2.4 Knowledge Graph (Apache AGE)
 
@@ -65,10 +65,10 @@ Hostet das Embedding-Modell `nomic-embed-text` (768d) lokal. GPU-Support optiona
 ### 2.7 Forgejo (extern)
 
 Vorhandene Instanz im Netzwerk. Repositories:
-- `kb-policies` — OPA Rego-Dateien
-- `kb-schemas` — JSON-Schemas für Datensätze
-- `kb-docs` — Technische Dokumentation
-- `kb-ingestion-config` — ETL-Templates
+- `pb-policies` — OPA Rego-Dateien
+- `pb-schemas` — JSON-Schemas für Datensätze
+- `pb-docs` — Technische Dokumentation
+- `pb-ingestion-config` — ETL-Templates
 
 ## 3. Suchpipeline
 
@@ -272,18 +272,18 @@ python ingestion/snapshot_service.py --name my-snap  # benannten Snapshot erstel
 ### 8.2 Metriken pro Service
 
 **MCP-Server** (`mcp-server:8080/metrics`, Prometheus HTTP-Server):
-- `kb_mcp_requests_total{tool, status}` — Requests pro Tool und Status
-- `kb_mcp_request_duration_seconds{tool}` — Latenz-Histogramm pro Tool
-- `kb_mcp_policy_decisions_total{result}` — OPA allow/deny Zähler
-- `kb_mcp_search_results_count{collection}` — Histogramm der Ergebnisanzahl
-- `kb_mcp_rerank_fallback_total` — Fallbacks wenn Reranker nicht erreichbar
-- `kb_feedback_avg_rating` — Gauge: aktueller Feedback-Schnitt (letzte 24h)
+- `pb_mcp_requests_total{tool, status}` — Requests pro Tool und Status
+- `pb_mcp_request_duration_seconds{tool}` — Latenz-Histogramm pro Tool
+- `pb_mcp_policy_decisions_total{result}` — OPA allow/deny Zähler
+- `pb_mcp_search_results_count{collection}` — Histogramm der Ergebnisanzahl
+- `pb_mcp_rerank_fallback_total` — Fallbacks wenn Reranker nicht erreichbar
+- `pb_feedback_avg_rating` — Gauge: aktueller Feedback-Schnitt (letzte 24h)
 
 **Reranker** (`reranker:8082/metrics`):
-- `kb_reranker_requests_total{status}`
-- `kb_reranker_duration_seconds` — Histogramm
-- `kb_reranker_batch_size` — Histogramm der Batch-Größen
-- `kb_reranker_model_load_seconds` — Modell-Ladezeit beim Start
+- `pb_reranker_requests_total{status}`
+- `pb_reranker_duration_seconds` — Histogramm
+- `pb_reranker_batch_size` — Histogramm der Batch-Größen
+- `pb_reranker_model_load_seconds` — Modell-Ladezeit beim Start
 
 ### 8.3 Grafana Dashboards
 
@@ -299,7 +299,7 @@ Drei vorkonfigurierte Dashboards in `monitoring/grafana-dashboards/`:
 | HighErrorRate | Error-Rate > 5% für 5min | warning |
 | HighSearchLatency | search p95 > 2s für 10min | warning |
 | RerankerDown | `up{job="reranker"} == 0` für 2min | critical |
-| LowSearchQuality | `kb_feedback_avg_rating < 2.5` für 1h | warning |
+| LowSearchQuality | `pb_feedback_avg_rating < 2.5` für 1h | warning |
 | QdrantDown / PostgresDown | Targets nicht erreichbar für 2min | critical |
 | HighRerankerFallbackRate | Fallback-Rate > 10% für 5min | warning |
 
@@ -339,7 +339,7 @@ Jedes Dokument wird bei der Ingestion in drei Kontext-Ebenen gespeichert:
 - `search_knowledge` und `get_code_context`: optionaler `layer`-Parameter (L0/L1/L2)
 - `get_document`: Drill-Down von L0 → L1 → L2 per `doc_id`
 
-**OPA-Zugriffssteuerung** (`kb.layers`):
+**OPA-Zugriffssteuerung** (`pb.layers`):
 - Admin: immer L2
 - Nicht-Admin + confidential: max. L1
 - Nicht-Admin + restricted: max. L0

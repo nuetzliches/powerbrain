@@ -78,7 +78,7 @@ curl -s http://localhost:8080/mcp -H 'Content-Type: application/json' \
       "name": "search_knowledge",
       "arguments": {
         "query": "Homeoffice Regelung",
-        "collection": "knowledge_general",
+        "collection": "pb_general",
         "top_k": 5,
         "agent_id": "my-agent",
         "agent_role": "analyst"
@@ -98,16 +98,16 @@ Most-used tool. Searches Qdrant vectors with OPA policy filtering and cross-enco
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `query` | yes | | Natural language search query |
-| `collection` | no | `knowledge_general` | `knowledge_general`, `knowledge_code`, or `knowledge_rules` |
+| `collection` | no | `pb_general` | `pb_general`, `pb_code`, or `pb_rules` |
 | `top_k` | no | 10 | Number of results to return |
 | `agent_id` | yes | | Identifier for the calling agent |
 | `agent_role` | yes | | `viewer`, `analyst`, `developer`, or `admin` |
 | `project` | no | | Filter by project name |
 
 **Collections:**
-- `knowledge_general` — Company docs, HR, policies, processes
-- `knowledge_code` — Code guidelines, architecture, API docs
-- `knowledge_rules` — Business rules, compliance, data governance
+- `pb_general` — Company docs, HR, policies, processes
+- `pb_code` — Code guidelines, architecture, API docs
+- `pb_rules` — Business rules, compliance, data governance
 
 **Roles and access levels:**
 - `viewer` — Only `public` documents
@@ -140,7 +140,7 @@ Most-used tool. Searches Qdrant vectors with OPA policy filtering and cross-enco
 
 ### get_code_context (code search)
 
-Like `search_knowledge` but defaults to `knowledge_code` collection. Same parameters.
+Like `search_knowledge` but defaults to `pb_code` collection. Same parameters.
 
 ### check_policy (OPA policy check)
 
@@ -244,7 +244,7 @@ curl -s http://localhost:8080/mcp -H 'Content-Type: application/json' \
 # 2. Search
 curl -s http://localhost:8080/mcp -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_knowledge","arguments":{"query":"Gehaltsbänder Vergütung","collection":"knowledge_general","agent_id":"hr-bot","agent_role":"admin","top_k":3}}}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_knowledge","arguments":{"query":"Gehaltsbänder Vergütung","collection":"pb_general","agent_id":"hr-bot","agent_role":"admin","top_k":3}}}'
 ```
 
 ### Multi-collection search
@@ -255,19 +255,19 @@ For questions spanning multiple topics, search each collection separately and co
 # Search rules collection
 curl -s http://localhost:8080/mcp -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_knowledge","arguments":{"query":"Datenschutz DSGVO","collection":"knowledge_rules","top_k":3,"agent_id":"my-agent","agent_role":"analyst"}}}'
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_knowledge","arguments":{"query":"Datenschutz DSGVO","collection":"pb_rules","top_k":3,"agent_id":"my-agent","agent_role":"analyst"}}}'
 
 # Search general docs
 curl -s http://localhost:8080/mcp -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"search_knowledge","arguments":{"query":"Datenschutz DSGVO","collection":"knowledge_general","top_k":3,"agent_id":"my-agent","agent_role":"analyst"}}}'
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"search_knowledge","arguments":{"query":"Datenschutz DSGVO","collection":"pb_general","top_k":3,"agent_id":"my-agent","agent_role":"analyst"}}}'
 ```
 
 Present results grouped by collection or merged by relevance to the user's question.
 
 ## Access Control Behavior
 
-The search pipeline enforces access silently. Documents above the agent's clearance are **filtered out without error** — the response simply contains fewer results. A `viewer` searching `knowledge_general` will only see `public` documents, even if the collection contains `internal` and `confidential` ones. You may receive fewer than `top_k` results because of policy filtering.
+The search pipeline enforces access silently. Documents above the agent's clearance are **filtered out without error** — the response simply contains fewer results. A `viewer` searching `pb_general` will only see `public` documents, even if the collection contains `internal` and `confidential` ones. You may receive fewer than `top_k` results because of policy filtering.
 
 ## Troubleshooting
 
@@ -276,5 +276,5 @@ The search pipeline enforces access silently. Documents above the agent's cleara
 | Empty results | Wrong collection | Try all 3 collections |
 | `allowed: false` | Role too low for classification | Use higher role or search `public` docs |
 | Connection refused | MCP server not running | `docker compose up -d mcp-server` |
-| Timeout on search | Ollama embedding slow (CPU) | Wait, or check `docker logs kb-ollama` |
+| Timeout on search | Ollama embedding slow (CPU) | Wait, or check `docker logs pb-ollama` |
 | Reranker scores missing | Reranker unhealthy | Works without it (graceful fallback) |

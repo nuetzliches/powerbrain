@@ -34,7 +34,7 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 _pg_password = os.getenv("PG_PASSWORD", "changeme_in_production")
 POSTGRES_URL = os.getenv(
     "POSTGRES_URL",
-    f"postgresql://kb_admin:{_pg_password}@localhost:5432/knowledgebase",
+    f"postgresql://pb_admin:{_pg_password}@localhost:5432/powerbrain",
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]  # tests/integration/e2e -> project root
@@ -47,7 +47,7 @@ HEALTH_ENDPOINTS = {
     "ingestion": f"{INGESTION_URL}/health",
 }
 
-QDRANT_COLLECTIONS = ["knowledge_general", "knowledge_code", "knowledge_rules"]
+QDRANT_COLLECTIONS = ["pb_general", "pb_code", "pb_rules"]
 
 HEADERS_BASE = {
     "Content-Type": "application/json",
@@ -151,7 +151,7 @@ def wait_for_services(docker_stack):
                 json={"jsonrpc": "2.0", "id": 0, "method": "tools/list", "params": {}},
                 headers={
                     **HEADERS_BASE,
-                    "Authorization": "Bearer kb_dev_localonly_do_not_use_in_production",
+                    "Authorization": "Bearer pb_dev_localonly_do_not_use_in_production",
                 },
                 timeout=5,
             )
@@ -206,7 +206,7 @@ def ensure_embedding_model(wait_for_services):
 
     # Pull the model via docker exec
     result = subprocess.run(
-        ["docker", "exec", "kb-ollama", "ollama", "pull", model],
+        ["docker", "exec", "pb-ollama", "ollama", "pull", model],
         capture_output=True,
         text=True,
         timeout=120,
@@ -219,7 +219,7 @@ def ensure_embedding_model(wait_for_services):
 
 async def _create_api_key(role: str) -> dict:
     """Create a temporary API key in PostgreSQL."""
-    key = "kb_test_" + secrets.token_hex(16)
+    key = "pb_test_" + secrets.token_hex(16)
     key_hash = hashlib.sha256(key.encode()).hexdigest()
     agent_id = f"e2e-{role}-{secrets.token_hex(4)}"
 

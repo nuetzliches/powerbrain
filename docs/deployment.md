@@ -11,10 +11,10 @@ cp .env.example .env
 docker compose up -d
 
 # Pull the embedding model
-docker exec kb-ollama ollama pull nomic-embed-text
+docker exec pb-ollama ollama pull nomic-embed-text
 
 # Create Qdrant collections
-for col in knowledge_general knowledge_code knowledge_rules; do
+for col in pb_general pb_code pb_rules; do
   curl -s -X PUT "http://localhost:6333/collections/$col" \
     -H 'Content-Type: application/json' \
     -d '{"vectors":{"size":768,"distance":"Cosine"}}' && echo " → $col ✓"
@@ -35,7 +35,7 @@ Caddy is included as an optional Docker Compose profile. It provides automatic H
 
 1. Set your domain in `.env`:
    ```
-   DOMAIN=kb.example.com
+    DOMAIN=pb.example.com
    ```
 
 2. Start with the `tls` profile:
@@ -83,10 +83,10 @@ upstream powerbrain_ingestion {
 
 server {
     listen 443 ssl;
-    server_name kb.example.com;
+    server_name pb.example.com;
 
-    ssl_certificate     /etc/ssl/certs/kb.example.com.pem;
-    ssl_certificate_key /etc/ssl/private/kb.example.com.key;
+    ssl_certificate     /etc/ssl/certs/pb.example.com.pem;
+    ssl_certificate_key /etc/ssl/private/pb.example.com.key;
 
     location /mcp {
         proxy_pass http://powerbrain_mcp;
@@ -111,7 +111,7 @@ services:
   mcp-server:
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.mcp.rule=Host(`kb.example.com`) && PathPrefix(`/mcp`)"
+      - "traefik.http.routers.mcp.rule=Host(`pb.example.com`) && PathPrefix(`/mcp`)"
       - "traefik.http.routers.mcp.tls.certresolver=letsencrypt"
       - "traefik.http.services.mcp.loadbalancer.server.port=8080"
 ```
@@ -119,7 +119,7 @@ services:
 ### External Caddy Example
 
 ```caddyfile
-kb.example.com {
+pb.example.com {
     handle /mcp* {
         reverse_proxy localhost:8080
     }
@@ -296,5 +296,5 @@ curl http://localhost:9090/-/healthy       # Prometheus
 
 With Caddy (TLS profile):
 ```bash
-curl https://kb.example.com/health        # Caddy health endpoint
+curl https://pb.example.com/health        # Caddy health endpoint
 ```

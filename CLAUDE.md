@@ -65,7 +65,7 @@ powerbrain/
 │   ├── 002_privacy.sql    ← Privacy extensions
 │   ├── 003_knowledge_graph.sql ← Apache AGE graph setup
 │   └── 007_pii_vault.sql  ← Sealed Vault (PII originals + mappings)
-├── opa-policies/kb/
+├── opa-policies/pb/
 │   ├── access.rego         ← Access control
 │   ├── rules.rego          ← Business rules
 │   ├── privacy.rego        ← GDPR policies
@@ -142,9 +142,9 @@ If the reranker is down → graceful fallback to Qdrant ordering.
 
 ### Context Summarization (OPA-controlled)
 After search and reranking, summarization is policy-controlled:
-- `kb.summarization.summarize_allowed` — all roles except viewer may request summaries
-- `kb.summarization.summarize_required` — confidential data: only summaries, never raw chunks
-- `kb.summarization.summarize_detail` — restricted data gets `brief` summaries only
+- `pb.summarization.summarize_allowed` — all roles except viewer may request summaries
+- `pb.summarization.summarize_required` — confidential data: only summaries, never raw chunks
+- `pb.summarization.summarize_detail` — restricted data gets `brief` summaries only
 
 Agents use `summarize=true` and `summary_detail` parameters on `search_knowledge` and `get_code_context`.
 Response includes `summary` (text) and `summary_policy` (`requested` | `enforced` | `denied`).
@@ -181,7 +181,7 @@ Art. 17 deletion: delete vault mapping → pseudonyms become irreversible.
 
 ### Privacy (GDPR)
 - **PII Scanner** (Microsoft Presidio) at ingestion — configurable via `ingestion/pii_config.yaml` (entity types, custom recognizers, confidence, languages)
-- **Purpose binding** via OPA policy (`kb.privacy`)
+- **Purpose binding** via OPA policy (`pb.privacy`)
 - **Retention periods** with automatic cleanup
 - **Right to erasure** (Art. 17) with tracking table
 - **Audit log** for every PII data access
@@ -200,9 +200,9 @@ The `_read_secret()` helper checks `<ENV_VAR>_FILE` first, then falls back to `<
 
 ### Forgejo Integration
 No separate git container — uses existing Forgejo:
-- `kb-policies` repo → OPA bundle polling
-- `kb-schemas` repo → JSON schema validation
-- `kb-docs` + project repos → Ingestion pipeline
+- `pb-policies` repo → OPA bundle polling
+- `pb-schemas` repo → JSON schema validation
+- `pb-docs` + project repos → Ingestion pipeline
 
 ### LLM Provider Abstraction
 Embedding and Summarization use the OpenAI-compatible API (`/v1/embeddings`, `/v1/chat/completions`).
@@ -218,23 +218,23 @@ Optional GPU stack: `docker compose --profile gpu up -d` (vLLM + HF TEI).
 ### AI Provider Proxy (optional)
 Optional gateway activated via `docker compose --profile proxy up`.
 Sits between AI consumers and LLM providers:
-1. Client authenticates with `kb_` API key (same keys as MCP server, stored in `api_keys` table)
+1. Client authenticates with `pb_` API key (same keys as MCP server, stored in `api_keys` table)
 2. Proxy injects Powerbrain MCP tools into `tools[]` array (from N configured MCP servers)
 3. Forwards augmented request to LLM (via LiteLLM, 100+ providers)
 4. When LLM returns tool calls → proxy routes to correct MCP server via prefix-based namespacing
 5. Repeats until final response, then returns to client
 
 **Authentication:**
-- `AUTH_REQUIRED=true` (default) — every request needs `Authorization: Bearer kb_<key>`
+- `AUTH_REQUIRED=true` (default) — every request needs `Authorization: Bearer pb_<key>`
 - `ProxyKeyVerifier` (`pb-proxy/auth.py`) validates against PostgreSQL `api_keys` table
-- Identity propagation: user's `kb_` key is forwarded to MCP servers (each tool call authenticated as the user)
+- Identity propagation: user's `pb_` key is forwarded to MCP servers (each tool call authenticated as the user)
 - LLM provider keys come from central config (env vars / Docker Secrets), never from user tokens
 
 **Multi-MCP-Server Aggregation:**
 - Configured via `pb-proxy/mcp_servers.yaml` (mounted as Docker volume)
 - Each server has: `name`, `url`, `auth_mode` (`bearer` / `none`), optional `prefix`
 - Tools are namespaced with prefix: `servername__toolname` (double underscore separator)
-- OPA policy `kb.proxy.mcp_servers_allowed` controls which servers each role can access
+- OPA policy `pb.proxy.mcp_servers_allowed` controls which servers each role can access
 - `ToolInjector` discovers tools from all configured servers, merges with prefix dedup
 
 **Dual-mode model routing:**
@@ -249,7 +249,7 @@ Endpoints:
 - `GET /health` — Health check
 
 Supports SSE streaming (`"stream": true`).
-OPA policies (`kb.proxy`) control: provider access, required tools, max iterations, MCP server access.
+OPA policies (`pb.proxy`) control: provider access, required tools, max iterations, MCP server access.
 Configuration: `pb-proxy/litellm_config.yaml` for aliases, `pb-proxy/mcp_servers.yaml` for MCP servers.
 
 ## Development
@@ -267,10 +267,10 @@ cp .env.example .env
 docker compose up -d
 
 # Pull embedding model
-docker exec kb-ollama ollama pull nomic-embed-text
+docker exec pb-ollama ollama pull nomic-embed-text
 
 # Create Qdrant collections
-for col in knowledge_general knowledge_code knowledge_rules; do
+for col in pb_general pb_code pb_rules; do
   curl -s -X PUT "http://localhost:6333/collections/$col" \
     -H 'Content-Type: application/json' \
     -d '{"vectors":{"size":768,"distance":"Cosine"}}'
@@ -294,13 +294,13 @@ curl http://localhost:11434/api/tags       # Ollama
 ### OPA Policy Tests
 ```bash
 # Run all OPA tests (including summarization)
-docker exec kb-opa /opa test /policies/kb/ -v
+docker exec pb-opa /opa test /policies/pb/ -v
 
 # Evaluate a specific policy
-docker exec kb-opa /opa eval \
-  -d /policies/kb/access.rego \
+docker exec pb-opa /opa eval \
+  -d /policies/pb/access.rego \
   -i '{"agent_role":"analyst","classification":"internal","action":"read"}' \
-  'data.kb.access.allow'
+  'data.pb.access.allow'
 ```
 
 ### MCP Server Tests
@@ -330,7 +330,7 @@ The `docker_stack` fixture calls `docker compose down -v` before and after the t
 3. ✅ **Evaluation + Feedback Loop** — `init-db/004_evaluation.sql`, MCP tools `submit_feedback`/`get_eval_stats`
 4. ✅ **Knowledge Versioning** — `init-db/005_versioning.sql`, `ingestion/snapshot_service.py`
 5. ✅ **Monitoring** — Prometheus + Grafana + Tempo
-6. ✅ **Context Summarization** — OPA-controlled, LLM-powered (`kb.summarization` policy)
+6. ✅ **Context Summarization** — OPA-controlled, LLM-powered (`pb.summarization` policy)
 7. ✅ **Docker Secrets** — `/run/secrets/` with env var fallback
 8. ✅ **TLS Profile** — Optional Caddy reverse proxy (`docker compose --profile tls up`)
 9. ✅ **AI Provider Proxy** — Optional LLM gateway with transparent tool injection (`docker compose --profile proxy`)
@@ -339,9 +339,9 @@ The `docker_stack` fixture calls `docker compose down -v` before and after the t
 12. ✅ **Proxy SSE Streaming** — Simulated streaming via SSE chunks for `stream: true` requests
 13. ✅ **Passthrough Routing** — Dual-mode model routing: aliases via Router + `provider/model` passthrough via direct LiteLLM
 14. ✅ **LLM Provider Abstraction** — OpenAI-compatible provider layer (`shared/llm_provider.py`), configurable backends for embedding + summarization, optional GPU stack (vLLM + TEI)
-15. ✅ **Context Layers (L0/L1/L2)** — Pre-computed abstracts (L0, ~100 tokens) and overviews (L1, ~500 tokens) at ingestion, `layer` param on search, `get_document` tool for drill-down, OPA layer access control (`kb.layers`)
+15. ✅ **Context Layers (L0/L1/L2)** — Pre-computed abstracts (L0, ~100 tokens) and overviews (L1, ~500 tokens) at ingestion, `layer` param on search, `get_document` tool for drill-down, OPA layer access control (`pb.layers`)
 16. ✅ **Proxy Authentication** — API-key auth for proxy (`pb-proxy/auth.py`), identity propagation to MCP servers
-17. ✅ **Multi-MCP-Server Aggregation** — Proxy aggregates tools from N MCP servers with per-server auth, prefix namespacing, and OPA-controlled access (`kb.proxy.mcp_servers_allowed`)
+17. ✅ **Multi-MCP-Server Aggregation** — Proxy aggregates tools from N MCP servers with per-server auth, prefix namespacing, and OPA-controlled access (`pb.proxy.mcp_servers_allowed`)
 
 Details on all features: see `docs/architektur.md`
 
@@ -350,7 +350,7 @@ Details on all features: see `docs/architektur.md`
 - Python 3.12+, type hints everywhere
 - Async/await for all I/O operations
 - Pydantic models for request/response
-- Rego policies in `opa-policies/kb/` with package `kb.*`
+- Rego policies in `opa-policies/pb/` with package `pb.*`
 - SQL migrations numbered: `001_schema.sql`, `002_privacy.sql`, ...
 - Docker images: multi-stage where useful, Alpine-based where possible
 - Environment variables for all configuration (no hardcoded values)

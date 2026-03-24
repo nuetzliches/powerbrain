@@ -77,7 +77,7 @@ VLM_MAX_IMAGE_SIZE_MB=10
 Kein zusätzlicher Container. Modell muss einmalig geladen werden:
 
 ```bash
-docker exec kb-ollama ollama pull llava:7b
+docker exec pb-ollama ollama pull llava:7b
 ```
 
 ---
@@ -106,9 +106,9 @@ services:
       bearer:
         token: ${GIT_TOKEN}
 bundles:
-  kb:
+  pb:
     service: git-server
-    resource: /api/v1/repos/org/kb-policies/raw/bundle.tar.gz # Pfad anpassen
+    resource: /api/v1/repos/org/pb-policies/raw/bundle.tar.gz # Pfad anpassen
     polling:
       min_delay_seconds: 10
 ```
@@ -131,7 +131,7 @@ Aktuell Forgejo-API-Pfade. Mit dem Adapter-Layer (→ T-4) wird das abstrahiert.
 GIT_SERVER_TYPE=forgejo   # forgejo | github | gitlab | bitbucket
 GIT_SERVER_URL=https://git.intern.example.com
 GIT_TOKEN=...
-GIT_ORG=kb-org
+GIT_ORG=pb-org
 ```
 
 Der Git-Adapter (→ T-4) übersetzt auf den jeweiligen API-Dialekt.
@@ -221,7 +221,7 @@ processors:
   resource:
     attributes:
       - key: service.namespace
-        value: kb
+        value: pb
         action: upsert
 
 exporters:
@@ -533,7 +533,7 @@ API unter `/v1/` — der Provider-Code funktioniert damit ohne Änderungen.
 # ── vLLM (optional, ersetzt Ollama für LLM/VLM) ──────────
 vllm:
   image: vllm/vllm-openai:latest
-  container_name: kb-vllm
+  container_name: pb-vllm
   profiles: ["gpu"]
   ports:
     - "8000:8000"
@@ -556,13 +556,13 @@ vllm:
             count: 1
             capabilities: [gpu]
   networks:
-    - kb-net
+    - pb-net
   restart: unless-stopped
 
 # ── HF Text Embeddings Inference (optional) ──────────────
 tei:
   image: ghcr.io/huggingface/text-embeddings-inference:latest
-  container_name: kb-tei
+  container_name: pb-tei
   profiles: ["gpu"]
   ports:
     - "8010:80"
@@ -581,7 +581,7 @@ tei:
             count: 1
             capabilities: [gpu]
   networks:
-    - kb-net
+    - pb-net
   restart: unless-stopped
 ```
 

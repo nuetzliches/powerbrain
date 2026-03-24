@@ -15,7 +15,7 @@ import pytest
 MCP_URL = os.getenv("MCP_URL", "http://localhost:8080/mcp")
 POSTGRES_URL = os.getenv(
     "POSTGRES_URL",
-    "postgresql://kb_admin:changeme@localhost:5432/knowledgebase",
+    "postgresql://pb_admin:changeme@localhost:5432/powerbrain",
 )
 
 HEADERS_BASE = {
@@ -39,7 +39,7 @@ def mcp_request(tool: str, arguments: dict, headers: dict | None = None) -> http
 @pytest.fixture
 async def test_api_key():
     """Create a temporary API key for testing, clean up after."""
-    key = "kb_" + secrets.token_hex(32)
+    key = "pb_" + secrets.token_hex(32)
     key_hash = hashlib.sha256(key.encode()).hexdigest()
     agent_id = f"test-{secrets.token_hex(4)}"
 
@@ -66,7 +66,7 @@ class TestAuthRequired:
     def test_invalid_token_returns_401(self):
         resp = mcp_request(
             "list_datasets", {},
-            headers={"Authorization": "Bearer kb_invalid_key_here"},
+            headers={"Authorization": "Bearer pb_invalid_key_here"},
         )
         assert resp.status_code == 401
 
@@ -84,7 +84,7 @@ class TestAuthRequired:
     @pytest.mark.asyncio
     async def test_expired_key_returns_401(self):
         """An expired key should be rejected."""
-        key = "kb_" + secrets.token_hex(32)
+        key = "pb_" + secrets.token_hex(32)
         key_hash = hashlib.sha256(key.encode()).hexdigest()
         agent_id = f"test-expired-{secrets.token_hex(4)}"
 
@@ -107,7 +107,7 @@ class TestAuthRequired:
     @pytest.mark.asyncio
     async def test_revoked_key_returns_401(self):
         """A revoked (active=false) key should be rejected."""
-        key = "kb_" + secrets.token_hex(32)
+        key = "pb_" + secrets.token_hex(32)
         key_hash = hashlib.sha256(key.encode()).hexdigest()
         agent_id = f"test-revoked-{secrets.token_hex(4)}"
 
@@ -132,6 +132,6 @@ class TestAuthRequired:
         """The default dev key should work out of the box."""
         resp = mcp_request(
             "list_datasets", {},
-            headers={"Authorization": "Bearer kb_dev_localonly_do_not_use_in_production"},
+            headers={"Authorization": "Bearer pb_dev_localonly_do_not_use_in_production"},
         )
         assert resp.status_code == 200

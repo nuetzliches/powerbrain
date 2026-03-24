@@ -59,10 +59,10 @@ cp .env.example .env
 docker compose up -d
 
 # Pull the embedding model
-docker exec kb-ollama ollama pull nomic-embed-text
+docker exec pb-ollama ollama pull nomic-embed-text
 
 # Create vector collections
-for col in knowledge_general knowledge_code knowledge_rules; do
+for col in pb_general pb_code pb_rules; do
   curl -s -X PUT "http://localhost:6333/collections/$col" \
     -H 'Content-Type: application/json' \
     -d '{"vectors":{"size":768,"distance":"Cosine"}}' && echo " → $col ✓"

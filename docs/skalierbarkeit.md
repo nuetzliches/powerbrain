@@ -160,14 +160,14 @@ Redis-Konfiguration (docker-compose):
 ```yaml
 redis:
   image: redis:7-alpine
-  container_name: kb-redis
+  container_name: pb-redis
   ports:
     - "6379:6379"
   volumes:
     - redis_data:/data
   command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
   networks:
-    - kb-net
+    - pb-net
   restart: unless-stopped
 ```
 
@@ -224,12 +224,12 @@ Client-Verbindungen.
 ```yaml
 pgbouncer:
   image: bitnami/pgbouncer:latest
-  container_name: kb-pgbouncer
+  container_name: pb-pgbouncer
   environment:
     POSTGRESQL_HOST: postgres
     POSTGRESQL_PORT: 5432
-    POSTGRESQL_DATABASE: knowledgebase
-    POSTGRESQL_USERNAME: kb_admin
+    POSTGRESQL_DATABASE: powerbrain
+    POSTGRESQL_USERNAME: pb_admin
     POSTGRESQL_PASSWORD: ${PG_PASSWORD}
     PGBOUNCER_POOL_MODE: transaction      # transaction-level pooling
     PGBOUNCER_MAX_CLIENT_CONN: 500        # max Clients
@@ -238,13 +238,13 @@ pgbouncer:
   ports:
     - "5433:5432"
   networks:
-    - kb-net
+    - pb-net
   restart: unless-stopped
 ```
 
 MCP-Server verbindet sich dann gegen PgBouncer statt direkt PG:
 ```env
-POSTGRES_URL=postgresql://kb_admin:...@pgbouncer:5432/knowledgebase
+POSTGRES_URL=postgresql://pb_admin:...@pgbouncer:5432/powerbrain
 ```
 
 **Wichtig bei `transaction`-Mode:** `LISTEN/NOTIFY` und `SET SESSION`-Statements
@@ -269,7 +269,7 @@ qdrant-node-1:
   # ...
 
 # Collections mit Replikation erstellen:
-# PUT /collections/knowledge_general
+# PUT /collections/pb_general
 # {
 #   "vectors": {"size": 768, "distance": "Cosine"},
 #   "shard_number": 3,       ← über alle Nodes verteilt
@@ -401,7 +401,7 @@ Nginx-Config-Reloading nötig:
 ```yaml
 traefik:
   image: traefik:v3
-  container_name: kb-traefik
+  container_name: pb-traefik
   command:
     - "--providers.docker=true"
     - "--providers.docker.exposedbydefault=false"
@@ -414,7 +414,7 @@ traefik:
   volumes:
     - /var/run/docker.sock:/var/run/docker.sock:ro
   networks:
-    - kb-net
+    - pb-net
 
 mcp-server:
   deploy:
@@ -509,7 +509,7 @@ spec:
     - type: Pods
       pods:
         metric:
-          name: kb_mcp_requests_total
+          name: pb_mcp_requests_total
         target:
           type: AverageValue
           averageValue: "50"   # max 50 req/s pro Pod
