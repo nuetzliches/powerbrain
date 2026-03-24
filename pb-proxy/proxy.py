@@ -94,7 +94,9 @@ key_verifier = ProxyKeyVerifier()
 
 # ── OPA Helper ───────────────────────────────────────────────
 
-async def check_opa_policy(agent_role: str, provider: str) -> dict:
+async def check_opa_policy(
+    agent_role: str, provider: str, configured_servers: list[str],
+) -> dict:
     """Check proxy policies via OPA."""
     if http_client is None:
         raise RuntimeError("http_client not initialized (lifespan not started)")
@@ -102,6 +104,7 @@ async def check_opa_policy(agent_role: str, provider: str) -> dict:
         "input": {
             "agent_role": agent_role,
             "provider": provider,
+            "configured_servers": configured_servers,
         }
     }
     try:
@@ -311,7 +314,9 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
             user_api_key = bearer_token
 
     # OPA policy check
-    policy = await check_opa_policy(agent_role, request.model)
+    policy = await check_opa_policy(
+        agent_role, request.model, tool_injector.server_names,
+    )
     if not policy.get("provider_allowed", False):
         PROXY_REQUESTS.labels(model=request.model, status="denied").inc()
         raise HTTPException(
@@ -320,6 +325,8 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
         )
 
     max_iterations = policy.get("max_iterations", config.MAX_ITERATIONS)
+
+    allowed_servers = policy.get("mcp_servers_allowed", tool_injector.server_names)
 
     # ── PII Protection ───────────────────────────────────────
     pii_reverse_map: dict[str, str] = {}
@@ -378,7 +385,9 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
 
     # Merge Powerbrain tools into request (skip if disabled or client sends own tools)
     if config.TOOL_INJECTION_ENABLED:
-        merged_tools = tool_injector.merge_tools(request.tools)
+        merged_tools = tool_injector.merge_tools(
+            request.tools, allowed_servers=allowed_servers,
+        )
     else:
         merged_tools = request.tools or []
 
@@ -402,6 +411,7 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
         acompletion=acompletion,
         max_iterations=max_iterations,
         pii_reverse_map=pii_reverse_map,
+        user_token=user_api_key,
     )
     try:
         result: AgentLoopResult = await asyncio.wait_for(
