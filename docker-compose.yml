@@ -346,6 +346,7 @@ services:
     secrets:
       - github_pat
       - anthropic_api_key
+      - pg_password
     environment:
       MCP_SERVER_URL:          http://mcp-server:8080/mcp
       MCP_AUTH_TOKEN:           ${MCP_AUTH_TOKEN:-kb_dev_localonly_do_not_use_in_production}
@@ -365,8 +366,16 @@ services:
       TOOL_INJECTION_ENABLED:  ${TOOL_INJECTION_ENABLED:-true}
       GITHUB_PAT_FILE:         /run/secrets/github_pat
       ANTHROPIC_API_KEY_FILE:  /run/secrets/anthropic_api_key
+      AUTH_REQUIRED:           ${AUTH_REQUIRED:-true}
+      PG_HOST:                 postgres
+      PG_PORT:                 "5432"
+      PG_DATABASE:             powerbrain
+      PG_USER:                 postgres
+      PG_PASSWORD:             ${PG_PASSWORD:-changeme}
+      MCP_SERVERS_CONFIG:      /app/mcp_servers.yaml
     volumes:
       - ./pb-proxy/litellm_config.yaml:/app/litellm_config.yaml:ro
+      - ./pb-proxy/mcp_servers.yaml:/app/mcp_servers.yaml:ro
     depends_on:
       mcp-server:
         condition: service_started
@@ -374,6 +383,8 @@ services:
         condition: service_healthy
       ingestion:
         condition: service_started
+      postgres:
+        condition: service_healthy
     networks:
       - kb-net
     restart: unless-stopped

@@ -59,6 +59,17 @@ INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8081")
 PII_SCAN_ENABLED = os.getenv("PII_SCAN_ENABLED", "true").lower() == "true"
 PII_SCAN_FORCED = os.getenv("PII_SCAN_FORCED", "false").lower() == "true"
 
+# ── Authentication ───────────────────────────────────────────
+AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
+PG_HOST = os.getenv("PG_HOST", "postgres")
+PG_PORT = int(os.getenv("PG_PORT", "5432"))
+PG_DATABASE = os.getenv("PG_DATABASE", "powerbrain")
+PG_USER = os.getenv("PG_USER", "postgres")
+PG_PASSWORD = _read_secret("PG_PASSWORD", "changeme")
+
+# ── MCP Servers ──────────────────────────────────────────────
+MCP_SERVERS_CONFIG = os.getenv("MCP_SERVERS_CONFIG", "/app/mcp_servers.yaml")
+
 # ── Provider Key Map (for passthrough routing) ───────────────
 # Maps LiteLLM provider prefix → env var value.
 # Only providers with a configured key are included.

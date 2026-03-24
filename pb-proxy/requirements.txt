@@ -7,3 +7,4 @@ pydantic>=2.0
 pyyaml>=6.0
 prometheus-client>=0.21
 tenacity>=9.0
+asyncpg>=0.30
