@@ -1,7 +1,7 @@
-package kb.summarization_test
+package pb.summarization_test
 
 import rego.v1
-import data.kb.summarization
+import data.pb.summarization
 
 # ── summarize_allowed ────────────────────────────────────────
 

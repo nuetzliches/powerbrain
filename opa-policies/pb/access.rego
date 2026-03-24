@@ -1,9 +1,9 @@
 # ============================================================
 #  Wissensdatenbank – OPA Rego Policies
-#  Paket: kb.access
+#  Paket: pb.access
 # ============================================================
 
-package kb.access
+package pb.access
 
 import rego.v1
 

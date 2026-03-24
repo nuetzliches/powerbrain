@@ -1,6 +1,6 @@
 # ============================================================
 #  Powerbrain – Layer Access Control Policies
-#  Package: kb.layers
+#  Package: pb.layers
 #
 #  Controls which context layers (L0/L1/L2) each agent role
 #  can access based on data classification:
@@ -14,7 +14,7 @@
 #  L0 for internal data.
 # ============================================================
 
-package kb.layers
+package pb.layers
 
 import rego.v1
 

@@ -12,7 +12,7 @@ CREATE TABLE knowledge_snapshots (
     description     TEXT,
     components      JSONB NOT NULL,
     -- Beispiel:
-    -- {"qdrant": {"collections": {"knowledge_general": "snap-id-abc"},
+    -- {"qdrant": {"collections": {"pb_general": "snap-id-abc"},
     --             "snapshot_urls": [...]},
     --  "postgres": {"tables": ["datasets","dataset_rows"], "row_counts": {...}},
     --  "opa": {"policy_commit": "abc123"}}

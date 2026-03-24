@@ -1,7 +1,7 @@
-package kb.proxy_test
+package pb.proxy_test
 
 import rego.v1
-import data.kb.proxy
+import data.pb.proxy
 
 # ── provider_allowed ─────────────────────────────────────────
 

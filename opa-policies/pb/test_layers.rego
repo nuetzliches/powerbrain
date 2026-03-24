@@ -1,11 +1,11 @@
 # ============================================================
-#  Tests for kb.layers
+#  Tests for pb.layers
 # ============================================================
 
-package kb.layers_test
+package pb.layers_test
 
 import rego.v1
-import data.kb.layers
+import data.pb.layers
 
 test_analyst_l1_confidential_allowed if {
     layers.layer_allowed with input as {

@@ -26,11 +26,11 @@ END
 $$;
 
 -- Default development key (only for local development!)
--- Key: kb_dev_localonly_do_not_use_in_production
+-- Key: pb_dev_localonly_do_not_use_in_production
 -- Hash: SHA-256 of the above
 INSERT INTO api_keys (key_hash, agent_id, agent_role, description)
 VALUES (
-    encode(sha256('kb_dev_localonly_do_not_use_in_production'::bytea), 'hex'),
+    '3eb7305e7f42d3a7645906d042ef0c57433388abeb2105031bd33d3cc0e51919',
     'dev-agent',
     'admin',
     'Default development key — DO NOT use in production'

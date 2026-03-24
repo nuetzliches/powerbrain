@@ -1,6 +1,6 @@
 # ============================================================
 #  Powerbrain – AI Provider Proxy Policies
-#  Package: kb.proxy
+#  Package: pb.proxy
 #
 #  Controls the AI Provider Proxy behavior:
 #  - Which agent roles may use the proxy
@@ -8,7 +8,7 @@
 #  - Max agent-loop iterations per role
 # ============================================================
 
-package kb.proxy
+package pb.proxy
 
 import rego.v1
 

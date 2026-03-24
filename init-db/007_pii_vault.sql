@@ -14,7 +14,7 @@ BEGIN
 END
 $$;
 
--- Dem kb_admin Zugriff gewähren (der Applikationsuser)
+-- Dem pb_admin Zugriff gewähren (der Applikationsuser)
 GRANT USAGE ON SCHEMA pii_vault TO mcp_vault_reader;
 
 -- ── Tabellen ───────────────────────────────────────────────
@@ -87,7 +87,7 @@ ALTER TABLE pii_vault.project_salts     ENABLE ROW LEVEL SECURITY;
 -- Audit-Log: auch der Table Owner darf nicht löschen
 ALTER TABLE pii_vault.vault_access_log FORCE ROW LEVEL SECURITY;
 
--- Policy: Nur mcp_vault_reader und der DB-Owner (kb_admin) dürfen zugreifen
+-- Policy: Nur mcp_vault_reader und der DB-Owner (pb_admin) dürfen zugreifen
 CREATE POLICY vault_content_read ON pii_vault.original_content
     FOR SELECT TO mcp_vault_reader USING (true);
 

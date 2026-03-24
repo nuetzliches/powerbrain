@@ -20,7 +20,7 @@ END
 $$;
 
 -- Grant connect + usage so mcp_auditor can query the table
-GRANT CONNECT ON DATABASE knowledgebase TO mcp_auditor;
+GRANT CONNECT ON DATABASE powerbrain TO mcp_auditor;
 GRANT USAGE ON SCHEMA public TO mcp_auditor;
 
 -- Enable RLS

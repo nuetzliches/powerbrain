@@ -1,6 +1,6 @@
 # ============================================================
 #  Powerbrain – Context Summarization Policies
-#  Package: kb.summarization
+#  Package: pb.summarization
 #
 #  Controls whether search results are summarized before
 #  delivery to agents. Supports three modes:
@@ -9,7 +9,7 @@
 #  - detail level: brief / standard / detailed
 # ============================================================
 
-package kb.summarization
+package pb.summarization
 
 import rego.v1
 

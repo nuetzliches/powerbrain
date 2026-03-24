@@ -12,10 +12,10 @@ CREATE TABLE classifications (
 );
 
 INSERT INTO classifications (name, level, description, access_policy) VALUES
-('public',       0, 'Frei zugänglich für alle Agenten', 'kb.access.public'),
-('internal',     1, 'Nur für interne Agenten',          'kb.access.internal'),
-('confidential', 2, 'Eingeschränkter Zugriff',          'kb.access.confidential'),
-('restricted',   3, 'Streng kontrolliert',               'kb.access.restricted');
+('public',       0, 'Frei zugänglich für alle Agenten', 'pb.access.public'),
+('internal',     1, 'Nur für interne Agenten',          'pb.access.internal'),
+('confidential', 2, 'Eingeschränkter Zugriff',          'pb.access.confidential'),
+('restricted',   3, 'Streng kontrolliert',               'pb.access.restricted');
 
 -- Datensätze (importierte CSV, JSON etc.)
 CREATE TABLE datasets (

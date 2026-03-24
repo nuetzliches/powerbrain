@@ -1,12 +1,12 @@
 # ============================================================
 #  Wissensdatenbank – Business Rules
-#  Paket: kb.rules
+#  Paket: pb.rules
 #  
 #  Strategien und Geschäftsregeln, die Agenten bei
 #  Entscheidungen berücksichtigen müssen.
 # ============================================================
 
-package kb.rules
+package pb.rules
 
 import rego.v1
 

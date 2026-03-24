@@ -29,7 +29,7 @@ CREATE TABLE eval_test_set (
     query             TEXT NOT NULL,
     expected_ids      TEXT[],           -- Bekannt relevante Dokument-IDs
     expected_keywords TEXT[],           -- Begriffe die im Ergebnis vorkommen sollten
-    collection        VARCHAR(100) DEFAULT 'knowledge_general',
+    collection        VARCHAR(100) DEFAULT 'pb_general',
     category          VARCHAR(50),      -- z.B. "pricing", "technical", "compliance"
     created_at        TIMESTAMPTZ DEFAULT now()
 );

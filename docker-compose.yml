@@ -8,7 +8,7 @@ version: "3.9"
 # ============================================================
 
 networks:
-  kb-net:
+  pb-net:
     driver: bridge
 
 volumes:
@@ -40,7 +40,7 @@ services:
   # ── Qdrant (Vektordatenbank) ──────────────────────────────
   qdrant:
     image: qdrant/qdrant:latest
-    container_name: kb-qdrant
+    container_name: pb-qdrant
     ports:
       - "6333:6333"
       - "6334:6334"
@@ -49,7 +49,7 @@ services:
     environment:
       QDRANT__SERVICE__GRPC_PORT: 6334
     networks:
-      - kb-net
+      - pb-net
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
@@ -60,7 +60,7 @@ services:
   # ── PostgreSQL + Apache AGE ───────────────────────────────
   postgres:
     image: apache/age:release_PG16_1.6.0
-    container_name: kb-postgres
+    container_name: pb-postgres
     ports:
       - "5432:5432"
     volumes:
@@ -69,14 +69,14 @@ services:
     secrets:
       - pg_password
     environment:
-      POSTGRES_DB: knowledgebase
-      POSTGRES_USER: kb_admin
+      POSTGRES_DB: powerbrain
+      POSTGRES_USER: pb_admin
       POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
     networks:
-      - kb-net
+      - pb-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U kb_admin -d knowledgebase"]
+      test: ["CMD-SHELL", "pg_isready -U pb_admin -d powerbrain"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -84,11 +84,11 @@ services:
   # ── postgres-exporter (Prometheus Metriken für PG) ────────
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:latest
-    container_name: kb-postgres-exporter
+    container_name: pb-postgres-exporter
     environment:
-      DATA_SOURCE_NAME: "postgresql://kb_admin:${PG_PASSWORD:-changeme_in_production}@postgres:5432/knowledgebase?sslmode=disable"
+      DATA_SOURCE_NAME: "postgresql://pb_admin:${PG_PASSWORD:-changeme_in_production}@postgres:5432/powerbrain?sslmode=disable"
     networks:
-      - kb-net
+      - pb-net
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,7 +97,7 @@ services:
   # ── Open Policy Agent ─────────────────────────────────────
   opa:
     image: openpolicyagent/opa:latest
-    container_name: kb-opa
+    container_name: pb-opa
     ports:
       - "8181:8181"
     volumes:
@@ -111,11 +111,11 @@ services:
       # Bundle-Polling nach Setup aktivieren:
       # - "--set=services.forgejo.url=${FORGEJO_URL:-http://forgejo.local:3000}"
       # - "--set=services.forgejo.credentials.bearer.token=${FORGEJO_TOKEN}"
-      # - "--set=bundles.kb.service=forgejo"
-      # - "--set=bundles.kb.resource=/api/v1/repos/kb-org/kb-policies/raw/bundle.tar.gz"
-      # - "--set=bundles.kb.polling.min_delay_seconds=10"
+      # - "--set=bundles.pb.service=forgejo"
+      # - "--set=bundles.pb.resource=/api/v1/repos/pb-org/pb-policies/raw/bundle.tar.gz"
+      # - "--set=bundles.pb.polling.min_delay_seconds=10"
     networks:
-      - kb-net
+      - pb-net
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "/opa", "eval", "true"]
@@ -126,13 +126,13 @@ services:
   # ── Ollama (Embeddings) ───────────────────────────────────
   ollama:
     image: ollama/ollama:latest
-    container_name: kb-ollama
+    container_name: pb-ollama
     ports:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
     networks:
-      - kb-net
+      - pb-net
     restart: unless-stopped
     # GPU-Support (deaktiviert – NVIDIA Container Toolkit nicht verfügbar)
     # deploy:
@@ -148,7 +148,7 @@ services:
     build:
       context: ./reranker
       dockerfile: Dockerfile
-    container_name: kb-reranker
+    container_name: pb-reranker
     ports:
       - "8082:8082"
     environment:
@@ -156,7 +156,7 @@ services:
       RERANKER_MAX_BATCH: "128"
       RERANKER_DEFAULT_TOP_N: "10"
     networks:
-      - kb-net
+      - pb-net
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
@@ -170,7 +170,7 @@ services:
     build:
       context: .
       dockerfile: mcp-server/Dockerfile
-    container_name: kb-mcp-server
+    container_name: pb-mcp-server
     ports:
       - "8080:8080"   # MCP Streamable HTTP
       - "9091:9091"   # Prometheus /metrics
@@ -180,7 +180,7 @@ services:
       - forgejo_token
     environment:
       QDRANT_URL:      http://qdrant:6333
-      POSTGRES_URL:    postgresql://kb_admin:${PG_PASSWORD:-changeme_in_production}@postgres:5432/knowledgebase
+      POSTGRES_URL:    postgresql://pb_admin:${PG_PASSWORD:-changeme_in_production}@postgres:5432/powerbrain
       OPA_URL:         http://opa:8181
       OLLAMA_URL:      http://ollama:11434
       EMBEDDING_PROVIDER_URL: ${EMBEDDING_PROVIDER_URL:-http://ollama:11434}
@@ -211,7 +211,7 @@ services:
       opa:
         condition: service_healthy
     networks:
-      - kb-net
+      - pb-net
     restart: unless-stopped
 
   # ── Ingestion Pipeline ────────────────────────────────────
@@ -219,7 +219,7 @@ services:
     build:
       context: .
       dockerfile: ingestion/Dockerfile
-    container_name: kb-ingestion
+    container_name: pb-ingestion
     ports:
       - "8081:8081"
     secrets:
@@ -227,7 +227,7 @@ services:
       - forgejo_token
     environment:
       QDRANT_URL:    http://qdrant:6333
-      POSTGRES_URL:  postgresql://kb_admin:${PG_PASSWORD:-changeme_in_production}@postgres:5432/knowledgebase
+      POSTGRES_URL:  postgresql://pb_admin:${PG_PASSWORD:-changeme_in_production}@postgres:5432/powerbrain
       OPA_URL:       http://opa:8181
       OLLAMA_URL:    http://ollama:11434
       EMBEDDING_PROVIDER_URL: ${EMBEDDING_PROVIDER_URL:-http://ollama:11434}
@@ -246,13 +246,13 @@ services:
       postgres:
         condition: service_healthy
     networks:
-      - kb-net
+      - pb-net
     restart: unless-stopped
 
   # ── Prometheus ────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:latest
-    container_name: kb-prometheus
+    container_name: pb-prometheus
     ports:
       - "9090:9090"
     volumes:
@@ -265,13 +265,13 @@ services:
       - "--storage.tsdb.retention.time=30d"
       - "--web.enable-lifecycle"
     networks:
-      - kb-net
+      - pb-net
     restart: unless-stopped
 
   # ── Grafana ───────────────────────────────────────────────
   grafana:
     image: grafana/grafana:latest
-    container_name: kb-grafana
+    container_name: pb-grafana
     ports:
       - "3001:3000"
     volumes:
@@ -284,7 +284,7 @@ services:
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       PG_PASSWORD: ${PG_PASSWORD:-changeme_in_production}
     networks:
-      - kb-net
+      - pb-net
     restart: unless-stopped
     depends_on:
       - prometheus
@@ -292,7 +292,7 @@ services:
   # ── Grafana Tempo (Distributed Tracing) ──────────────────
   tempo:
     image: grafana/tempo:2.7.2
-    container_name: kb-tempo
+    container_name: pb-tempo
     command: ["-config.file=/etc/tempo/tempo.yml"]
     volumes:
       - ./monitoring/tempo.yml:/etc/tempo/tempo.yml:ro
@@ -301,7 +301,7 @@ services:
       - "4317:4317"   # OTLP gRPC (von Services genutzt)
       - "3200:3200"   # Tempo HTTP API (Grafana Query)
     networks:
-      - kb-net
+      - pb-net
     restart: unless-stopped
 
   # ── Testdata Seed (nur mit --profile seed) ────────────────
@@ -310,7 +310,7 @@ services:
     build:
       context: ./testdata
       dockerfile: Dockerfile
-    container_name: kb-seed
+    container_name: pb-seed
     environment:
       INGESTION_URL:   http://ingestion:8081
       OLLAMA_URL:      http://ollama:11434
@@ -331,7 +331,7 @@ services:
       ollama:
         condition: service_started
     networks:
-      - kb-net
+      - pb-net
     restart: "no"
 
   # ── AI Provider Proxy (optional) ──────────────────────────
@@ -340,7 +340,7 @@ services:
     build:
       context: ./pb-proxy
       dockerfile: Dockerfile
-    container_name: kb-proxy
+    container_name: pb-proxy
     ports:
       - "${PROXY_PORT:-8090}:8090"
     secrets:
@@ -349,7 +349,7 @@ services:
       - pg_password
     environment:
       MCP_SERVER_URL:          http://mcp-server:8080/mcp
-      MCP_AUTH_TOKEN:           ${MCP_AUTH_TOKEN:-kb_dev_localonly_do_not_use_in_production}
+      MCP_AUTH_TOKEN:           ${MCP_AUTH_TOKEN:-pb_dev_localonly_do_not_use_in_production}
       OPA_URL:                 http://opa:8181
       LITELLM_CONFIG:          /app/litellm_config.yaml
       PROXY_HOST:              "0.0.0.0"
@@ -386,7 +386,7 @@ services:
       postgres:
         condition: service_healthy
     networks:
-      - kb-net
+      - pb-net
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
@@ -397,7 +397,7 @@ services:
   # ── vLLM (optional, replaces Ollama for LLM/VLM) ──────────
   vllm:
     image: vllm/vllm-openai:latest
-    container_name: kb-vllm
+    container_name: pb-vllm
     profiles: ["gpu"]
     ports:
       - "8000:8000"
@@ -420,13 +420,13 @@ services:
               count: 1
               capabilities: [gpu]
     networks:
-      - kb-net
+      - pb-net
     restart: unless-stopped
 
   # ── HF Text Embeddings Inference (optional) ───────────────
   tei:
     image: ghcr.io/huggingface/text-embeddings-inference:latest
-    container_name: kb-tei
+    container_name: pb-tei
     profiles: ["gpu"]
     ports:
       - "8010:80"
@@ -445,14 +445,14 @@ services:
               count: 1
               capabilities: [gpu]
     networks:
-      - kb-net
+      - pb-net
     restart: unless-stopped
 
   # ── Caddy (TLS Reverse Proxy, optional) ───────────────────
   caddy:
     profiles: ["tls"]
     image: caddy:2-alpine
-    container_name: kb-caddy
+    container_name: pb-caddy
     ports:
       - "80:80"
       - "443:443"
@@ -463,7 +463,7 @@ services:
     environment:
       DOMAIN: ${DOMAIN:-localhost}
     networks:
-      - kb-net
+      - pb-net
     restart: unless-stopped
     depends_on:
       - mcp-server

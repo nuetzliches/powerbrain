@@ -1,12 +1,12 @@
 # ============================================================
 #  Wissensdatenbank – DSGVO / Datenschutz Policies
-#  Paket: kb.privacy
+#  Paket: pb.privacy
 #
 #  Regelt: Zweckbindung, PII-Zugriff, Aufbewahrungsfristen,
 #  Recht auf Löschung, Datenminimierung
 # ============================================================
 
-package kb.privacy
+package pb.privacy
 
 import rego.v1
 
