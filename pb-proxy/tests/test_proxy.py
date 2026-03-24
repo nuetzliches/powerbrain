@@ -16,7 +16,9 @@ def mock_deps():
          patch("proxy.router_acompletion") as mock_router_acompletion, \
          patch("proxy.direct_acompletion") as mock_direct_acompletion, \
          patch("proxy.known_aliases", {"gpt-4o", "claude-opus", "gpt-4", "claude-sonnet"}) as mock_aliases, \
-         patch("proxy.pii_http_client") as mock_pii_http:
+         patch("proxy.pii_http_client") as mock_pii_http, \
+         patch("proxy.key_verifier") as mock_verifier, \
+         patch("config.AUTH_REQUIRED", False):
 
         mock_injector.merge_tools = MagicMock(return_value=[
             {"type": "function", "function": {"name": "search_knowledge"}},
@@ -216,23 +218,7 @@ def test_agent_loop_receives_acompletion(client, mock_deps):
     assert call_kwargs.kwargs.get("acompletion") is mock_deps["router_acompletion"]
 
 
-# ── User API Key Passthrough Tests ───────────────────────────
-
-
-def test_user_api_key_passed_to_agent_loop(client, mock_deps):
-    """Bearer token from Authorization header is forwarded as api_key."""
-    response = client.post(
-        "/v1/chat/completions",
-        json={
-            "model": "claude-sonnet",
-            "messages": [{"role": "user", "content": "Hello"}],
-        },
-        headers={"Authorization": "Bearer sk-ant-user-key-123"},
-    )
-    assert response.status_code == 200
-    # Verify api_key was passed through litellm_kwargs to loop.run
-    run_call = mock_deps["loop"].run.call_args
-    assert run_call.kwargs.get("api_key") == "sk-ant-user-key-123"
+# ── User API Key Tests ───────────────────────────────────────
 
 
 def test_no_auth_header_means_no_api_key_override(client, mock_deps):
@@ -414,7 +400,7 @@ def test_passthrough_model_uses_direct_completion(mock_deps):
 
 
 def test_passthrough_no_key_returns_401(mock_deps):
-    """Passthrough model with no API key returns 401."""
+    """Passthrough model with no API key configured returns 401."""
     with patch.dict("config.PROVIDER_KEY_MAP", {}, clear=True):
         from proxy import app
         client = TestClient(app)
@@ -427,24 +413,6 @@ def test_passthrough_no_key_returns_401(mock_deps):
         )
         assert response.status_code == 401
         assert "cohere" in response.json()["detail"].lower()
-
-
-def test_passthrough_user_key_overrides_env(mock_deps):
-    """User Bearer token is used even when env var key exists for passthrough."""
-    with patch.dict("config.PROVIDER_KEY_MAP", {"anthropic": "central-key-12345"}):
-        from proxy import app
-        client = TestClient(app)
-        response = client.post(
-            "/v1/chat/completions",
-            json={
-                "model": "anthropic/claude-opus-4-20250514",
-                "messages": [{"role": "user", "content": "Hello"}],
-            },
-            headers={"Authorization": "Bearer sk-ant-user-key-override"},
-        )
-        assert response.status_code == 200
-        run_call = mock_deps["loop"].run.call_args
-        assert run_call.kwargs.get("api_key") == "sk-ant-user-key-override"
 
 
 def test_unknown_model_no_prefix_returns_400(mock_deps):

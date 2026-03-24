@@ -38,6 +38,7 @@ from pii_middleware import (
     generate_session_salt,
     build_system_hint,
 )
+from auth import ProxyKeyVerifier
 
 # ── Logging ──────────────────────────────────────────────────
 
@@ -88,6 +89,7 @@ router_acompletion: Any = None      # LiteLLM Router (for aliases)
 direct_acompletion: Any = None      # LiteLLM direct (for passthrough)
 model_list: list[dict[str, Any]] = []
 known_aliases: set[str] = set()     # Model names configured in Router
+key_verifier = ProxyKeyVerifier()
 
 
 # ── OPA Helper ───────────────────────────────────────────────
@@ -170,6 +172,12 @@ async def lifespan(app: FastAPI):
     prom_start_http_server(config.METRICS_PORT)
     log.info("Prometheus metrics on port %d", config.METRICS_PORT)
 
+    if config.AUTH_REQUIRED:
+        await key_verifier.start()
+        log.info("Proxy authentication enabled (AUTH_REQUIRED=true)")
+    else:
+        log.warning("Proxy authentication DISABLED (AUTH_REQUIRED=false)")
+
     try:
         await tool_injector.start()
     except Exception as e:
@@ -182,6 +190,8 @@ async def lifespan(app: FastAPI):
     yield
 
     await tool_injector.stop()
+    if config.AUTH_REQUIRED:
+        await key_verifier.stop()
     await http_client.aclose()
     await pii_http_client.aclose()
     log.info("pb-proxy shut down")
@@ -229,7 +239,7 @@ async def list_models():
     return {"object": "list", "data": data}
 
 
-def _resolve_provider_key(model: str, user_api_key: str | None) -> tuple[Any, dict[str, Any]]:
+def _resolve_provider_key(model: str) -> tuple[Any, dict[str, Any]]:
     """Determine which acompletion callable + extra kwargs to use.
 
     For known aliases: use Router.
@@ -241,8 +251,6 @@ def _resolve_provider_key(model: str, user_api_key: str | None) -> tuple[Any, di
 
     if model in known_aliases:
         acompletion = router_acompletion or direct_acompletion
-        if user_api_key:
-            extra_kwargs["api_key"] = user_api_key
         return acompletion, extra_kwargs
 
     # Passthrough: model must be "provider/model-name" format
@@ -258,17 +266,14 @@ def _resolve_provider_key(model: str, user_api_key: str | None) -> tuple[Any, di
 
     provider = model.split("/")[0]
 
-    # Resolve API key: user token → provider env var → reject
-    if user_api_key:
-        extra_kwargs["api_key"] = user_api_key
-    elif provider in config.PROVIDER_KEY_MAP:
+    # Resolve API key: provider env var → reject
+    if provider in config.PROVIDER_KEY_MAP:
         extra_kwargs["api_key"] = config.PROVIDER_KEY_MAP[provider]
     else:
         raise HTTPException(
             status_code=401,
             detail=f"No API key configured for provider '{provider}'. "
-                   f"Send your key via Authorization header or configure "
-                   f"{provider.upper()}_API_KEY as env var / Docker Secret.",
+                   f"Configure {provider.upper()}_API_KEY as env var / Docker Secret.",
         )
 
     return direct_acompletion, extra_kwargs
@@ -279,21 +284,31 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
     start_time = time.monotonic()
     is_streaming = request.stream
 
-    # Extract provider API key from Authorization header (if present).
-    # Falls back to centrally configured key (Docker Secret) when absent.
-    # Only use user key if it looks valid (starts with sk-ant- for Anthropic).
-    user_api_key: str | None = None
-    auth_header = raw_request.headers.get("authorization", "")
-    if auth_header.lower().startswith("bearer "):
-        token = auth_header[7:].strip()
-        # Only accept keys that start with provider prefix (e.g. sk-ant- for Anthropic)
-        # This filters out dummy/empty tokens from config UI
-        if token and len(token) > 10 and ("-" in token or token.startswith("sk")):
-            user_api_key = token
-            log.info("Using user-provided API key for model: %s", request.model)
+    # ── Authentication ────────────────────────────────────────
+    agent_id: str = "anonymous"
+    agent_role: str = "developer"
+    user_api_key: str | None = None  # For MCP server identity propagation
 
-    # TODO: Extract agent_role from auth (for now default to "developer")
-    agent_role = "developer"
+    auth_header = raw_request.headers.get("authorization", "")
+    bearer_token: str | None = None
+    if auth_header.lower().startswith("bearer "):
+        bearer_token = auth_header[7:].strip()
+
+    if config.AUTH_REQUIRED:
+        if not bearer_token:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        verified = await key_verifier.verify(bearer_token)
+        if verified is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired API key")
+        agent_id = verified["agent_id"]
+        agent_role = verified["agent_role"]
+        user_api_key = bearer_token  # Will be forwarded to MCP servers
+        log.info("Authenticated: agent_id=%s, agent_role=%s", agent_id, agent_role)
+    else:
+        # Legacy mode: no auth, hardcoded developer role
+        # Still check if bearer looks like a provider key for backward compat
+        if bearer_token and len(bearer_token) > 10 and ("-" in bearer_token or bearer_token.startswith("sk")):
+            user_api_key = bearer_token
 
     # OPA policy check
     policy = await check_opa_policy(agent_role, request.model)
@@ -378,9 +393,7 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
         litellm_kwargs["top_p"] = request.top_p
 
     # Resolve routing: alias → Router, provider/model → direct
-    acompletion, routing_kwargs = _resolve_provider_key(
-        model=request.model, user_api_key=user_api_key,
-    )
+    acompletion, routing_kwargs = _resolve_provider_key(model=request.model)
     litellm_kwargs.update(routing_kwargs)
 
     # Run agent loop
