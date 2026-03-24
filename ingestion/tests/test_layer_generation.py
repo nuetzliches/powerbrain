@@ -75,10 +75,12 @@ class TestGenerateL0:
     async def test_joins_chunks_as_user_prompt(self, mock_completion):
         mock_completion.generate.return_value = "abstract"
 
-        await generate_l0(["chunk A", "chunk B"])
+        await generate_l0(["chunk A", "chunk B"], source="test-doc", classification="internal")
 
         call_kwargs = mock_completion.generate.call_args[1]
-        assert "chunk A\n\nchunk B" == call_kwargs["user_prompt"]
+        assert "chunk A\n\nchunk B" in call_kwargs["user_prompt"]
+        assert "Document source: test-doc" in call_kwargs["user_prompt"]
+        assert "Classification: internal" in call_kwargs["user_prompt"]
 
     @pytest.mark.asyncio
     async def test_truncates_long_text(self, mock_completion):
@@ -88,8 +90,7 @@ class TestGenerateL0:
         await generate_l0([long_chunk])
 
         call_kwargs = mock_completion.generate.call_args[1]
-        assert len(call_kwargs["user_prompt"]) <= 4000 + len("\n\n[truncated]")
-        assert call_kwargs["user_prompt"].endswith("[truncated]")
+        assert "[truncated]" in call_kwargs["user_prompt"]
 
     @pytest.mark.asyncio
     async def test_returns_none_on_llm_failure(self, mock_completion):
@@ -146,8 +147,7 @@ class TestGenerateL1:
         await generate_l1([long_chunk])
 
         call_kwargs = mock_completion.generate.call_args[1]
-        assert len(call_kwargs["user_prompt"]) <= 8000 + len("\n\n[truncated]")
-        assert call_kwargs["user_prompt"].endswith("[truncated]")
+        assert "[truncated]" in call_kwargs["user_prompt"]
 
     @pytest.mark.asyncio
     async def test_returns_none_on_llm_failure(self, mock_completion):

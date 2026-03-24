@@ -313,7 +313,7 @@ L1_SYSTEM_PROMPT = (
 )
 
 
-async def generate_l0(chunks: list[str]) -> str | None:
+async def generate_l0(chunks: list[str], source: str = "", classification: str = "") -> str | None:
     """Generate a short L0 abstract (~100 tokens) from document chunks.
 
     Returns None if LLM is unavailable or generation fails (graceful degradation).
@@ -325,11 +325,16 @@ async def generate_l0(chunks: list[str]) -> str | None:
         # Truncate to ~4000 chars to stay within context limits
         if len(full_text) > 4000:
             full_text = full_text[:4000] + "\n\n[truncated]"
+        user_prompt = (
+            f"Document source: {source}\n"
+            f"Classification: {classification}\n"
+            f"Full text (from {len(chunks)} chunks):\n\n{full_text}"
+        )
         result = await completion_provider.generate(
             http_client,
             model=LLM_MODEL,
             system_prompt=L0_SYSTEM_PROMPT,
-            user_prompt=full_text,
+            user_prompt=user_prompt,
         )
         return result
     except Exception as e:
@@ -337,7 +342,7 @@ async def generate_l0(chunks: list[str]) -> str | None:
         return None
 
 
-async def generate_l1(chunks: list[str]) -> str | None:
+async def generate_l1(chunks: list[str], source: str = "", classification: str = "") -> str | None:
     """Generate a structured L1 Markdown overview (~500 tokens) from document chunks.
 
     Returns None if LLM is unavailable or generation fails (graceful degradation).
@@ -349,11 +354,16 @@ async def generate_l1(chunks: list[str]) -> str | None:
         # Truncate to ~8000 chars to allow more detail for overview
         if len(full_text) > 8000:
             full_text = full_text[:8000] + "\n\n[truncated]"
+        user_prompt = (
+            f"Document source: {source}\n"
+            f"Classification: {classification}\n"
+            f"Full text (from {len(chunks)} chunks):\n\n{full_text}"
+        )
         result = await completion_provider.generate(
             http_client,
             model=LLM_MODEL,
             system_prompt=L1_SYSTEM_PROMPT,
-            user_prompt=full_text,
+            user_prompt=user_prompt,
         )
         return result
     except Exception as e:
@@ -526,7 +536,7 @@ async def ingest_text_chunks(
         now_iso = datetime.now(timezone.utc).isoformat()
 
         # L0: Abstract
-        l0_text = await generate_l0(processed_chunks)
+        l0_text = await generate_l0(processed_chunks, source=source, classification=classification)
         if l0_text:
             try:
                 l0_embedding = await get_embedding(l0_text)
@@ -555,7 +565,7 @@ async def ingest_text_chunks(
                 l0_point_id = None
 
         # L1: Overview
-        l1_text = await generate_l1(processed_chunks)
+        l1_text = await generate_l1(processed_chunks, source=source, classification=classification)
         if l1_text:
             try:
                 l1_embedding = await get_embedding(l1_text)
