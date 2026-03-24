@@ -289,6 +289,31 @@ async def get_pg_pool() -> asyncpg.Pool:
     return pg_pool
 
 
+# ── Qdrant Filter Builder ───────────────────────────────────
+
+def _build_qdrant_filter(filters: dict | None, layer: str | None = None) -> Filter | None:
+    """Build Qdrant Filter from user filters + optional layer constraint.
+
+    Args:
+        filters: Key-value pairs for exact-match payload filtering.
+        layer: Optional context layer (L0, L1, L2) to restrict results.
+
+    Returns:
+        A Qdrant Filter with must-conditions, or None if no conditions.
+    """
+    must_conditions = []
+    if filters:
+        must_conditions.extend(
+            FieldCondition(key=k, match=MatchValue(value=v))
+            for k, v in filters.items()
+        )
+    if layer:
+        must_conditions.append(
+            FieldCondition(key="layer", match=MatchValue(value=layer))
+        )
+    return Filter(must=must_conditions) if must_conditions else None
+
+
 # ── API-Key-Authentifizierung ────────────────────────────────
 
 class ApiKeyVerifier(TokenVerifier):
@@ -747,6 +772,11 @@ async def list_tools() -> list[Tool]:
                         "default": "standard",
                         "description": "Summary detail level (only used when summarize=true)",
                     },
+                    "layer": {
+                        "type": "string",
+                        "enum": ["L0", "L1", "L2"],
+                        "description": "Context layer: L0=abstract (~100 tokens), L1=overview (~1-2k tokens), L2=full chunks (default). Omit for all layers.",
+                    },
                 },
                 "required": ["query"]
             }
@@ -849,6 +879,11 @@ async def list_tools() -> list[Tool]:
                         "enum": ["brief", "standard", "detailed"],
                         "default": "standard",
                         "description": "Summary detail level",
+                    },
+                    "layer": {
+                        "type": "string",
+                        "enum": ["L0", "L1", "L2"],
+                        "description": "Context layer: L0=abstract (~100 tokens), L1=overview (~1-2k tokens), L2=full chunks (default). Omit for all layers.",
                     },
                 },
                 "required": ["query"]
@@ -957,6 +992,24 @@ async def list_tools() -> list[Tool]:
                 "required": []
             }
         ),
+        # ── Context Layers: get_document ────────────────────────────
+        Tool(
+            name="get_document",
+            description="Retrieve a specific document by ID at a given context layer. "
+                        "Use L0 for abstract (~100 tokens), L1 for overview (~1-2k tokens), "
+                        "L2 for full content chunks. Enables progressive context loading.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "doc_id":     {"type": "string",
+                                   "description": "Document ID (from search results metadata.doc_id)"},
+                    "layer":      {"type": "string", "enum": ["L0", "L1", "L2"], "default": "L1",
+                                   "description": "Context layer to retrieve"},
+                    "collection": {"type": "string", "default": "knowledge_general"},
+                },
+                "required": ["doc_id"]
+            }
+        ),
     ]
 
 
@@ -1008,12 +1061,10 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         pii_token  = arguments.get("pii_access_token")
         purpose    = arguments.get("purpose", "")
 
+        layer = arguments.get("layer")
         vector = await embed_text(query)
 
-        must_conditions = [
-            FieldCondition(key=k, match=MatchValue(value=v)) for k, v in filters.items()
-        ]
-        qdrant_filter = Filter(must=must_conditions) if must_conditions else None
+        qdrant_filter = _build_qdrant_filter(filters, layer)
         oversample_k  = top_k * OVERSAMPLE_FACTOR if RERANKER_ENABLED else top_k
 
         with _otel_span("qdrant.search"):
@@ -1264,15 +1315,16 @@ async def _dispatch(name: str, arguments: dict[str, Any],
     elif name == "get_code_context":
         query  = arguments["query"]
         top_k  = arguments.get("top_k", 5)
+        layer  = arguments.get("layer")
         vector = await embed_text(query)
 
-        filters_list = []
+        code_filters = {}
         if arguments.get("repo"):
-            filters_list.append(FieldCondition(key="repo", match=MatchValue(value=arguments["repo"])))
+            code_filters["repo"] = arguments["repo"]
         if arguments.get("language"):
-            filters_list.append(FieldCondition(key="language", match=MatchValue(value=arguments["language"])))
+            code_filters["language"] = arguments["language"]
 
-        qdrant_filter = Filter(must=filters_list) if filters_list else None
+        qdrant_filter = _build_qdrant_filter(code_filters or None, layer)
         oversample_k  = top_k * OVERSAMPLE_FACTOR if RERANKER_ENABLED else top_k
 
         results = await qdrant.query_points(
@@ -1598,6 +1650,50 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         return [TextContent(type="text",
             text=json.dumps({"snapshots": snapshots, "count": len(snapshots)},
                             ensure_ascii=False, indent=2, default=str))]
+
+    # ── get_document (Context Layers) ────────────────────────
+    elif name == "get_document":
+        doc_id = arguments["doc_id"]
+        layer = arguments.get("layer", "L1")
+        collection = arguments.get("collection", "knowledge_general")
+
+        doc_filter = Filter(must=[
+            FieldCondition(key="doc_id", match=MatchValue(value=doc_id)),
+            FieldCondition(key="layer", match=MatchValue(value=layer)),
+        ])
+
+        points, _ = await qdrant.scroll(
+            collection_name=collection, scroll_filter=doc_filter,
+            limit=100, with_payload=True,
+        )
+
+        # OPA access check
+        if points:
+            classification = points[0].payload.get("classification", "internal")
+            policy = await check_opa_policy(
+                agent_id, agent_role, f"document/{doc_id}", classification,
+            )
+            if not policy["allowed"]:
+                return [TextContent(type="text", text=json.dumps(
+                    {"error": "Access denied by policy", "classification": classification}))]
+
+        # Sort L2 by chunk_index
+        if layer == "L2":
+            points.sort(key=lambda p: p.payload.get("chunk_index", 0))
+
+        results = [{
+            "id": str(p.id),
+            "content": p.payload.get("text", ""),
+            "layer": p.payload.get("layer"),
+            "chunk_index": p.payload.get("chunk_index"),
+            "metadata": {k: v for k, v in p.payload.items()
+                         if k not in ("text", "content", "layer", "chunk_index")},
+        } for p in points]
+
+        response = {"doc_id": doc_id, "layer": layer, "results": results, "total": len(results)}
+        await log_access(agent_id, agent_role, "document", doc_id, "get_document", "allow",
+                         {"layer": layer, "collection": collection})
+        return [TextContent(type="text", text=json.dumps(response, indent=2, default=str))]
 
     return [TextContent(type="text", text=json.dumps({"error": f"Unbekanntes Tool: {name}"}))]
 
