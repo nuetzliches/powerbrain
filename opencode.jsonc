@@ -57,24 +57,24 @@
       "model": "github-copilot/claude-sonnet-4"
     },
     "explore": {
-      "model": "github-copilot/claude-haiku-4"
+      "model": "github-copilot/claude-haiku-4.5"
     },
     // ── System agents (hidden, automatic) ──
     "compaction": {
-      "model": "github-copilot/claude-haiku-4"
+      "model": "github-copilot/claude-haiku-4.5"
     },
     "title": {
-      "model": "github-copilot/claude-haiku-4"
+      "model": "github-copilot/claude-haiku-4.5"
     },
     "summary": {
-      "model": "github-copilot/claude-haiku-4"
+      "model": "github-copilot/claude-haiku-4.5"
     }
   },
   "mcp": {
     "powerbrain": {
       "type": "remote",
       "url": "http://localhost:8080/mcp",
-      "enabled": true,
+      "enabled": false,
       "oauth": false,
       "headers": {
         "Authorization": "Bearer kb_dev_localonly_do_not_use_in_production"
