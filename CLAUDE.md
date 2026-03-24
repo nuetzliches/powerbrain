@@ -308,6 +308,21 @@ docker exec kb-opa /opa eval \
 cd mcp-server && python3 -m pytest tests/ -v
 ```
 
+### E2E Smoke Tests
+Full-stack integration tests that start Docker Compose, seed data, and verify critical paths
+(auth, search pipeline, OPA policy, PII pseudonymization, knowledge graph).
+
+```bash
+# Requires Docker running — starts/stops full stack automatically
+RUN_INTEGRATION_TESTS=1 python3 -m pytest tests/integration/e2e/ -v
+
+# Run a single test class
+RUN_INTEGRATION_TESTS=1 python3 -m pytest tests/integration/e2e/test_smoke.py::TestSearchPipeline -v
+```
+
+Tests are gated behind `RUN_INTEGRATION_TESTS=1` and take ~90s (plus stack startup on first run).
+The `docker_stack` fixture calls `docker compose down -v` before and after the test session.
+
 ## Completed Features
 
 1. ✅ **Reranking** — Cross-Encoder service

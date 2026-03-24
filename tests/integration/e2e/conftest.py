@@ -31,9 +31,10 @@ QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 OPA_URL = os.getenv("OPA_URL", "http://localhost:8181")
 RERANKER_URL = os.getenv("RERANKER_URL", "http://localhost:8082")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+_pg_password = os.getenv("PG_PASSWORD", "changeme_in_production")
 POSTGRES_URL = os.getenv(
     "POSTGRES_URL",
-    "postgresql://kb_admin:changeme@localhost:5432/knowledgebase",
+    f"postgresql://kb_admin:{_pg_password}@localhost:5432/knowledgebase",
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]  # tests/integration/e2e -> project root
@@ -56,7 +57,7 @@ HEADERS_BASE = {
 
 # ── Helpers ──────────────────────────────────────────────────
 
-def _compose(*args: str) -> subprocess.CompletedProcess:
+def _compose(*args: str, timeout: int = 300) -> subprocess.CompletedProcess:
     """Run a docker compose command in the project root."""
     cmd = ["docker", "compose", *args]
     return subprocess.run(
@@ -64,7 +65,7 @@ def _compose(*args: str) -> subprocess.CompletedProcess:
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=timeout,
     )
 
 
@@ -114,7 +115,8 @@ def docker_stack():
 
 @pytest.fixture(scope="session")
 def wait_for_services(docker_stack):
-    """Wait until all services are healthy (max 120s)."""
+    """Wait until all services are healthy (max 180s total)."""
+    # Phase 1: wait for infrastructure services (120s)
     deadline = time.monotonic() + 120
     wait = 0.5
     pending = dict(HEALTH_ENDPOINTS)
@@ -126,22 +128,23 @@ def wait_for_services(docker_stack):
                 resp = httpx.get(url, timeout=5)
                 if resp.status_code < 500:
                     continue  # healthy
-            except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout):
+            except httpx.HTTPError:
                 pass
             still_pending[name] = url
 
         pending = still_pending
         if pending:
-            time.sleep(min(wait, deadline - time.monotonic()))
+            time.sleep(min(wait, max(0, deadline - time.monotonic())))
             wait = min(wait * 2, 10)
 
     if pending:
         names = ", ".join(pending.keys())
         pytest.fail(f"Services not ready after 120s: {names}")
 
-    # Also verify MCP server is reachable (POST-based)
+    # Phase 2: wait for MCP server (separate 60s deadline)
+    mcp_deadline = time.monotonic() + 60
     mcp_ok = False
-    while time.monotonic() < deadline:
+    while time.monotonic() < mcp_deadline:
         try:
             resp = httpx.post(
                 MCP_URL,
@@ -155,12 +158,12 @@ def wait_for_services(docker_stack):
             if resp.status_code < 500:
                 mcp_ok = True
                 break
-        except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout):
+        except httpx.HTTPError:
             pass
         time.sleep(1)
 
     if not mcp_ok:
-        pytest.fail("MCP server not reachable after 120s")
+        pytest.fail("MCP server not reachable after 60s")
 
 
 # ── Qdrant Collections ──────────────────────────────────────

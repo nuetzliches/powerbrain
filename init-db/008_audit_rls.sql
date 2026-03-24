@@ -13,6 +13,9 @@ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'mcp_auditor') THEN
         CREATE ROLE mcp_auditor NOLOGIN;
     END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'mcp_app') THEN
+        CREATE ROLE mcp_app NOLOGIN;
+    END IF;
 END
 $$;
 
