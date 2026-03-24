@@ -1,170 +1,134 @@
-"""Tests for MCP tool discovery and OpenAI schema conversion."""
+"""Tests for multi-server ToolInjector."""
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-import sys
-import os
+from dataclasses import dataclass
 
-# Add parent directory to path so we can import modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from tool_injection import ToolInjector, mcp_tool_to_openai
+from mcp_config import McpServerConfig
 
 
-# ── Schema conversion ────────────────────────────────────────
-
-def test_mcp_tool_to_openai_converts_correctly():
-    """MCP Tool schema converts to OpenAI function-calling format."""
-    mcp_tool = MagicMock()
-    mcp_tool.name = "search_knowledge"
-    mcp_tool.description = "Semantic search"
-    mcp_tool.inputSchema = {
-        "type": "object",
-        "properties": {
-            "query": {"type": "string"},
-            "top_k": {"type": "integer", "default": 10},
-        },
-        "required": ["query"],
-    }
-
-    result = mcp_tool_to_openai(mcp_tool)
-
-    assert result == {
-        "type": "function",
-        "function": {
-            "name": "search_knowledge",
-            "description": "Semantic search",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"},
-                    "top_k": {"type": "integer", "default": 10},
-                },
-                "required": ["query"],
-            },
-        },
-    }
+@dataclass
+class FakeTool:
+    name: str
+    description: str = "A test tool"
+    inputSchema: dict | None = None
 
 
-# ── Tool merge ───────────────────────────────────────────────
-
-def test_merge_tools_injects_powerbrain_tools():
-    """Powerbrain tools are added to client tools."""
-    injector = ToolInjector.__new__(ToolInjector)
-    injector._openai_tools = {
-        "search_knowledge": {
-            "type": "function",
-            "function": {
-                "name": "search_knowledge",
-                "description": "Search",
-                "parameters": {"type": "object"},
-            },
-        }
-    }
-
-    client_tools = [
-        {
-            "type": "function",
-            "function": {"name": "my_custom_tool", "description": "Custom"},
-        }
+@pytest.fixture
+def two_server_config():
+    """Two MCP server configs."""
+    return [
+        McpServerConfig(
+            name="powerbrain", url="http://mcp:8080/mcp",
+            auth="bearer", prefix="powerbrain", required=True,
+        ),
+        McpServerConfig(
+            name="github", url="http://github:3000/mcp",
+            auth="static", auth_token_env="GITHUB_TOKEN",
+            prefix="github", required=False,
+        ),
     ]
 
-    merged = injector.merge_tools(client_tools)
 
-    names = [t["function"]["name"] for t in merged]
-    assert "search_knowledge" in names
-    assert "my_custom_tool" in names
-    assert len(merged) == 2
+def test_tool_entry_from_prefix():
+    """ToolEntry stores server info and original name."""
+    from tool_injection import ToolEntry
+
+    entry = ToolEntry(
+        server_name="powerbrain",
+        original_name="search_knowledge",
+        schema={"type": "function", "function": {"name": "powerbrain_search_knowledge"}},
+        server_config=McpServerConfig(
+            name="powerbrain", url="http://mcp:8080/mcp",
+            auth="bearer", prefix="powerbrain", required=True,
+        ),
+    )
+    assert entry.server_name == "powerbrain"
+    assert entry.original_name == "search_knowledge"
 
 
-def test_merge_tools_powerbrain_wins_on_conflict():
-    """When client sends a tool with same name as Powerbrain tool, Powerbrain wins."""
+def test_resolve_tool_name_with_prefix():
+    """resolve_tool strips prefix and returns server + original name."""
+    from tool_injection import ToolInjector, ToolEntry
+
     injector = ToolInjector.__new__(ToolInjector)
-    injector._openai_tools = {
-        "search_knowledge": {
-            "type": "function",
-            "function": {
-                "name": "search_knowledge",
-                "description": "Powerbrain version",
-                "parameters": {"type": "object"},
-            },
-        }
+    injector._tools = {
+        "powerbrain_search_knowledge": ToolEntry(
+            server_name="powerbrain",
+            original_name="search_knowledge",
+            schema={},
+            server_config=McpServerConfig(
+                name="powerbrain", url="http://mcp:8080/mcp",
+                auth="bearer", prefix="powerbrain", required=True,
+            ),
+        ),
+        "github_list_repos": ToolEntry(
+            server_name="github",
+            original_name="list_repos",
+            schema={},
+            server_config=McpServerConfig(
+                name="github", url="http://github:3000/mcp",
+                auth="static", prefix="github", required=False,
+            ),
+        ),
     }
 
-    client_tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "search_knowledge",
-                "description": "Client override attempt",
-                "parameters": {},
-            },
-        }
-    ]
+    entry = injector.resolve_tool("powerbrain_search_knowledge")
+    assert entry is not None
+    assert entry.server_name == "powerbrain"
+    assert entry.original_name == "search_knowledge"
 
-    merged = injector.merge_tools(client_tools)
+    entry = injector.resolve_tool("github_list_repos")
+    assert entry is not None
+    assert entry.server_name == "github"
 
-    assert len(merged) == 1
-    assert merged[0]["function"]["description"] == "Powerbrain version"
+    entry = injector.resolve_tool("unknown_tool")
+    assert entry is None
 
 
-def test_merge_tools_empty_client_tools():
-    """When client sends no tools, only Powerbrain tools are returned."""
+def test_merge_tools_includes_all_servers():
+    """merge_tools includes tools from all servers with prefixed names."""
+    from tool_injection import ToolInjector, ToolEntry
+
     injector = ToolInjector.__new__(ToolInjector)
-    injector._openai_tools = {
-        "search_knowledge": {
-            "type": "function",
-            "function": {
-                "name": "search_knowledge",
-                "description": "Search",
-                "parameters": {"type": "object"},
-            },
-        }
+    injector._tools = {
+        "powerbrain_search": ToolEntry(
+            server_name="powerbrain", original_name="search",
+            schema={"type": "function", "function": {"name": "powerbrain_search", "description": "Search", "parameters": {}}},
+            server_config=McpServerConfig(name="powerbrain", url="u", prefix="powerbrain"),
+        ),
+        "github_list": ToolEntry(
+            server_name="github", original_name="list",
+            schema={"type": "function", "function": {"name": "github_list", "description": "List", "parameters": {}}},
+            server_config=McpServerConfig(name="github", url="u", prefix="github"),
+        ),
     }
 
     merged = injector.merge_tools(None)
-    assert len(merged) == 1
-
-    merged2 = injector.merge_tools([])
-    assert len(merged2) == 1
-
-
-# ── Tool name resolution ─────────────────────────────────────
+    names = {t["function"]["name"] for t in merged}
+    assert "powerbrain_search" in names
+    assert "github_list" in names
 
 
-def _make_injector_with_tools(*names: str) -> ToolInjector:
-    """Create a ToolInjector with given tool names (no MCP connection)."""
+def test_merge_tools_filters_by_allowed_servers():
+    """merge_tools with allowed_servers filter only includes allowed tools."""
+    from tool_injection import ToolInjector, ToolEntry
+
     injector = ToolInjector.__new__(ToolInjector)
-    injector._mcp_tools = {n: MagicMock() for n in names}
-    injector._openai_tools = {}
-    return injector
+    injector._tools = {
+        "powerbrain_search": ToolEntry(
+            server_name="powerbrain", original_name="search",
+            schema={"type": "function", "function": {"name": "powerbrain_search", "description": "Search", "parameters": {}}},
+            server_config=McpServerConfig(name="powerbrain", url="u", prefix="powerbrain"),
+        ),
+        "github_list": ToolEntry(
+            server_name="github", original_name="list",
+            schema={"type": "function", "function": {"name": "github_list", "description": "List", "parameters": {}}},
+            server_config=McpServerConfig(name="github", url="u", prefix="github"),
+        ),
+    }
 
-
-def test_resolve_exact_name():
-    """Exact tool name resolves directly."""
-    injector = _make_injector_with_tools("search_knowledge", "query_data")
-    assert injector.resolve_tool_name("search_knowledge") == "search_knowledge"
-    assert injector.resolve_tool_name("query_data") == "query_data"
-
-
-def test_resolve_prefixed_name():
-    """Prefixed tool names are stripped and resolved."""
-    injector = _make_injector_with_tools("search_knowledge", "query_data")
-    assert injector.resolve_tool_name("powerbrain_search_knowledge") == "search_knowledge"
-    assert injector.resolve_tool_name("kb_query_data") == "query_data"
-
-
-def test_resolve_unknown_name():
-    """Unknown tool name returns None."""
-    injector = _make_injector_with_tools("search_knowledge")
-    assert injector.resolve_tool_name("nonexistent_tool") is None
-    assert injector.resolve_tool_name("totally_unknown") is None
-
-
-def test_resolve_no_false_positive_on_underscored_tools():
-    """Tool names containing underscores don't match incorrectly."""
-    injector = _make_injector_with_tools("get_code_context")
-    # "get_code_context" should match exactly
-    assert injector.resolve_tool_name("get_code_context") == "get_code_context"
-    # "powerbrain_get_code_context" → strips "powerbrain_" → "get_code_context"
-    assert injector.resolve_tool_name("powerbrain_get_code_context") == "get_code_context"
+    merged = injector.merge_tools(None, allowed_servers=["powerbrain"])
+    names = {t["function"]["name"] for t in merged}
+    assert "powerbrain_search" in names
+    assert "github_list" not in names
