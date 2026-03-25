@@ -214,6 +214,13 @@ services:
       OTEL_ENABLED:    ${OTEL_ENABLED:-false}
       OTLP_ENDPOINT:   http://tempo:4317
       SUMMARIZATION_ENABLED: ${SUMMARIZATION_ENABLED:-true}
+      EMBEDDING_CACHE_SIZE: ${EMBEDDING_CACHE_SIZE:-2048}
+      EMBEDDING_CACHE_TTL: ${EMBEDDING_CACHE_TTL:-3600}
+      EMBEDDING_CACHE_ENABLED: ${EMBEDDING_CACHE_ENABLED:-true}
+      OPA_CACHE_TTL: ${OPA_CACHE_TTL:-60}
+      OPA_CACHE_ENABLED: ${OPA_CACHE_ENABLED:-true}
+      PG_POOL_MIN: ${PG_POOL_MIN:-2}
+      PG_POOL_MAX: ${PG_POOL_MAX:-10}
     depends_on:
       qdrant:
         condition: service_healthy
@@ -260,6 +267,11 @@ services:
       LLM_PROVIDER_URL: ${LLM_PROVIDER_URL:-http://ollama:11434}
       LLM_MODEL: ${LLM_MODEL:-qwen2.5:3b}
       LAYER_GENERATION_ENABLED: "${LAYER_GENERATION_ENABLED:-true}"
+      EMBEDDING_CACHE_SIZE: ${EMBEDDING_CACHE_SIZE:-2048}
+      EMBEDDING_CACHE_TTL: ${EMBEDDING_CACHE_TTL:-3600}
+      EMBEDDING_CACHE_ENABLED: ${EMBEDDING_CACHE_ENABLED:-true}
+      PG_POOL_MIN: ${PG_POOL_MIN:-2}
+      PG_POOL_MAX: ${PG_POOL_MAX:-10}
     depends_on:
       qdrant:
         condition: service_healthy
