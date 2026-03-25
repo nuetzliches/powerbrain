@@ -45,6 +45,11 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.llm_provider import EmbeddingProvider, CompletionProvider
 from shared.config import read_secret, build_postgres_url, PG_POOL_MIN, PG_POOL_MAX
+from shared.telemetry import (
+    init_telemetry, setup_auto_instrumentation, trace_operation,
+    request_telemetry_context, get_current_telemetry,
+    MetricsAggregator, TELEMETRY_IN_RESPONSE,
+)
 
 import graph_service as graph
 from graph_service import validate_identifier
@@ -84,8 +89,6 @@ MCP_HOST       = os.getenv("MCP_HOST", "0.0.0.0")
 MCP_PORT       = int(os.getenv("MCP_PORT", "8080"))
 MCP_PATH       = os.getenv("MCP_PATH", "/mcp")
 METRICS_PORT   = int(os.getenv("METRICS_PORT", "9091"))
-OTEL_ENABLED   = os.getenv("OTEL_ENABLED", "false").lower() == "true"
-OTLP_ENDPOINT  = os.getenv("OTLP_ENDPOINT", "http://tempo:4317")
 AUTH_REQUIRED  = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
 
 RATE_LIMIT_ENABLED    = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
@@ -153,29 +156,8 @@ mcp_rate_limit_rejected = Counter(
 )
 
 # ── OpenTelemetry Setup ──────────────────────────────────────
-tracer = None
-if OTEL_ENABLED:
-    try:
-        from opentelemetry import trace
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-
-        provider = TracerProvider()
-        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=OTLP_ENDPOINT)))
-        trace.set_tracer_provider(provider)
-        tracer = trace.get_tracer("pb-mcp-server")
-        log.info(f"OpenTelemetry Tracing aktiviert → {OTLP_ENDPOINT}")
-    except ImportError:
-        log.warning("opentelemetry-* Pakete nicht installiert, Tracing deaktiviert")
-
-
-def _otel_span(name: str):
-    """Context-Manager für einen OTel-Span, no-op wenn Tracing deaktiviert."""
-    if tracer:
-        return tracer.start_as_current_span(name)
-    from contextlib import nullcontext
-    return nullcontext()
+tracer = init_telemetry("pb-mcp-server")
+_metrics_agg = MetricsAggregator("mcp-server")
 
 
 # ── Rate Limiting ────────────────────────────────────────────
@@ -364,7 +346,8 @@ class ApiKeyVerifier(TokenVerifier):
     before_sleep=lambda rs: log.warning(f"Embed retry #{rs.attempt_number} nach Fehler: {rs.outcome.exception()}"),
 )
 async def embed_text(text: str) -> list[float]:
-    with _otel_span("embed_text"):
+    with trace_operation(tracer, "embedding", "mcp-server",
+                         model=EMBEDDING_MODEL, text_length=len(text)):
         cached = embedding_cache.get(text, EMBEDDING_MODEL)
         if cached is not None:
             return cached
@@ -398,7 +381,8 @@ async def summarize_text(
     combined = "\n\n---\n\n".join(f"Chunk {i+1}:\n{c}" for i, c in enumerate(chunks))
     user_prompt = f"Query: {query}\n\nText chunks to summarize:\n\n{combined}"
 
-    with _otel_span("summarize_text"):
+    with trace_operation(tracer, "summarization", "mcp-server",
+                         model=LLM_MODEL):
         try:
             return await llm_provider.generate(
                 http,
@@ -454,7 +438,8 @@ async def rerank_results(query: str, documents: list[dict], top_n: int) -> list[
     if not RERANKER_ENABLED or not documents:
         return documents[:top_n]
 
-    with _otel_span("rerank"):
+    with trace_operation(tracer, "reranking", "mcp-server",
+                         input_count=len(documents), top_n=top_n):
         try:
             resp = await http.post(f"{RERANKER_URL}/rerank", json={
                 "query": query,
@@ -489,7 +474,8 @@ async def rerank_results(query: str, documents: list[dict], top_n: int) -> list[
 async def check_opa_policy(agent_id: str, agent_role: str,
                            resource: str, classification: str,
                            action: str = "read") -> dict:
-    with _otel_span("opa_check"):
+    with trace_operation(tracer, "opa_policy", "mcp-server",
+                         role=agent_role, classification=classification):
         # Cache lookup — key is (role, classification, action) since
         # pb.access.allow only depends on these three fields.
         cache_key = f"{agent_role}:{classification}:{action}"
@@ -1064,13 +1050,27 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     t_start = time.perf_counter()
     status  = "ok"
 
-    with _otel_span(f"mcp.{name}"):
+    # Generate trace_id from OTel or fallback
+    import uuid as _uuid
+    trace_id = _uuid.uuid4().hex[:16]
+    if tracer:
         try:
-            result = await _dispatch(name, arguments, agent_id, agent_role)
-        except Exception as e:
-            log.error(f"Tool {name} fehlgeschlagen: {e}", exc_info=True)
-            status = "error"
-            result = [TextContent(type="text", text=json.dumps({"error": str(e)}))]
+            from opentelemetry import trace as _trace
+            span = _trace.get_current_span()
+            ctx = span.get_span_context()
+            if ctx.trace_id:
+                trace_id = format(ctx.trace_id, '032x')
+        except Exception:
+            pass
+
+    with request_telemetry_context(trace_id) as req_telemetry:
+        with trace_operation(tracer, f"mcp.{name}", "mcp-server", tool=name):
+            try:
+                result = await _dispatch(name, arguments, agent_id, agent_role)
+            except Exception as e:
+                log.error(f"Tool {name} fehlgeschlagen: {e}", exc_info=True)
+                status = "error"
+                result = [TextContent(type="text", text=json.dumps({"error": str(e)}))]
 
     elapsed = time.perf_counter() - t_start
     mcp_requests_total.labels(tool=name, status=status).inc()
@@ -1097,7 +1097,8 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         qdrant_filter = _build_qdrant_filter(filters, layer)
         oversample_k  = top_k * OVERSAMPLE_FACTOR if RERANKER_ENABLED else top_k
 
-        with _otel_span("qdrant.search"):
+        with trace_operation(tracer, "vector_search", "mcp-server",
+                             collection=collection, top_k=oversample_k):
             results = await qdrant.query_points(
                 collection_name=collection, query=vector,
                 query_filter=qdrant_filter, limit=oversample_k, with_payload=True,
@@ -1210,6 +1211,12 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         if summary is not None:
             response_data["summary"] = summary
         response_data["summary_policy"] = summary_policy
+
+        # Inject per-request telemetry
+        if TELEMETRY_IN_RESPONSE:
+            rt = get_current_telemetry()
+            if rt is not None:
+                response_data["_telemetry"] = rt.to_dict()
 
         return [TextContent(type="text",
             text=json.dumps(response_data, ensure_ascii=False, indent=2))]
@@ -1422,6 +1429,12 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         if summary is not None:
             response_data["summary"] = summary
         response_data["summary_policy"] = summary_policy
+
+        # Inject per-request telemetry
+        if TELEMETRY_IN_RESPONSE:
+            rt = get_current_telemetry()
+            if rt is not None:
+                response_data["_telemetry"] = rt.to_dict()
 
         return [TextContent(type="text",
             text=json.dumps(response_data, ensure_ascii=False, indent=2))]
