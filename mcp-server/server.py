@@ -76,6 +76,9 @@ SUMMARIZATION_ENABLED  = os.getenv("SUMMARIZATION_ENABLED", "true").lower() == "
 embedding_provider = EmbeddingProvider(base_url=EMBEDDING_PROVIDER_URL, api_key=EMBEDDING_API_KEY)
 llm_provider       = CompletionProvider(base_url=LLM_PROVIDER_URL, api_key=LLM_API_KEY)
 
+from shared.embedding_cache import EmbeddingCache
+embedding_cache = EmbeddingCache()
+
 MCP_HOST       = os.getenv("MCP_HOST", "0.0.0.0")
 MCP_PORT       = int(os.getenv("MCP_PORT", "8080"))
 MCP_PATH       = os.getenv("MCP_PATH", "/mcp")
@@ -361,7 +364,12 @@ class ApiKeyVerifier(TokenVerifier):
 )
 async def embed_text(text: str) -> list[float]:
     with _otel_span("embed_text"):
-        return await embedding_provider.embed(http, text, EMBEDDING_MODEL)
+        cached = embedding_cache.get(text, EMBEDDING_MODEL)
+        if cached is not None:
+            return cached
+        vector = await embedding_provider.embed(http, text, EMBEDDING_MODEL)
+        embedding_cache.set(text, EMBEDDING_MODEL, vector)
+        return vector
 
 
 async def summarize_text(
