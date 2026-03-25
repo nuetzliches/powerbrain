@@ -208,3 +208,101 @@ def trace_operation(
                 status=status,
                 metadata=attributes,
             ))
+
+
+# ── Metrics Aggregator ───────────────────────────────────────
+
+import math
+
+_service_start_time: float = time.time()
+
+
+def _histogram_percentile(buckets: list[tuple[float, float]], count: int, q: float) -> float:
+    """Approximate percentile from histogram bucket counts using linear interpolation."""
+    if count == 0:
+        return 0.0
+    target = q * count
+    prev_bound = 0.0
+    prev_count = 0.0
+    for bound, cum_count in buckets:
+        if cum_count >= target:
+            # Linear interpolation within this bucket
+            if cum_count == prev_count:
+                return bound
+            fraction = (target - prev_count) / (cum_count - prev_count)
+            return prev_bound + fraction * (bound - prev_bound)
+        prev_bound = bound
+        prev_count = cum_count
+    # Above all buckets
+    return buckets[-1][0] if buckets else 0.0
+
+
+class MetricsAggregator:
+    """Reads from Prometheus registry and returns structured JSON snapshot."""
+
+    def __init__(self, service_name: str, registry: Any = None):
+        self._service_name = service_name
+        self._registry = registry
+
+    def _get_registry(self) -> Any:
+        if self._registry is not None:
+            return self._registry
+        from prometheus_client import REGISTRY
+        return REGISTRY
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a structured dict of all metrics in the registry."""
+        registry = self._get_registry()
+        raw: dict[str, Any] = {}
+
+        for metric in registry.collect():
+            if metric.name.startswith("python_") or metric.name.startswith("process_"):
+                continue  # Skip default process metrics
+            for sample in metric.samples:
+                name = sample.name
+                labels = sample.labels
+                value = sample.value
+                if math.isnan(value) or math.isinf(value):
+                    continue
+
+                key = name
+                if labels:
+                    label_str = ",".join(f"{k}={v}" for k, v in sorted(labels.items()))
+                    key = f"{name}{{{label_str}}}"
+                raw[key] = value
+
+        return {
+            "service": self._service_name,
+            "uptime_seconds": round(time.time() - _service_start_time, 1),
+            "raw_metrics": raw,
+        }
+
+    def histogram_percentiles(
+        self, metric_name: str, label_filter: dict[str, str] | None = None,
+    ) -> dict[str, float]:
+        """Calculate p50/p95/p99 from a histogram metric."""
+        registry = self._get_registry()
+        buckets: list[tuple[float, float]] = []
+        count = 0
+
+        for metric in registry.collect():
+            if metric.name != metric_name:
+                continue
+            for sample in metric.samples:
+                if label_filter:
+                    if not all(sample.labels.get(k) == v for k, v in label_filter.items()):
+                        continue
+                if sample.name.endswith("_bucket"):
+                    le = sample.labels.get("le", "")
+                    if le == "+Inf":
+                        continue
+                    buckets.append((float(le), sample.value))
+                elif sample.name.endswith("_count"):
+                    count = int(sample.value)
+
+        buckets.sort(key=lambda x: x[0])
+        return {
+            "p50_ms": round(_histogram_percentile(buckets, count, 0.50) * 1000, 1),
+            "p95_ms": round(_histogram_percentile(buckets, count, 0.95) * 1000, 1),
+            "p99_ms": round(_histogram_percentile(buckets, count, 0.99) * 1000, 1),
+        }

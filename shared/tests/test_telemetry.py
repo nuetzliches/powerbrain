@@ -117,3 +117,69 @@ class TestTraceOperation:
         # Should not raise even without a request telemetry context
         with trace_operation(None, "orphan", "test"):
             pass
+
+
+class TestMetricsAggregator:
+    def test_snapshot_counter(self):
+        from prometheus_client import Counter, CollectorRegistry
+        from shared.telemetry import MetricsAggregator
+
+        registry = CollectorRegistry()
+        c = Counter("test_requests_total", "Test", ["status"], registry=registry)
+        c.labels(status="ok").inc(10)
+        c.labels(status="error").inc(2)
+
+        agg = MetricsAggregator("test-service", registry=registry)
+        snap = agg.snapshot()
+        assert snap["service"] == "test-service"
+        assert "uptime_seconds" in snap
+
+    def test_snapshot_histogram_percentiles(self):
+        from prometheus_client import Histogram, CollectorRegistry
+        from shared.telemetry import MetricsAggregator
+
+        registry = CollectorRegistry()
+        h = Histogram(
+            "test_duration_seconds", "Test", ["tool"],
+            buckets=[0.1, 0.5, 1.0, 5.0],
+            registry=registry,
+        )
+        for _ in range(100):
+            h.labels(tool="search").observe(0.3)
+
+        agg = MetricsAggregator("test-service", registry=registry)
+        snap = agg.snapshot()
+        # Should have raw metrics available
+        assert snap["service"] == "test-service"
+
+    def test_snapshot_empty_registry(self):
+        from prometheus_client import CollectorRegistry
+        from shared.telemetry import MetricsAggregator
+
+        registry = CollectorRegistry()
+        agg = MetricsAggregator("test-service", registry=registry)
+        snap = agg.snapshot()
+        assert snap["service"] == "test-service"
+        assert snap["raw_metrics"] == {}
+
+    def test_histogram_percentiles(self):
+        from prometheus_client import Histogram, CollectorRegistry
+        from shared.telemetry import MetricsAggregator
+
+        registry = CollectorRegistry()
+        h = Histogram(
+            "test_latency_seconds", "Test latency", ["tool"],
+            buckets=[0.1, 0.5, 1.0, 5.0],
+            registry=registry,
+        )
+        # All observations at 0.3 → should be in 0.1-0.5 bucket
+        for _ in range(100):
+            h.labels(tool="search").observe(0.3)
+
+        agg = MetricsAggregator("test-service", registry=registry)
+        pctls = agg.histogram_percentiles("test_latency_seconds", {"tool": "search"})
+        assert "p50_ms" in pctls
+        assert "p95_ms" in pctls
+        assert "p99_ms" in pctls
+        # All values at 0.3s → p50 should be close to 300ms
+        assert 100 < pctls["p50_ms"] < 500
