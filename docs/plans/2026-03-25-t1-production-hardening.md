@@ -709,7 +709,13 @@ This requires restructuring the loop. The new pattern:
         vault_refs.append(meta["vault_ref"])
 ```
 
-**Important:** The PII scan loop's early-return on `block` must be preserved. The `chunk` variable gets reassigned in the PII handling (pseudonymize/mask), so `processed_texts.append(chunk)` captures the final version.
+**Critical implementation notes:**
+
+1. **Early return on `block`:** The PII scan loop's early-return on `block` (line 448) must be preserved. It returns immediately before any embedding happens, so it doesn't interact with the batch logic.
+2. **Chunk mutation:** The `chunk` variable gets reassigned inside the PII handling (pseudonymize at line 483, mask at line 499). `processed_texts.append(chunk)` MUST come after all PII handling for that chunk to capture the final (pseudonymized/masked) version.
+3. **vault_ref tracking:** Each chunk's `vault_ref` is set during PII handling. The `chunk_metadata` list preserves this per-chunk data for point construction after batch embedding.
+4. **Existing `points` list:** Remove the `points.append(PointStruct(...))` from inside the current loop (line 521-523) and move it to the new batch-embed section. The `vault_refs.append()` at line 524 also moves.
+5. **Error handling:** If `embed_batch` fails, the entire `ingest_text_chunks()` call fails — this matches the current behavior where a single embedding failure fails the whole ingestion.
 
 - [ ] **Step 4: Run ingestion tests to verify**
 

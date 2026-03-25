@@ -10,3 +10,4 @@ build/
 .worktrees/
 secrets/*.txt
 nul
+=5.3

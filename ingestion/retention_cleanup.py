@@ -24,7 +24,7 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import PointIdsList
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from shared.config import build_postgres_url
+from shared.config import build_postgres_url, PG_POOL_MIN, PG_POOL_MAX
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("retention")
@@ -311,7 +311,7 @@ async def main():
     mode = "EXECUTE" if args.execute else "DRY-RUN"
     log.info(f"Retention Cleanup gestartet [{mode}]")
 
-    pool = await asyncpg.create_pool(POSTGRES_URL, min_size=1, max_size=5)
+    pool = await asyncpg.create_pool(POSTGRES_URL, min_size=PG_POOL_MIN, max_size=PG_POOL_MAX)
     qdrant = AsyncQdrantClient(url=QDRANT_URL)
 
     # 1. Abgelaufene Aufbewahrungsfristen

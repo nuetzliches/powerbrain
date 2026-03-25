@@ -59,6 +59,10 @@ INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8081")
 PII_SCAN_ENABLED = os.getenv("PII_SCAN_ENABLED", "true").lower() == "true"
 PII_SCAN_FORCED = os.getenv("PII_SCAN_FORCED", "false").lower() == "true"
 
+# ── Connection Pool ──────────────────────────────────────────
+PG_POOL_MIN = int(os.getenv("PG_POOL_MIN", "1"))
+PG_POOL_MAX = int(os.getenv("PG_POOL_MAX", "5"))
+
 # ── Authentication ───────────────────────────────────────────
 AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
 PG_HOST = os.getenv("PG_HOST", "postgres")

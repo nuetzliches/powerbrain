@@ -48,7 +48,7 @@ EMBEDDING_API_KEY      = os.getenv("EMBEDDING_API_KEY", "")
 import sys as _sys
 _sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.llm_provider import EmbeddingProvider, CompletionProvider
-from shared.config import build_postgres_url
+from shared.config import build_postgres_url, PG_POOL_MIN, PG_POOL_MAX
 
 POSTGRES_URL = build_postgres_url()
 
@@ -89,7 +89,7 @@ async def startup():
     qdrant = AsyncQdrantClient(url=QDRANT_URL)
     http_client = httpx.AsyncClient(timeout=60.0)
     try:
-        pg_pool = await asyncpg.create_pool(POSTGRES_URL, min_size=2, max_size=10)
+        pg_pool = await asyncpg.create_pool(POSTGRES_URL, min_size=PG_POOL_MIN, max_size=PG_POOL_MAX)
         log.info("PostgreSQL-Pool initialisiert")
     except Exception as e:
         log.error(f"PostgreSQL-Verbindung fehlgeschlagen: {e}")

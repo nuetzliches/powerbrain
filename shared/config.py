@@ -48,3 +48,9 @@ def build_postgres_url() -> str:
     password = read_secret("POSTGRES_PASSWORD", "changeme")
 
     return f"postgresql://{user}:{password}@{host}:{port}/{db}"
+
+
+# ── Connection Pool ──────────────────────────────────────────
+
+PG_POOL_MIN = int(os.getenv("PG_POOL_MIN", "2"))
+PG_POOL_MAX = int(os.getenv("PG_POOL_MAX", "10"))

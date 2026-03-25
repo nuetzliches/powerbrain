@@ -43,7 +43,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.llm_provider import EmbeddingProvider, CompletionProvider
-from shared.config import read_secret, build_postgres_url
+from shared.config import read_secret, build_postgres_url, PG_POOL_MIN, PG_POOL_MAX
 
 import graph_service as graph
 from graph_service import validate_identifier
@@ -1750,7 +1750,7 @@ if __name__ == "__main__":
         """Startup/shutdown lifecycle: PG pool, HTTP client, MCP session manager."""
         global pg_pool
         # ── Startup ──
-        pg_pool = await asyncpg.create_pool(POSTGRES_URL, min_size=2, max_size=10)
+        pg_pool = await asyncpg.create_pool(POSTGRES_URL, min_size=PG_POOL_MIN, max_size=PG_POOL_MAX)
         await pg_pool.fetchval("SELECT 1")
         log.info("PostgreSQL pool ready (%s)", POSTGRES_URL.split("@")[-1])
 

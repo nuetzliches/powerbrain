@@ -37,8 +37,8 @@ class ProxyKeyVerifier:
             database=config.PG_DATABASE,
             user=config.PG_USER,
             password=config.PG_PASSWORD,
-            min_size=1,
-            max_size=5,
+            min_size=config.PG_POOL_MIN,
+            max_size=config.PG_POOL_MAX,
         )
         log.info("ProxyKeyVerifier connected to PostgreSQL")
 
