@@ -17,10 +17,10 @@ from datetime import datetime, timedelta, timezone
 
 import asyncpg
 
-POSTGRES_URL = os.getenv(
-    "POSTGRES_URL",
-    "postgresql://pb_admin:changeme@localhost:5432/powerbrain",
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from shared.config import build_postgres_url
+
+POSTGRES_URL = build_postgres_url()
 KEY_PREFIX = "pb_"
 KEY_BYTES = 32  # 32 bytes = 64 hex chars
 

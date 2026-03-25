@@ -27,7 +27,7 @@ PROXY_PORT = int(os.getenv("PROXY_PORT", "8090"))
 
 # ── MCP Server ───────────────────────────────────────────────
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://mcp-server:8080/mcp")
-MCP_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN", "")
+MCP_AUTH_TOKEN = _read_secret("MCP_AUTH_TOKEN", "")
 
 # ── OPA ──────────────────────────────────────────────────────
 OPA_URL = os.getenv("OPA_URL", "http://opa:8181")

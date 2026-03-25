@@ -43,24 +43,18 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.llm_provider import EmbeddingProvider, CompletionProvider
+from shared.config import read_secret, build_postgres_url
 
 import graph_service as graph
 from graph_service import validate_identifier
 
 # ── Konfiguration ────────────────────────────────────────────
 
-def _read_secret(env_var: str, default: str = "") -> str:
-    """Read from Docker Secret file if available, else fall back to env var."""
-    file_path = os.getenv(f"{env_var}_FILE")
-    if file_path and os.path.isfile(file_path):
-        return open(file_path).read().strip()
-    return os.getenv(env_var, default)
-
 QDRANT_URL    = os.getenv("QDRANT_URL",    "http://localhost:6333")
-POSTGRES_URL  = os.getenv("POSTGRES_URL",  "postgresql://pb_admin:changeme@localhost:5432/powerbrain")
+POSTGRES_URL  = build_postgres_url()
 OPA_URL       = os.getenv("OPA_URL",       "http://localhost:8181")
 FORGEJO_URL   = os.getenv("FORGEJO_URL",   "http://forgejo.local:3000")
-FORGEJO_TOKEN = _read_secret("FORGEJO_TOKEN")
+FORGEJO_TOKEN = read_secret("FORGEJO_TOKEN")
 RERANKER_URL  = os.getenv("RERANKER_URL",  "http://reranker:8082")
 RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
 INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8081")
@@ -586,7 +580,7 @@ async def log_access(agent_id: str, agent_role: str,
 
 # ── Vault Access ────────────────────────────────────────────
 
-VAULT_HMAC_SECRET = _read_secret("VAULT_HMAC_SECRET", "change-me-in-production")
+VAULT_HMAC_SECRET = read_secret("VAULT_HMAC_SECRET", "change-me-in-production")
 
 
 def validate_pii_access_token(token: dict) -> dict:

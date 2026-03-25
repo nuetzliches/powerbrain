@@ -34,7 +34,6 @@ from snapshot_service import create_snapshot
 
 # ── Konfiguration ────────────────────────────────────────────
 QDRANT_URL   = os.getenv("QDRANT_URL",   "http://qdrant:6333")
-POSTGRES_URL = os.getenv("POSTGRES_URL",  "postgresql://pb_admin:changeme@postgres:5432/powerbrain")
 OPA_URL      = os.getenv("OPA_URL",       "http://opa:8181")
 RERANKER_URL = os.getenv("RERANKER_URL",  "http://reranker:8082")
 
@@ -49,6 +48,9 @@ EMBEDDING_API_KEY      = os.getenv("EMBEDDING_API_KEY", "")
 import sys as _sys
 _sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.llm_provider import EmbeddingProvider, CompletionProvider
+from shared.config import build_postgres_url
+
+POSTGRES_URL = build_postgres_url()
 
 embedding_provider = EmbeddingProvider(
     base_url=EMBEDDING_PROVIDER_URL, api_key=EMBEDDING_API_KEY

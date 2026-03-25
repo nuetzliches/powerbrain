@@ -34,6 +34,8 @@ secrets:
     file: ./secrets/github_pat.txt
   anthropic_api_key:
     file: ./secrets/anthropic_api_key.txt
+  mcp_auth_token:
+    file: ./secrets/mcp_auth_token.txt
 
 services:
 
@@ -180,7 +182,11 @@ services:
       - forgejo_token
     environment:
       QDRANT_URL:      http://qdrant:6333
-      POSTGRES_URL:    postgresql://pb_admin:${PG_PASSWORD:-changeme_in_production}@postgres:5432/powerbrain
+      POSTGRES_HOST:   postgres
+      POSTGRES_PORT:   "5432"
+      POSTGRES_USER:   pb_admin
+      POSTGRES_DB:     powerbrain
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
       OPA_URL:         http://opa:8181
       OLLAMA_URL:      http://ollama:11434
       EMBEDDING_PROVIDER_URL: ${EMBEDDING_PROVIDER_URL:-http://ollama:11434}
@@ -190,7 +196,6 @@ services:
       LLM_MODEL:       ${LLM_MODEL:-${SUMMARIZATION_MODEL:-qwen2.5:3b}}
       LLM_API_KEY:     ${LLM_API_KEY:-}
       FORGEJO_URL:     ${FORGEJO_URL:-http://forgejo.local:3000}
-      FORGEJO_TOKEN:   ${FORGEJO_TOKEN:-}
       FORGEJO_TOKEN_FILE: /run/secrets/forgejo_token
       VAULT_HMAC_SECRET_FILE: /run/secrets/vault_hmac_secret
       RERANKER_URL:    http://reranker:8082
@@ -227,14 +232,17 @@ services:
       - forgejo_token
     environment:
       QDRANT_URL:    http://qdrant:6333
-      POSTGRES_URL:  postgresql://pb_admin:${PG_PASSWORD:-changeme_in_production}@postgres:5432/powerbrain
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: pb_admin
+      POSTGRES_DB:   powerbrain
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
       OPA_URL:       http://opa:8181
       OLLAMA_URL:    http://ollama:11434
       EMBEDDING_PROVIDER_URL: ${EMBEDDING_PROVIDER_URL:-http://ollama:11434}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       FORGEJO_URL:   ${FORGEJO_URL:-http://forgejo.local:3000}
-      FORGEJO_TOKEN: ${FORGEJO_TOKEN:-}
       FORGEJO_TOKEN_FILE: /run/secrets/forgejo_token
       RERANKER_URL:  http://reranker:8082
       LLM_PROVIDER_URL: ${LLM_PROVIDER_URL:-http://ollama:11434}
@@ -347,9 +355,10 @@ services:
       - github_pat
       - anthropic_api_key
       - pg_password
+      - mcp_auth_token
     environment:
       MCP_SERVER_URL:          http://mcp-server:8080/mcp
-      MCP_AUTH_TOKEN:           ${MCP_AUTH_TOKEN:-pb_dev_localonly_do_not_use_in_production}
+      MCP_AUTH_TOKEN_FILE:     /run/secrets/mcp_auth_token
       OPA_URL:                 http://opa:8181
       LITELLM_CONFIG:          /app/litellm_config.yaml
       PROXY_HOST:              "0.0.0.0"
@@ -371,7 +380,7 @@ services:
       PG_PORT:                 "5432"
       PG_DATABASE:             powerbrain
       PG_USER:                 postgres
-      PG_PASSWORD:             ${PG_PASSWORD:-changeme}
+      PG_PASSWORD_FILE:        /run/secrets/pg_password
       MCP_SERVERS_CONFIG:      /app/mcp_servers.yaml
     volumes:
       - ./pb-proxy/litellm_config.yaml:/app/litellm_config.yaml:ro

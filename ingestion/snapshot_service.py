@@ -24,13 +24,16 @@ from datetime import datetime, timezone
 import httpx
 import asyncpg
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from shared.config import read_secret, build_postgres_url
+
 log = logging.getLogger("pb-snapshot")
 
 # ── Konfiguration ────────────────────────────────────────────
 QDRANT_URL   = os.getenv("QDRANT_URL",   "http://qdrant:6333")
-POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://pb_admin:changeme@postgres:5432/powerbrain")
+POSTGRES_URL = build_postgres_url()
 FORGEJO_URL  = os.getenv("FORGEJO_URL",  "http://forgejo.local:3000")
-FORGEJO_TOKEN = os.getenv("FORGEJO_TOKEN", "")
+FORGEJO_TOKEN = read_secret("FORGEJO_TOKEN")
 
 QDRANT_COLLECTIONS = ["pb_general", "pb_code", "pb_rules"]
 PG_SNAPSHOT_TABLES = ["datasets", "dataset_rows", "documents_meta"]

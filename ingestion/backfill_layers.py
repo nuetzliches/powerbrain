@@ -40,13 +40,11 @@ from qdrant_client.models import (
 # ── Path setup for shared/ imports ────────────────────────────
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.llm_provider import CompletionProvider, EmbeddingProvider
+from shared.config import build_postgres_url
 
 # ── Configuration ─────────────────────────────────────────────
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-POSTGRES_URL = os.getenv(
-    "POSTGRES_URL",
-    "postgresql://pb_admin:changeme_in_production@localhost:5432/powerbrain",
-)
+POSTGRES_URL = build_postgres_url()
 
 _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 LLM_PROVIDER_URL = os.getenv("LLM_PROVIDER_URL", _OLLAMA_URL)

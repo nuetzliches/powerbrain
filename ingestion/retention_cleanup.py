@@ -16,17 +16,21 @@ import argparse
 import json
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 
 import asyncpg
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import PointIdsList
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from shared.config import build_postgres_url
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("retention")
 
-POSTGRES_URL = "postgresql://pb_admin:changeme@localhost:5432/powerbrain"
-QDRANT_URL = "http://localhost:6333"
+POSTGRES_URL = build_postgres_url()
+QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 AUDIT_RETENTION_DAYS = int(os.getenv("AUDIT_RETENTION_DAYS", "365"))
 
 

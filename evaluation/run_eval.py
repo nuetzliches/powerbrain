@@ -26,10 +26,13 @@ from typing import Any
 import httpx
 import asyncpg
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from shared.config import build_postgres_url
+
 log = logging.getLogger("pb-eval")
 
 # ── Konfiguration ────────────────────────────────────────────
-POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://pb_admin:changeme@postgres:5432/powerbrain")
+POSTGRES_URL = build_postgres_url()
 MCP_BASE_URL = os.getenv("MCP_EVAL_URL", "http://mcp-server:8080")   # Direkt gegen Ingestion/Qdrant
 QDRANT_URL   = os.getenv("QDRANT_URL",   "http://qdrant:6333")
 RERANKER_URL = os.getenv("RERANKER_URL", "http://reranker:8082")
