@@ -69,7 +69,7 @@ EMBEDDING_API_KEY      = os.getenv("EMBEDDING_API_KEY", "")
 
 # ── LLM / Summarization provider ──
 LLM_PROVIDER_URL       = os.getenv("LLM_PROVIDER_URL", _OLLAMA_URL)
-LLM_MODEL              = os.getenv("LLM_MODEL", os.getenv("SUMMARIZATION_MODEL", "qwen2.5:3b"))
+LLM_MODEL              = os.getenv("LLM_MODEL", "qwen2.5:3b")
 LLM_API_KEY            = os.getenv("LLM_API_KEY", "")
 SUMMARIZATION_ENABLED  = os.getenv("SUMMARIZATION_ENABLED", "true").lower() == "true"
 

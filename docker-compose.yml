@@ -193,7 +193,7 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       LLM_PROVIDER_URL: ${LLM_PROVIDER_URL:-http://ollama:11434}
-      LLM_MODEL:       ${LLM_MODEL:-${SUMMARIZATION_MODEL:-qwen2.5:3b}}
+      LLM_MODEL:       ${LLM_MODEL:-qwen2.5:3b}
       LLM_API_KEY:     ${LLM_API_KEY:-}
       FORGEJO_URL:     ${FORGEJO_URL:-http://forgejo.local:3000}
       FORGEJO_TOKEN_FILE: /run/secrets/forgejo_token

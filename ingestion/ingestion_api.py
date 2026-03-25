@@ -58,7 +58,7 @@ embedding_provider = EmbeddingProvider(
 
 # ── LLM / Layer generation provider ──
 LLM_PROVIDER_URL = os.getenv("LLM_PROVIDER_URL", os.getenv("OLLAMA_URL", "http://pb-ollama:11434"))
-LLM_MODEL = os.getenv("LLM_MODEL", os.getenv("SUMMARIZATION_MODEL", "qwen2.5:3b"))
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:3b")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LAYER_GENERATION_ENABLED = os.getenv("LAYER_GENERATION_ENABLED", "true").lower() == "true"
 
