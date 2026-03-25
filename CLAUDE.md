@@ -151,7 +151,6 @@ Response includes `summary` (text) and `summary_policy` (`requested` | `enforced
 Graceful degradation: if LLM summarization fails → raw chunks returned.
 
 Config: `LLM_MODEL` (default: `qwen2.5:3b`), `SUMMARIZATION_ENABLED` (default: `true`).
-Backward compat: `SUMMARIZATION_MODEL` still read as fallback if `LLM_MODEL` not set.
 
 ### Sealed Vault (Dual Storage)
 PII data is stored in two tiers:
@@ -339,7 +338,7 @@ The `docker_stack` fixture calls `docker compose down -v` before and after the t
 12. ✅ **Proxy SSE Streaming** — Simulated streaming via SSE chunks for `stream: true` requests
 13. ✅ **Passthrough Routing** — Dual-mode model routing: aliases via Router + `provider/model` passthrough via direct LiteLLM
 14. ✅ **LLM Provider Abstraction** — OpenAI-compatible provider layer (`shared/llm_provider.py`), configurable backends for embedding + summarization, optional GPU stack (vLLM + TEI)
-15. ✅ **Context Layers (L0/L1/L2)** — Pre-computed abstracts (L0, ~100 tokens) and overviews (L1, ~500 tokens) at ingestion, `layer` param on search, `get_document` tool for drill-down, OPA layer access control (`pb.layers`)
+15. ✅ **Context Layers (L0/L1/L2)** — Pre-computed abstracts (L0, ~100 tokens) and overviews (L1, ~500 tokens) at ingestion, `layer` param on search, `get_document` tool for drill-down (progressive loading, no separate OPA policy — access controlled by `pb.access`)
 16. ✅ **Proxy Authentication** — API-key auth for proxy (`pb-proxy/auth.py`), identity propagation to MCP servers
 17. ✅ **Multi-MCP-Server Aggregation** — Proxy aggregates tools from N MCP servers with per-server auth, prefix namespacing, and OPA-controlled access (`pb.proxy.mcp_servers_allowed`)
 

@@ -339,13 +339,12 @@ Jedes Dokument wird bei der Ingestion in drei Kontext-Ebenen gespeichert:
 - `search_knowledge` und `get_code_context`: optionaler `layer`-Parameter (L0/L1/L2)
 - `get_document`: Drill-Down von L0 → L1 → L2 per `doc_id`
 
-**OPA-Zugriffssteuerung** (`pb.layers`):
-- Admin: immer L2
-- Nicht-Admin + confidential: max. L1
-- Nicht-Admin + restricted: max. L0
-- Viewer + internal: max. L0
+**Zugriffssteuerung:**
+Layers sind ein Progressive-Loading-Mechanismus, keine Sicherheitsschicht.
+Die bestehende `pb.access`-Policy kontrolliert ob ein Agent ein Dokument sehen darf.
+`pb.summarization` kontrolliert ob Rohtext oder nur Zusammenfassungen erlaubt sind.
+Jeder Agent mit Zugriff kann jede Layer-Ebene abfragen.
 
 **Konfiguration:**
 - `LAYER_GENERATION_ENABLED` (default: `true`) — Feature-Flag
 - `LLM_MODEL` (default: `qwen2.5:3b`) — Modell für L0/L1-Generierung
-- Backfill-Script: `ingestion/backfill_layers.py` für bestehende Daten
