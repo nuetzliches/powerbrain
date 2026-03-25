@@ -130,6 +130,40 @@ def test_list_models_empty_when_no_config(mock_deps):
         proxy.model_list = original
 
 
+def test_metrics_json_endpoint(client):
+    """GET /metrics/json returns structured metrics."""
+    response = client.get("/metrics/json")
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Check basic structure
+    assert "service" in data
+    assert "uptime_seconds" in data
+    assert "requests" in data
+    assert "latency" in data
+    assert "agent_loop" in data
+    assert "tool_calls" in data
+    assert "pii" in data
+    
+    # Check nested structure
+    assert "total" in data["requests"]
+    assert "by_model" in data["requests"]
+    assert "by_status" in data["requests"]
+    assert "by_model" in data["latency"]
+    assert "total" in data["tool_calls"]
+    assert "by_tool" in data["tool_calls"]
+    assert "entities_pseudonymized" in data["pii"]
+    assert "scan_failures" in data["pii"]
+    
+    # Basic type checks
+    assert isinstance(data["uptime_seconds"], (int, float))
+    assert isinstance(data["requests"]["total"], (int, float))
+    assert isinstance(data["requests"]["by_model"], dict)
+    assert isinstance(data["requests"]["by_status"], dict)
+    assert isinstance(data["tool_calls"]["total"], (int, float))
+    assert data["service"] == "pb-proxy"
+
+
 def test_chat_completions_requires_model(client):
     response = client.post(
         "/v1/chat/completions",
