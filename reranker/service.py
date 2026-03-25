@@ -12,8 +12,15 @@ import os
 import logging
 import time
 from contextlib import asynccontextmanager
+import sys as _sys
+_sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from shared.telemetry import (
+    init_telemetry, setup_auto_instrumentation, trace_operation,
+    MetricsAggregator,
+)
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sentence_transformers import CrossEncoder
 from prometheus_client import (
@@ -77,6 +84,10 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+_reranker_tracer = init_telemetry("pb-reranker")
+setup_auto_instrumentation(app)
+_reranker_metrics = MetricsAggregator("reranker")
 
 # Prometheus ASGI-App unter /metrics einbinden
 metrics_app = make_asgi_app()
@@ -142,27 +153,29 @@ async def rerank(request: RerankRequest):
     t0 = time.time()
     reranker_batch_size.observe(len(request.documents))
 
-    pairs  = [[request.query, doc.content] for doc in request.documents]
-    scores = model.predict(pairs, show_progress_bar=False)
+    with trace_operation(_reranker_tracer, "rerank", "reranker",
+                         input_count=len(request.documents), top_n=request.top_n):
+        pairs  = [[request.query, doc.content] for doc in request.documents]
+        scores = model.predict(pairs, show_progress_bar=False)
 
-    scored_docs = sorted(
-        [{"doc": doc, "rerank_score": float(s)} for doc, s in zip(request.documents, scores)],
-        key=lambda x: x["rerank_score"],
-        reverse=True,
-    )
-
-    top_n   = min(request.top_n, len(scored_docs))
-    results = [
-        RankedDocument(
-            id=item["doc"].id,
-            content=item["doc"].content,
-            original_score=item["doc"].score,
-            rerank_score=round(item["rerank_score"], 4),
-            rank=rank,
-            metadata=item["doc"].metadata,
+        scored_docs = sorted(
+            [{"doc": doc, "rerank_score": float(s)} for doc, s in zip(request.documents, scores)],
+            key=lambda x: x["rerank_score"],
+            reverse=True,
         )
-        for rank, item in enumerate(scored_docs[:top_n], start=1)
-    ]
+
+        top_n   = min(request.top_n, len(scored_docs))
+        results = [
+            RankedDocument(
+                id=item["doc"].id,
+                content=item["doc"].content,
+                original_score=item["doc"].score,
+                rerank_score=round(item["rerank_score"], 4),
+                rank=rank,
+                metadata=item["doc"].metadata,
+            )
+            for rank, item in enumerate(scored_docs[:top_n], start=1)
+        ]
 
     latency = (time.time() - t0) * 1000
     reranker_duration.observe((time.time() - t0))
@@ -183,6 +196,34 @@ async def rerank(request: RerankRequest):
 @app.get("/health")
 async def health():
     return {"status": "ok" if model is not None else "loading", "model": MODEL_NAME}
+
+
+@app.get("/metrics/json")
+async def metrics_json():
+    snap = _reranker_metrics.snapshot()
+    response = {
+        "service": "reranker",
+        "uptime_seconds": snap["uptime_seconds"],
+        "requests": {"total": 0, "ok": 0, "error": 0},
+        "latency": _reranker_metrics.histogram_percentiles("pb_reranker_duration_seconds"),
+        "batch_size": {
+            "avg": 0,
+            "p95": _reranker_metrics.histogram_percentiles(
+                "pb_reranker_batch_size"
+            ).get("p95_ms", 0) / 1000,
+        },
+        "model_load_seconds": 0,
+    }
+    for key, val in snap["raw_metrics"].items():
+        if "pb_reranker_requests_total" in key:
+            if "ok" in key:
+                response["requests"]["ok"] = val
+            elif "error" in key:
+                response["requests"]["error"] = val
+            response["requests"]["total"] = (
+                response["requests"]["ok"] + response["requests"]["error"]
+            )
+    return JSONResponse(content=response)
 
 
 @app.get("/models")
