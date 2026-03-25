@@ -17,6 +17,7 @@ import os
 import json
 import logging
 import uuid
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -25,9 +26,12 @@ import secrets
 import httpx
 import asyncpg
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import PointStruct
+
+from prometheus_client import Counter, Histogram, make_asgi_app as prom_make_asgi_app
 
 from pii_scanner import get_scanner
 from snapshot_service import create_snapshot
@@ -49,6 +53,11 @@ import sys as _sys
 _sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.llm_provider import EmbeddingProvider, CompletionProvider
 from shared.config import build_postgres_url, PG_POOL_MIN, PG_POOL_MAX
+from shared.telemetry import (
+    init_telemetry, setup_auto_instrumentation, trace_operation,
+    request_telemetry_context, get_current_telemetry,
+    MetricsAggregator, TELEMETRY_IN_RESPONSE,
+)
 
 POSTGRES_URL = build_postgres_url()
 
@@ -74,8 +83,92 @@ DEFAULT_COLLECTION = "pb_general"
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("pb-ingestion")
 
+# ── Prometheus Metrics ───────────────────────────────────────
+# Initialize variables first
+pb_ingestion_requests = None
+pb_ingestion_duration = None
+pb_ingestion_chunks = None
+pb_ingestion_pii_entities = None
+pb_ingestion_embedding_batch = None
+
+# Try to create metrics, handle duplicate registration gracefully
+try:
+    pb_ingestion_requests = Counter(
+        "pb_ingestion_requests_total", "Ingestion requests", ["endpoint", "status"],
+    )
+    pb_ingestion_duration = Histogram(
+        "pb_ingestion_duration_seconds", "Ingestion request duration", ["endpoint"],
+        buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
+    )
+    pb_ingestion_chunks = Counter(
+        "pb_ingestion_chunks_total", "Total chunks ingested", ["collection"],
+    )
+    pb_ingestion_pii_entities = Counter(
+        "pb_ingestion_pii_entities_total", "PII entities found", ["entity_type", "action"],
+    )
+    pb_ingestion_embedding_batch = Histogram(
+        "pb_ingestion_embedding_batch_size", "Embedding batch size",
+        buckets=[1, 5, 10, 20, 50, 100],
+    )
+except ValueError as e:
+    if "Duplicated timeseries" in str(e):
+        # Metrics already registered, get them from registry
+        from prometheus_client import REGISTRY
+        for collector in list(REGISTRY._collector_to_names.keys()):
+            if hasattr(collector, '_name'):
+                if collector._name == "pb_ingestion_requests_total":
+                    pb_ingestion_requests = collector
+                elif collector._name == "pb_ingestion_duration_seconds":
+                    pb_ingestion_duration = collector
+                elif collector._name == "pb_ingestion_chunks_total":
+                    pb_ingestion_chunks = collector
+                elif collector._name == "pb_ingestion_pii_entities_total":
+                    pb_ingestion_pii_entities = collector
+                elif collector._name == "pb_ingestion_embedding_batch_size":
+                    pb_ingestion_embedding_batch = collector
+    else:
+        raise
+
 # ── FastAPI App ──────────────────────────────────────────────
 app = FastAPI(title="Powerbrain Ingestion API", version="1.0.0")
+
+# ── Telemetry Initialization ─────────────────────────────────
+_ingestion_tracer = init_telemetry("pb-ingestion")
+setup_auto_instrumentation(app)
+_ingestion_metrics = MetricsAggregator("ingestion")
+
+# ── JSON Metrics Endpoint (must be defined before mount) ─────
+@app.get("/metrics/json")
+async def metrics_json():
+    snap = _ingestion_metrics.snapshot()
+    response = {
+        "service": "ingestion",
+        "uptime_seconds": snap["uptime_seconds"],
+        "requests": {"total": 0, "ok": 0, "error": 0},
+        "chunks": {"total": 0},
+        "pii": {"entities_found": {}},
+        "embedding": {"batch_total": 0},
+    }
+    for key, val in snap["raw_metrics"].items():
+        if "pb_ingestion_requests_total" in key:
+            if "ok" in key:
+                response["requests"]["ok"] += val
+            elif "error" in key:
+                response["requests"]["error"] += val
+        elif "pb_ingestion_chunks_total" in key:
+            response["chunks"]["total"] += val
+        elif "pb_ingestion_pii_entities_total" in key:
+            if "entity_type=" in key:
+                et = key.split("entity_type=")[1].split(",")[0].split("}")[0]
+                response["pii"]["entities_found"][et] = (
+                    response["pii"]["entities_found"].get(et, 0) + val
+                )
+    response["requests"]["total"] = response["requests"]["ok"] + response["requests"]["error"]
+    return JSONResponse(content=response)
+
+# ── Mount Prometheus Metrics ─────────────────────────────────
+metrics_app = prom_make_asgi_app()
+app.mount("/metrics", metrics_app)
 
 # ── Clients (lifecycle-managed) ─────────────────────────────
 qdrant: AsyncQdrantClient | None = None
@@ -438,6 +531,11 @@ async def ingest_text_chunks(
         if scan_result.contains_pii:
             pii_detected = True
 
+            # Track PII entities found
+            for entity_type, count in scan_result.entity_counts.items():
+                for _ in range(int(count)):
+                    pb_ingestion_pii_entities.labels(entity_type=entity_type, action="found").inc() if pb_ingestion_pii_entities else None
+
             # 2. OPA Policy: Was tun mit PII? (nur beim ersten Fund abfragen)
             if opa_result is None:
                 opa_result = await check_opa_privacy(
@@ -537,6 +635,8 @@ async def ingest_text_chunks(
         batch_results = await embedding_provider.embed_batch(
             http_client, uncached_texts, EMBEDDING_MODEL
         )
+        # Track embedding batch size
+        pb_ingestion_embedding_batch.observe(len(uncached_texts)) if pb_ingestion_embedding_batch else None
         for pos, idx in enumerate(uncached_indices):
             embeddings[idx] = batch_results[pos]
             embedding_cache.set(uncached_texts[pos], EMBEDDING_MODEL, batch_results[pos])
@@ -566,6 +666,8 @@ async def ingest_text_chunks(
     if points:
         await qdrant.upsert(collection_name=collection, points=points)
         log.info(f"{len(points)} L2 Punkte in '{collection}' eingefügt")
+        # Track chunks ingested
+        pb_ingestion_chunks.labels(collection=collection).inc(len(points)) if pb_ingestion_chunks else None
 
     # 6. Generate L0/L1 layers and upsert as separate Qdrant points
     l0_point_id: str | None = None
@@ -680,21 +782,34 @@ async def scan(req: ScanRequest) -> ScanResponse:
     Wird vom MCP-Server aufgerufen, bevor Audit-Log-Einträge
     mit Query-Text geschrieben werden.
     """
-    scanner = get_scanner()
-    scan_result = scanner.scan_text(req.text, language=req.language)
+    t0 = time.perf_counter()
+    try:
+        scanner = get_scanner()
+        scan_result = scanner.scan_text(req.text, language=req.language)
 
-    if scan_result.contains_pii:
-        masked = scanner.mask_text(req.text, language=req.language)
-        entity_types = list(scan_result.entity_counts.keys())
-    else:
-        masked = req.text
-        entity_types = []
+        # Track PII entities found
+        for entity_type, count in scan_result.entity_counts.items():
+            for _ in range(int(count)):
+                pb_ingestion_pii_entities.labels(entity_type=entity_type, action="scan").inc() if pb_ingestion_pii_entities else None
 
-    return ScanResponse(
-        contains_pii=scan_result.contains_pii,
-        masked_text=masked,
-        entity_types=entity_types,
-    )
+        if scan_result.contains_pii:
+            masked = scanner.mask_text(req.text, language=req.language)
+            entity_types = list(scan_result.entity_counts.keys())
+        else:
+            masked = req.text
+            entity_types = []
+
+        pb_ingestion_requests.labels(endpoint="scan", status="ok").inc() if pb_ingestion_requests else None
+        return ScanResponse(
+            contains_pii=scan_result.contains_pii,
+            masked_text=masked,
+            entity_types=entity_types,
+        )
+    except Exception:
+        pb_ingestion_requests.labels(endpoint="scan", status="error").inc() if pb_ingestion_requests else None
+        raise
+    finally:
+        pb_ingestion_duration.labels(endpoint="scan").observe(time.perf_counter() - t0) if pb_ingestion_duration else None
 
 
 @app.post("/pseudonymize")
@@ -758,31 +873,47 @@ async def health():
 
 @app.post("/ingest")
 async def ingest(req: IngestRequest):
-    collection = req.collection or DEFAULT_COLLECTION
-    chunks = chunk_text(req.source)
-    result = await ingest_text_chunks(
-        chunks=chunks,
-        collection=collection,
-        source=f"{req.source_type or 'text'}:inline",
-        classification=req.classification,
-        project=req.project,
-        metadata=req.metadata,
-    )
-    return result
+    t0 = time.perf_counter()
+    try:
+        collection = req.collection or DEFAULT_COLLECTION
+        chunks = chunk_text(req.source)
+        result = await ingest_text_chunks(
+            chunks=chunks,
+            collection=collection,
+            source=f"{req.source_type or 'text'}:inline",
+            classification=req.classification,
+            project=req.project,
+            metadata=req.metadata,
+        )
+        pb_ingestion_requests.labels(endpoint="ingest", status="ok").inc() if pb_ingestion_requests else None
+        return result
+    except Exception:
+        pb_ingestion_requests.labels(endpoint="ingest", status="error").inc() if pb_ingestion_requests else None
+        raise
+    finally:
+        pb_ingestion_duration.labels(endpoint="ingest").observe(time.perf_counter() - t0) if pb_ingestion_duration else None
 
 
 @app.post("/ingest/chunks")
 async def ingest_chunks(req: ChunkIngestRequest):
     """Ingest pre-processed chunks from adapters. Full privacy pipeline applies."""
-    result = await ingest_text_chunks(
-        chunks=req.chunks,
-        collection=req.collection,
-        source=req.source,
-        classification=req.classification,
-        project=req.project,
-        metadata=req.metadata,
-    )
-    return result
+    t0 = time.perf_counter()
+    try:
+        result = await ingest_text_chunks(
+            chunks=req.chunks,
+            collection=req.collection,
+            source=req.source,
+            classification=req.classification,
+            project=req.project,
+            metadata=req.metadata,
+        )
+        pb_ingestion_requests.labels(endpoint="ingest_chunks", status="ok").inc() if pb_ingestion_requests else None
+        return result
+    except Exception:
+        pb_ingestion_requests.labels(endpoint="ingest_chunks", status="error").inc() if pb_ingestion_requests else None
+        raise
+    finally:
+        pb_ingestion_duration.labels(endpoint="ingest_chunks").observe(time.perf_counter() - t0) if pb_ingestion_duration else None
 
 
 @app.post("/snapshots/create")
