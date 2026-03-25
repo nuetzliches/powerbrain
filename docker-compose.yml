@@ -416,7 +416,7 @@ services:
       PG_HOST:                 postgres
       PG_PORT:                 "5432"
       PG_DATABASE:             powerbrain
-      PG_USER:                 postgres
+      PG_USER:                 pb_admin
       PG_PASSWORD_FILE:        /run/secrets/pg_password
       MCP_SERVERS_CONFIG:      /app/mcp_servers.yaml
       OTEL_ENABLED:            ${OTEL_ENABLED:-true}

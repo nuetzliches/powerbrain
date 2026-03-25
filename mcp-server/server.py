@@ -1890,9 +1890,12 @@ if __name__ == "__main__":
     auth_app = app
 
     class LifespanBypass:
-        """Routes lifespan events past auth middleware to Starlette."""
+        """Routes lifespan events past auth middleware to Starlette.
+        Also bypasses auth for /health (Docker health checks, load balancers)."""
         async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
             if scope["type"] == "lifespan":
+                await starlette_app(scope, receive, send)
+            elif scope["type"] == "http" and scope.get("path") == "/health":
                 await starlette_app(scope, receive, send)
             else:
                 await auth_app(scope, receive, send)

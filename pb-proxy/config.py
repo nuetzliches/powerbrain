@@ -68,7 +68,7 @@ AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
 PG_HOST = os.getenv("PG_HOST", "postgres")
 PG_PORT = int(os.getenv("PG_PORT", "5432"))
 PG_DATABASE = os.getenv("PG_DATABASE", "powerbrain")
-PG_USER = os.getenv("PG_USER", "postgres")
+PG_USER = os.getenv("PG_USER", "pb_admin")
 PG_PASSWORD = _read_secret("PG_PASSWORD", "changeme")
 
 # ── MCP Servers ──────────────────────────────────────────────
