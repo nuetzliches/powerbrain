@@ -100,6 +100,14 @@ OVERSAMPLE_FACTOR  = 5
 FEEDBACK_WARN_THRESHOLD = 2.5
 FEEDBACK_WARN_MIN_COUNT = 3
 
+# ── OPA Cache ────────────────────────────────────────────────
+from cachetools import TTLCache as _TTLCache
+
+OPA_CACHE_TTL     = int(os.getenv("OPA_CACHE_TTL", "60"))
+OPA_CACHE_ENABLED = os.getenv("OPA_CACHE_ENABLED", "true").lower() == "true"
+_opa_cache: _TTLCache[str, bool] = _TTLCache(maxsize=64, ttl=OPA_CACHE_TTL)
+_opa_cache_lock = __import__("threading").Lock()
+
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("pb-mcp")
 
@@ -473,6 +481,19 @@ async def check_opa_policy(agent_id: str, agent_role: str,
                            resource: str, classification: str,
                            action: str = "read") -> dict:
     with _otel_span("opa_check"):
+        # Cache lookup — key is (role, classification, action) since
+        # pb.access.allow only depends on these three fields.
+        cache_key = f"{agent_role}:{classification}:{action}"
+        if OPA_CACHE_ENABLED:
+            with _opa_cache_lock:
+                cached = _opa_cache.get(cache_key)
+            if cached is not None:
+                mcp_policy_decisions_total.labels(result="allow" if cached else "deny").inc()
+                return {"allowed": cached, "input": {
+                    "agent_id": agent_id, "agent_role": agent_role,
+                    "resource": resource, "classification": classification, "action": action,
+                }}
+
         input_data = {
             "agent_id": agent_id, "agent_role": agent_role,
             "resource": resource, "classification": classification, "action": action,
@@ -488,6 +509,11 @@ async def check_opa_policy(agent_id: str, agent_role: str,
         except Exception as e:
             log.warning(f"OPA check failed, defaulting to deny: {e}")
             allowed = False
+
+        # Store in cache
+        if OPA_CACHE_ENABLED:
+            with _opa_cache_lock:
+                _opa_cache[cache_key] = allowed
 
         mcp_policy_decisions_total.labels(result="allow" if allowed else "deny").inc()
         return {"allowed": allowed, "input": input_data}
