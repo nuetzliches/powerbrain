@@ -29,7 +29,7 @@ from mcp.server.auth.provider import TokenVerifier, AccessToken
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend, RequireAuthMiddleware
 from mcp.server.auth.middleware.auth_context import AuthContextMiddleware, get_access_token
 from starlette.applications import Starlette
-from starlette.responses import PlainTextResponse
+from starlette.responses import PlainTextResponse, JSONResponse
 from starlette.routing import Route
 from starlette.types import Scope, Receive, Send
 from starlette.middleware.authentication import AuthenticationMiddleware
@@ -158,6 +158,28 @@ mcp_rate_limit_rejected = Counter(
 # ── OpenTelemetry Setup ──────────────────────────────────────
 tracer = init_telemetry("pb-mcp-server")
 _metrics_agg = MetricsAggregator("mcp-server")
+
+
+def _parse_prom_labels(key: str) -> dict[str, str]:
+    """Parse 'metric{k1=v1,k2=v2}' into dict."""
+    if "{" not in key:
+        return {}
+    label_str = key.split("{", 1)[1].rstrip("}")
+    labels = {}
+    for part in label_str.split(","):
+        if "=" in part:
+            k, v = part.split("=", 1)
+            labels[k] = v
+    return labels
+
+
+def _opa_cache_hit_ratio() -> float:
+    """Calculate OPA cache hit ratio from cache stats."""
+    with _opa_cache_lock:
+        total = getattr(_opa_cache, '_hits', 0) + getattr(_opa_cache, '_misses', 0)
+        if total == 0:
+            return 0.0
+        return round(getattr(_opa_cache, '_hits', 0) / total, 3)
 
 
 # ── Rate Limiting ────────────────────────────────────────────
@@ -1779,9 +1801,71 @@ if __name__ == "__main__":
     async def health_check(request):
         return PlainTextResponse("ok")
 
+    async def metrics_json(request):
+        """Structured JSON metrics for demo-UI consumption."""
+        snap = _metrics_agg.snapshot()
+
+        response = {
+            "service": "mcp-server",
+            "uptime_seconds": snap["uptime_seconds"],
+            "requests": {
+                "total": sum(
+                    v for k, v in snap["raw_metrics"].items()
+                    if k.startswith("pb_mcp_requests_total")
+                ),
+                "by_tool": {},
+                "by_status": {},
+                "rate_limited": sum(
+                    v for k, v in snap["raw_metrics"].items()
+                    if k.startswith("pb_rate_limit_rejected_total")
+                ),
+            },
+            "latency": {},
+            "policy": {
+                "decisions_total": {},
+                "cache_hit_ratio": _opa_cache_hit_ratio(),
+            },
+            "search": {"results_avg": {}},
+            "reranker": {
+                "fallbacks_total": snap["raw_metrics"].get(
+                    "pb_mcp_rerank_fallback_total", 0
+                ),
+            },
+            "embedding_cache": embedding_cache.stats(),
+            "feedback": {
+                "avg_rating_24h": snap["raw_metrics"].get("pb_feedback_avg_rating", 0),
+            },
+        }
+
+        # Aggregate by_tool and by_status from labeled counters
+        for key, val in snap["raw_metrics"].items():
+            if key.startswith("pb_mcp_requests_total{"):
+                labels = _parse_prom_labels(key)
+                tool = labels.get("tool", "unknown")
+                status = labels.get("status", "unknown")
+                response["requests"]["by_tool"][tool] = (
+                    response["requests"]["by_tool"].get(tool, 0) + val
+                )
+                response["requests"]["by_status"][status] = (
+                    response["requests"]["by_status"].get(status, 0) + val
+                )
+            elif key.startswith("pb_mcp_policy_decisions_total{"):
+                labels = _parse_prom_labels(key)
+                result = labels.get("result", "unknown")
+                response["policy"]["decisions_total"][result] = val
+
+        # Latency percentiles per tool
+        for tool in response["requests"]["by_tool"]:
+            response["latency"][tool] = _metrics_agg.histogram_percentiles(
+                "pb_mcp_request_duration_seconds", {"tool": tool}
+            )
+
+        return JSONResponse(response)
+
     app = Starlette(
         routes=[
             Route("/health", endpoint=health_check),
+            Route("/metrics/json", endpoint=metrics_json),
             Route(MCP_PATH, endpoint=MCPTransport()),
         ],
         lifespan=lifespan,
