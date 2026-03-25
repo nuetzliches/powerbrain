@@ -44,6 +44,26 @@ class EmbeddingProvider(_BaseProvider):
         resp.raise_for_status()
         return resp.json()["data"][0]["embedding"]
 
+    async def embed_batch(
+        self, http: httpx.AsyncClient, texts: list[str], model: str
+    ) -> list[list[float]]:
+        """Embed multiple texts in a single API call.
+
+        Uses the OpenAI-compatible batch input format (input: list[str]).
+        Results are sorted by index to guarantee input order.
+        """
+        if not texts:
+            return []
+        resp = await http.post(
+            f"{self.base_url}/v1/embeddings",
+            headers=self.headers,
+            json={"model": model, "input": texts},
+        )
+        resp.raise_for_status()
+        data = resp.json()["data"]
+        data.sort(key=lambda x: x["index"])
+        return [d["embedding"] for d in data]
+
 
 class CompletionProvider(_BaseProvider):
     """Generates text via POST /v1/chat/completions (OpenAI-compatible)."""
