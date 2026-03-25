@@ -29,6 +29,7 @@ from mcp.server.auth.provider import TokenVerifier, AccessToken
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend, RequireAuthMiddleware
 from mcp.server.auth.middleware.auth_context import AuthContextMiddleware, get_access_token
 from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 from starlette.types import Scope, Receive, Send
 from starlette.middleware.authentication import AuthenticationMiddleware
@@ -1762,8 +1763,14 @@ if __name__ == "__main__":
         await pg_pool.close()
         log.info("Shutdown: PG pool and HTTP client closed")
 
+    async def health_check(request):
+        return PlainTextResponse("ok")
+
     app = Starlette(
-        routes=[Route(MCP_PATH, endpoint=MCPTransport())],
+        routes=[
+            Route("/health", endpoint=health_check),
+            Route(MCP_PATH, endpoint=MCPTransport()),
+        ],
         lifespan=lifespan,
     )
 
