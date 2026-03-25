@@ -19,6 +19,11 @@ def _patch_globals(monkeypatch):
     monkeypatch.setattr(ingestion_api, "qdrant", AsyncMock())
     monkeypatch.setattr(ingestion_api, "pg_pool", AsyncMock())
     monkeypatch.setattr(ingestion_api, "LAYER_GENERATION_ENABLED", True)
+    # Disable embedding cache so tests are deterministic
+    mock_cache = MagicMock()
+    mock_cache.get.return_value = None
+    mock_cache.set.return_value = None
+    monkeypatch.setattr(ingestion_api, "embedding_cache", mock_cache)
 
 
 @pytest.fixture
@@ -90,6 +95,9 @@ class TestIngestLayerIntegration:
         monkeypatch.setattr(ingestion_api, "LAYER_GENERATION_ENABLED", False)
         mock_embed = AsyncMock(return_value=[0.1] * 768)
         monkeypatch.setattr(ingestion_api, "get_embedding", mock_embed)
+        # Mock batch embedding for the new batch path
+        mock_embed_batch = AsyncMock(return_value=[[0.1] * 768])
+        monkeypatch.setattr(ingestion_api.embedding_provider, "embed_batch", mock_embed_batch)
         mock_scanner = MagicMock()
         mock_scanner.scan_text.return_value = MagicMock(
             contains_pii=False, entity_counts={}, anonymized_text=None,
@@ -126,6 +134,9 @@ class TestIngestLayerIntegration:
         )
         mock_embed = AsyncMock(return_value=[0.1] * 768)
         monkeypatch.setattr(ingestion_api, "get_embedding", mock_embed)
+        # Mock batch embedding for the new batch path
+        mock_embed_batch = AsyncMock(return_value=[[0.1] * 768])
+        monkeypatch.setattr(ingestion_api.embedding_provider, "embed_batch", mock_embed_batch)
         mock_scanner = MagicMock()
         mock_scanner.scan_text.return_value = MagicMock(
             contains_pii=False, entity_counts={}, anonymized_text=None,

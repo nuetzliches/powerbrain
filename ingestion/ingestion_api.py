@@ -48,13 +48,16 @@ EMBEDDING_API_KEY      = os.getenv("EMBEDDING_API_KEY", "")
 import sys as _sys
 _sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.llm_provider import EmbeddingProvider, CompletionProvider
-from shared.config import build_postgres_url
+from shared.config import build_postgres_url, PG_POOL_MIN, PG_POOL_MAX
 
 POSTGRES_URL = build_postgres_url()
 
 embedding_provider = EmbeddingProvider(
     base_url=EMBEDDING_PROVIDER_URL, api_key=EMBEDDING_API_KEY
 )
+
+from shared.embedding_cache import EmbeddingCache
+embedding_cache = EmbeddingCache()
 
 # ── LLM / Layer generation provider ──
 LLM_PROVIDER_URL = os.getenv("LLM_PROVIDER_URL", os.getenv("OLLAMA_URL", "http://pb-ollama:11434"))
@@ -86,7 +89,7 @@ async def startup():
     qdrant = AsyncQdrantClient(url=QDRANT_URL)
     http_client = httpx.AsyncClient(timeout=60.0)
     try:
-        pg_pool = await asyncpg.create_pool(POSTGRES_URL, min_size=2, max_size=10)
+        pg_pool = await asyncpg.create_pool(POSTGRES_URL, min_size=PG_POOL_MIN, max_size=PG_POOL_MAX)
         log.info("PostgreSQL-Pool initialisiert")
     except Exception as e:
         log.error(f"PostgreSQL-Verbindung fehlgeschlagen: {e}")
@@ -155,8 +158,13 @@ class ChunkIngestRequest(BaseModel):
 # ── Hilfsfunktionen ─────────────────────────────────────────
 
 async def get_embedding(text: str) -> list[float]:
-    """Erzeugt Embedding über den konfigurierten Provider (OpenAI-compat)."""
-    return await embedding_provider.embed(http_client, text, EMBEDDING_MODEL)
+    """Erzeugt Embedding über den konfigurierten Provider (OpenAI-compat), mit Cache."""
+    cached = embedding_cache.get(text, EMBEDDING_MODEL)
+    if cached is not None:
+        return cached
+    vector = await embedding_provider.embed(http_client, text, EMBEDDING_MODEL)
+    embedding_cache.set(text, EMBEDDING_MODEL, vector)
+    return vector
 
 
 def chunk_text(text: str, max_chars: int = 1000, overlap: int = 200) -> list[str]:
@@ -395,6 +403,8 @@ async def ingest_text_chunks(
     pii_detected = False
     vault_refs: list[str | None] = []
     doc_id = str(uuid.uuid4())
+    processed_texts: list[str] = []
+    chunk_metadata: list[dict] = []
 
     # Vorab documents_meta anlegen (damit Vault-FK-Constraints erfüllt sind)
     if pg_pool:
@@ -501,27 +511,56 @@ async def ingest_text_chunks(
                     source, scan_result.entity_counts, "mask", classification
                 )
 
-        # 4. Embedding
-        embedding = await get_embedding(chunk)
+        # 4. Collect processed chunk for batch embedding
+        processed_texts.append(chunk)
+        chunk_metadata.append({
+            "vault_ref": vault_ref,
+            "contains_pii": scan_result.contains_pii,
+            "chunk_index": i,
+        })
 
+    # 4b. Batch embedding (cache-aware)
+    embeddings: list[list[float]] = []
+    uncached_indices: list[int] = []
+    uncached_texts: list[str] = []
+
+    for idx, text in enumerate(processed_texts):
+        cached = embedding_cache.get(text, EMBEDDING_MODEL)
+        if cached is not None:
+            embeddings.append(cached)
+        else:
+            embeddings.append([])  # placeholder
+            uncached_indices.append(idx)
+            uncached_texts.append(text)
+
+    if uncached_texts:
+        batch_results = await embedding_provider.embed_batch(
+            http_client, uncached_texts, EMBEDDING_MODEL
+        )
+        for pos, idx in enumerate(uncached_indices):
+            embeddings[idx] = batch_results[pos]
+            embedding_cache.set(uncached_texts[pos], EMBEDDING_MODEL, batch_results[pos])
+
+    # 4c. Build points from batch results
+    for idx, (text, emb, meta) in enumerate(zip(processed_texts, embeddings, chunk_metadata)):
         point_id = str(uuid.uuid4())
         payload = {
-            "text": chunk,
+            "text": text,
             "source": source,
             "classification": classification,
             "project": project or "",
-            "chunk_index": i,
+            "chunk_index": meta["chunk_index"],
             "ingested_at": datetime.now(timezone.utc).isoformat(),
-            "contains_pii": scan_result.contains_pii,
-            "vault_ref": vault_ref,
+            "contains_pii": meta["contains_pii"],
+            "vault_ref": meta["vault_ref"],
             "layer": "L2",
             "doc_id": doc_id,
             **metadata,
         }
         points.append(PointStruct(
-            id=point_id, vector=embedding, payload=payload,
+            id=point_id, vector=emb, payload=payload,
         ))
-        vault_refs.append(vault_ref)
+        vault_refs.append(meta["vault_ref"])
 
     # 5. In Qdrant upserten (L2 chunks)
     if points:

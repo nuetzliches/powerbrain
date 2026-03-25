@@ -322,6 +322,11 @@ RUN_INTEGRATION_TESTS=1 python3 -m pytest tests/integration/e2e/test_smoke.py::T
 Tests are gated behind `RUN_INTEGRATION_TESTS=1` and take ~90s (plus stack startup on first run).
 The `docker_stack` fixture calls `docker compose down -v` before and after the test session.
 
+### Performance Caches (T1)
+- **Embedding Cache** — In-process TTL cache (`shared/embedding_cache.py`). SHA-256 key of `model:text`. Configurable via `EMBEDDING_CACHE_SIZE` (default 2048), `EMBEDDING_CACHE_TTL` (default 3600s), `EMBEDDING_CACHE_ENABLED`.
+- **OPA Result Cache** — TTL cache for `check_opa_policy()` in MCP server. Key: `(role, classification, action)`. Only `pb.access.allow` is cached (deterministic). Configurable via `OPA_CACHE_TTL` (default 60s), `OPA_CACHE_ENABLED`.
+- **Batch Embedding** — `EmbeddingProvider.embed_batch()` sends multiple texts in one `/v1/embeddings` request. Used by ingestion pipeline with cache-aware partial batching.
+
 ## Completed Features
 
 1. ✅ **Reranking** — Cross-Encoder service
@@ -341,6 +346,7 @@ The `docker_stack` fixture calls `docker compose down -v` before and after the t
 15. ✅ **Context Layers (L0/L1/L2)** — Pre-computed abstracts (L0, ~100 tokens) and overviews (L1, ~500 tokens) at ingestion, `layer` param on search, `get_document` tool for drill-down (progressive loading, no separate OPA policy — access controlled by `pb.access`)
 16. ✅ **Proxy Authentication** — API-key auth for proxy (`pb-proxy/auth.py`), identity propagation to MCP servers
 17. ✅ **Multi-MCP-Server Aggregation** — Proxy aggregates tools from N MCP servers with per-server auth, prefix namespacing, and OPA-controlled access (`pb.proxy.mcp_servers_allowed`)
+18. ✅ **T1 Production Hardening** — Embedding cache (in-process LRU), batch embedding API, OPA result cache, configurable PG pool sizes, Docker health checks for all services
 
 Details on all features: see `docs/architektur.md`
 

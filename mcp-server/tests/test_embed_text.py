@@ -13,6 +13,9 @@ def _patch_http(monkeypatch):
     """Patch the module-level http client for all tests."""
     mock_client = AsyncMock()
     monkeypatch.setattr(server, "http", mock_client)
+    # Clear embedding cache to prevent cross-test contamination
+    if hasattr(server, 'embedding_cache'):
+        server.embedding_cache._cache.clear()
     return mock_client
 
 

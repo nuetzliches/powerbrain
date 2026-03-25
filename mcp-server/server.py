@@ -29,6 +29,7 @@ from mcp.server.auth.provider import TokenVerifier, AccessToken
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend, RequireAuthMiddleware
 from mcp.server.auth.middleware.auth_context import AuthContextMiddleware, get_access_token
 from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 from starlette.types import Scope, Receive, Send
 from starlette.middleware.authentication import AuthenticationMiddleware
@@ -43,7 +44,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.llm_provider import EmbeddingProvider, CompletionProvider
-from shared.config import read_secret, build_postgres_url
+from shared.config import read_secret, build_postgres_url, PG_POOL_MIN, PG_POOL_MAX
 
 import graph_service as graph
 from graph_service import validate_identifier
@@ -76,6 +77,9 @@ SUMMARIZATION_ENABLED  = os.getenv("SUMMARIZATION_ENABLED", "true").lower() == "
 embedding_provider = EmbeddingProvider(base_url=EMBEDDING_PROVIDER_URL, api_key=EMBEDDING_API_KEY)
 llm_provider       = CompletionProvider(base_url=LLM_PROVIDER_URL, api_key=LLM_API_KEY)
 
+from shared.embedding_cache import EmbeddingCache
+embedding_cache = EmbeddingCache()
+
 MCP_HOST       = os.getenv("MCP_HOST", "0.0.0.0")
 MCP_PORT       = int(os.getenv("MCP_PORT", "8080"))
 MCP_PATH       = os.getenv("MCP_PATH", "/mcp")
@@ -99,6 +103,14 @@ OVERSAMPLE_FACTOR  = 5
 # Feedback-Loop: Warnung wenn avg_rating unter diesem Schwellwert mit mind. N Feedbacks
 FEEDBACK_WARN_THRESHOLD = 2.5
 FEEDBACK_WARN_MIN_COUNT = 3
+
+# ── OPA Cache ────────────────────────────────────────────────
+from cachetools import TTLCache as _TTLCache
+
+OPA_CACHE_TTL     = int(os.getenv("OPA_CACHE_TTL", "60"))
+OPA_CACHE_ENABLED = os.getenv("OPA_CACHE_ENABLED", "true").lower() == "true"
+_opa_cache: _TTLCache[str, bool] = _TTLCache(maxsize=64, ttl=OPA_CACHE_TTL)
+_opa_cache_lock = __import__("threading").Lock()
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("pb-mcp")
@@ -353,7 +365,12 @@ class ApiKeyVerifier(TokenVerifier):
 )
 async def embed_text(text: str) -> list[float]:
     with _otel_span("embed_text"):
-        return await embedding_provider.embed(http, text, EMBEDDING_MODEL)
+        cached = embedding_cache.get(text, EMBEDDING_MODEL)
+        if cached is not None:
+            return cached
+        vector = await embedding_provider.embed(http, text, EMBEDDING_MODEL)
+        embedding_cache.set(text, EMBEDDING_MODEL, vector)
+        return vector
 
 
 async def summarize_text(
@@ -473,6 +490,19 @@ async def check_opa_policy(agent_id: str, agent_role: str,
                            resource: str, classification: str,
                            action: str = "read") -> dict:
     with _otel_span("opa_check"):
+        # Cache lookup — key is (role, classification, action) since
+        # pb.access.allow only depends on these three fields.
+        cache_key = f"{agent_role}:{classification}:{action}"
+        if OPA_CACHE_ENABLED:
+            with _opa_cache_lock:
+                cached = _opa_cache.get(cache_key)
+            if cached is not None:
+                mcp_policy_decisions_total.labels(result="allow" if cached else "deny").inc()
+                return {"allowed": cached, "input": {
+                    "agent_id": agent_id, "agent_role": agent_role,
+                    "resource": resource, "classification": classification, "action": action,
+                }}
+
         input_data = {
             "agent_id": agent_id, "agent_role": agent_role,
             "resource": resource, "classification": classification, "action": action,
@@ -488,6 +518,11 @@ async def check_opa_policy(agent_id: str, agent_role: str,
         except Exception as e:
             log.warning(f"OPA check failed, defaulting to deny: {e}")
             allowed = False
+
+        # Store in cache
+        if OPA_CACHE_ENABLED:
+            with _opa_cache_lock:
+                _opa_cache[cache_key] = allowed
 
         mcp_policy_decisions_total.labels(result="allow" if allowed else "deny").inc()
         return {"allowed": allowed, "input": input_data}
@@ -1716,7 +1751,7 @@ if __name__ == "__main__":
         """Startup/shutdown lifecycle: PG pool, HTTP client, MCP session manager."""
         global pg_pool
         # ── Startup ──
-        pg_pool = await asyncpg.create_pool(POSTGRES_URL, min_size=2, max_size=10)
+        pg_pool = await asyncpg.create_pool(POSTGRES_URL, min_size=PG_POOL_MIN, max_size=PG_POOL_MAX)
         await pg_pool.fetchval("SELECT 1")
         log.info("PostgreSQL pool ready (%s)", POSTGRES_URL.split("@")[-1])
 
@@ -1728,8 +1763,14 @@ if __name__ == "__main__":
         await pg_pool.close()
         log.info("Shutdown: PG pool and HTTP client closed")
 
+    async def health_check(request):
+        return PlainTextResponse("ok")
+
     app = Starlette(
-        routes=[Route(MCP_PATH, endpoint=MCPTransport())],
+        routes=[
+            Route("/health", endpoint=health_check),
+            Route(MCP_PATH, endpoint=MCPTransport()),
+        ],
         lifespan=lifespan,
     )
 

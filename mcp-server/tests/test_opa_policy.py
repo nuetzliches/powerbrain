@@ -12,6 +12,9 @@ from server import check_opa_policy, filter_by_policy
 def _patch_http(monkeypatch):
     mock_client = AsyncMock()
     monkeypatch.setattr(server, "http", mock_client)
+    # Clear OPA cache to prevent cross-test contamination
+    if hasattr(server, '_opa_cache'):
+        server._opa_cache.clear()
     return mock_client
 
 
