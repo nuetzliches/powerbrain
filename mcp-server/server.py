@@ -493,23 +493,6 @@ async def check_opa_policy(agent_id: str, agent_role: str,
         return {"allowed": allowed, "input": input_data}
 
 
-async def _check_max_layer(agent_role: str, classification: str) -> str:
-    """Query OPA for the maximum allowed layer for a role/classification combo.
-
-    Returns "L2" on OPA failure (permissive fallback — access control is handled
-    separately by check_opa_policy).
-    """
-    input_data = {"agent_role": agent_role, "classification": classification}
-    try:
-        resp = await http.post(
-            f"{OPA_URL}/v1/data/pb/layers/max_layer", json={"input": input_data}
-        )
-        resp.raise_for_status()
-        return resp.json().get("result", "L2")
-    except Exception as e:
-        log.warning(f"OPA layer check failed, defaulting to L2: {e}")
-        return "L2"
-
 
 async def filter_by_policy(
     hits: list,
@@ -1689,12 +1672,6 @@ async def _dispatch(name: str, arguments: dict[str, Any],
                 return [TextContent(type="text", text=json.dumps(
                     {"error": "Access denied by policy", "classification": classification}))]
 
-            # OPA layer restriction
-            max_layer = await _check_max_layer(agent_role, classification)
-            layer_order = {"L0": 0, "L1": 1, "L2": 2}
-            if layer_order.get(layer, 2) > layer_order.get(max_layer, 2):
-                return [TextContent(type="text", text=json.dumps(
-                    {"error": f"Layer {layer} not allowed", "max_layer": max_layer}))]
 
         # Sort L2 by chunk_index
         if layer == "L2":
