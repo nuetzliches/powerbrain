@@ -163,6 +163,9 @@ services:
       RERANKER_MODEL: cross-encoder/ms-marco-MiniLM-L-6-v2
       RERANKER_MAX_BATCH: "128"
       RERANKER_DEFAULT_TOP_N: "10"
+      OTEL_ENABLED:    ${OTEL_ENABLED:-true}
+      OTLP_ENDPOINT:   http://tempo:4317
+      TELEMETRY_IN_RESPONSE: ${TELEMETRY_IN_RESPONSE:-true}
     networks:
       - pb-net
     restart: unless-stopped
@@ -211,8 +214,9 @@ services:
       MCP_PORT:        "8080"
       MCP_PATH:        /mcp
       METRICS_PORT:    "9091"
-      OTEL_ENABLED:    ${OTEL_ENABLED:-false}
+      OTEL_ENABLED:    ${OTEL_ENABLED:-true}
       OTLP_ENDPOINT:   http://tempo:4317
+      TELEMETRY_IN_RESPONSE: ${TELEMETRY_IN_RESPONSE:-true}
       SUMMARIZATION_ENABLED: ${SUMMARIZATION_ENABLED:-true}
       EMBEDDING_CACHE_SIZE: ${EMBEDDING_CACHE_SIZE:-2048}
       EMBEDDING_CACHE_TTL: ${EMBEDDING_CACHE_TTL:-3600}
@@ -272,6 +276,9 @@ services:
       EMBEDDING_CACHE_ENABLED: ${EMBEDDING_CACHE_ENABLED:-true}
       PG_POOL_MIN: ${PG_POOL_MIN:-2}
       PG_POOL_MAX: ${PG_POOL_MAX:-10}
+      OTEL_ENABLED:    ${OTEL_ENABLED:-true}
+      OTLP_ENDPOINT:   http://tempo:4317
+      TELEMETRY_IN_RESPONSE: ${TELEMETRY_IN_RESPONSE:-true}
     depends_on:
       qdrant:
         condition: service_healthy
@@ -412,6 +419,9 @@ services:
       PG_USER:                 postgres
       PG_PASSWORD_FILE:        /run/secrets/pg_password
       MCP_SERVERS_CONFIG:      /app/mcp_servers.yaml
+      OTEL_ENABLED:            ${OTEL_ENABLED:-true}
+      OTLP_ENDPOINT:           http://tempo:4317
+      TELEMETRY_IN_RESPONSE:   ${TELEMETRY_IN_RESPONSE:-true}
     volumes:
       - ./pb-proxy/litellm_config.yaml:/app/litellm_config.yaml:ro
       - ./pb-proxy/mcp_servers.yaml:/app/mcp_servers.yaml:ro

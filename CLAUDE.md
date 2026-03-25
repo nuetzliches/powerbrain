@@ -43,6 +43,7 @@ powerbrain/
 ├── shared/
 │   ├── __init__.py
 │   ├── llm_provider.py    ← OpenAI-compat LLM provider abstraction
+│   ├── telemetry.py       ← OTel init, trace_operation, MetricsAggregator
 │   └── tests/
 │       └── test_llm_provider.py
 ├── mcp-server/
@@ -327,6 +328,14 @@ The `docker_stack` fixture calls `docker compose down -v` before and after the t
 - **OPA Result Cache** — TTL cache for `check_opa_policy()` in MCP server. Key: `(role, classification, action)`. Only `pb.access.allow` is cached (deterministic). Configurable via `OPA_CACHE_TTL` (default 60s), `OPA_CACHE_ENABLED`.
 - **Batch Embedding** — `EmbeddingProvider.embed_batch()` sends multiple texts in one `/v1/embeddings` request. Used by ingestion pipeline with cache-aware partial batching.
 
+### Structured Telemetry
+All 4 services (mcp-server, proxy, reranker, ingestion) share a common telemetry module (`shared/telemetry.py`):
+
+- **OTel Tracing** — `init_telemetry(service_name)` creates TracerProvider + OTLP exporter to Tempo. Auto-instrumentation for FastAPI and httpx (W3C `traceparent` propagation). Configurable via `OTEL_ENABLED` (default `true`), `OTLP_ENDPOINT` (default `http://tempo:4317`).
+- **Per-Request Telemetry** — `RequestTelemetry` + `PipelineStep` dataclasses accumulate timing breakdown per request. `trace_operation()` context manager creates OTel span and records step simultaneously. Responses include `_telemetry` block when `TELEMETRY_IN_RESPONSE=true` (default).
+- **JSON Metrics Endpoint** — Each service exposes `GET /metrics/json` returning structured metrics from Prometheus registry via `MetricsAggregator`. Designed for demo-UI consumption without PromQL knowledge.
+- **Graceful degradation** — If OTel packages not installed or exporter unreachable, tracing silently disables. Prometheus metrics always available.
+
 ## Completed Features
 
 1. ✅ **Reranking** — Cross-Encoder service
@@ -347,6 +356,7 @@ The `docker_stack` fixture calls `docker compose down -v` before and after the t
 16. ✅ **Proxy Authentication** — API-key auth for proxy (`pb-proxy/auth.py`), identity propagation to MCP servers
 17. ✅ **Multi-MCP-Server Aggregation** — Proxy aggregates tools from N MCP servers with per-server auth, prefix namespacing, and OPA-controlled access (`pb.proxy.mcp_servers_allowed`)
 18. ✅ **T1 Production Hardening** — Embedding cache (in-process LRU), batch embedding API, OPA result cache, configurable PG pool sizes, Docker health checks for all services
+19. ✅ **Structured Telemetry** — Shared OTel module (`shared/telemetry.py`), per-request `_telemetry` in search/chat responses, `/metrics/json` endpoints on all 4 services (mcp-server, proxy, reranker, ingestion), W3C traceparent propagation via auto-instrumented httpx
 
 Details on all features: see `docs/architektur.md`
 
