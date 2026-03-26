@@ -85,11 +85,12 @@ powerbrain/
 ├── pb-proxy/
 │   ├── proxy.py           ← Main FastAPI application
 │   ├── auth.py            ← API-key auth (ProxyKeyVerifier, asyncpg)
+│   ├── middleware.py      ← ASGI auth middleware (global pb_ key validation)
 │   ├── tool_injection.py  ← Multi-server MCP tool discovery + merge
 │   ├── agent_loop.py      ← Tool-call execution loop with server routing
 │   ├── mcp_config.py      ← MCP server config model + YAML loader
 │   ├── config.py          ← Configuration
-│   ├── litellm_config.yaml← LLM provider config
+│   ├── litellm_config.yaml← LLM provider config (+ provider_keys section)
 │   ├── mcp_servers.yaml   ← MCP server connections (name, URL, auth)
 │   ├── Dockerfile
 │   └── requirements.txt
@@ -226,9 +227,20 @@ Sits between AI consumers and LLM providers:
 
 **Authentication:**
 - `AUTH_REQUIRED=true` (default) — every request needs `Authorization: Bearer pb_<key>`
+- Pure ASGI middleware (`ProxyAuthMiddleware` in `pb-proxy/middleware.py`) validates `pb_` tokens globally on all endpoints
 - `ProxyKeyVerifier` (`pb-proxy/auth.py`) validates against PostgreSQL `api_keys` table
+- Middleware populates ASGI `scope["state"]` with `agent_id` and `agent_role` for downstream use
 - Identity propagation: user's `pb_` key is forwarded to MCP servers (each tool call authenticated as the user)
-- LLM provider keys come from central config (env vars / Docker Secrets), never from user tokens
+- Exempt paths: `/health` and `/metrics/json` bypass auth
+
+**Per-Provider LLM Key Management:**
+- `X-Provider-Key` header allows clients to supply their own LLM provider API key
+- Per-provider `key_source` configured in `litellm_config.yaml` under `provider_keys` section:
+  - **central** (default): Uses env var / Docker Secret from `PROVIDER_KEY_MAP`; ignores `X-Provider-Key`
+  - **user**: Requires `X-Provider-Key` header from client; returns 401 if missing
+  - **hybrid**: Prefers `X-Provider-Key` header, falls back to env var / Docker Secret
+- Provider extracted from model string (e.g., `"anthropic/claude-3"` → `"anthropic"`)
+- Unconfigured providers default to `central` mode (backward compatible)
 
 **Multi-MCP-Server Aggregation:**
 - Configured via `pb-proxy/mcp_servers.yaml` (mounted as Docker volume)
@@ -241,7 +253,7 @@ Sits between AI consumers and LLM providers:
 - **Aliases** — short names from `litellm_config.yaml` (e.g., `"claude-opus"` → `anthropic/claude-opus-4-20250514`)
 - **Passthrough** — any `provider/model` format (e.g., `"anthropic/claude-3-5-haiku-20241022"`) routes directly via LiteLLM without config entries
 
-API key resolution: LLM provider keys from env vars / Docker Secrets (NOT from user Bearer tokens).
+API key resolution: LLM provider keys resolved per-provider via `key_source` config (central/user/hybrid). Default: env vars / Docker Secrets.
 
 Endpoints:
 - `GET /v1/models` — Lists configured model aliases (OpenAI-compatible)
@@ -250,7 +262,7 @@ Endpoints:
 
 Supports SSE streaming (`"stream": true`).
 OPA policies (`pb.proxy`) control: provider access, required tools, max iterations, MCP server access.
-Configuration: `pb-proxy/litellm_config.yaml` for aliases, `pb-proxy/mcp_servers.yaml` for MCP servers.
+Configuration: `pb-proxy/litellm_config.yaml` for aliases + `provider_keys`, `pb-proxy/mcp_servers.yaml` for MCP servers.
 
 ## Development
 
@@ -353,10 +365,11 @@ All 4 services (mcp-server, proxy, reranker, ingestion) share a common telemetry
 13. ✅ **Passthrough Routing** — Dual-mode model routing: aliases via Router + `provider/model` passthrough via direct LiteLLM
 14. ✅ **LLM Provider Abstraction** — OpenAI-compatible provider layer (`shared/llm_provider.py`), configurable backends for embedding + summarization, optional GPU stack (vLLM + TEI)
 15. ✅ **Context Layers (L0/L1/L2)** — Pre-computed abstracts (L0, ~100 tokens) and overviews (L1, ~500 tokens) at ingestion, `layer` param on search, `get_document` tool for drill-down (progressive loading, no separate OPA policy — access controlled by `pb.access`)
-16. ✅ **Proxy Authentication** — API-key auth for proxy (`pb-proxy/auth.py`), identity propagation to MCP servers
+16. ✅ **Proxy Authentication** — ASGI middleware (`pb-proxy/middleware.py`) for global `pb_` API-key auth, identity propagation to MCP servers
 17. ✅ **Multi-MCP-Server Aggregation** — Proxy aggregates tools from N MCP servers with per-server auth, prefix namespacing, and OPA-controlled access (`pb.proxy.mcp_servers_allowed`)
 18. ✅ **T1 Production Hardening** — Embedding cache (in-process LRU), batch embedding API, OPA result cache, configurable PG pool sizes, Docker health checks for all services
 19. ✅ **Structured Telemetry** — Shared OTel module (`shared/telemetry.py`), per-request `_telemetry` in search/chat responses, `/metrics/json` endpoints on all 4 services (mcp-server, proxy, reranker, ingestion), W3C traceparent propagation via auto-instrumented httpx
+20. ✅ **Per-Provider Key Management** — Flexible LLM API key resolution (central/user/hybrid modes) via `provider_keys` in `litellm_config.yaml`, `X-Provider-Key` header support
 
 Details on all features: see `docs/architektur.md`
 
