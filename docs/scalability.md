@@ -1,38 +1,38 @@
-# Skalierbarkeit & Load Balancing
+# Scalability & Load Balancing
 
-Architekturbetrachtung für Multi-Agent-Szenarien mit hoher paralleler Last.
+Architectural considerations for multi-agent scenarios with high parallel load.
 
 ---
 
-## Aktuelle Bottlenecks (Ist-Analyse)
+## Current Bottlenecks (As-Is Analysis)
 
-Bevor Horizontal Scaling hilft, müssen die per-Request-Bottlenecks behoben sein.
-Sonst skaliert man nur das Problem.
+Before horizontal scaling helps, the per-request bottlenecks must be fixed.
+Otherwise you just scale the problem.
 
-### Per-Request Bottlenecks (müssen zuerst behoben werden)
+### Per-Request Bottlenecks (must be fixed first)
 
-| Problem | Auswirkung | Fix |
-|---------|-----------|-----|
-| **50 serielle OPA-Calls** pro Suchanfrage (P2-1) | 1–2,5s Overhead allein für Policy-Checks | OPA-Batch oder Qdrant-Filter |
-| **Embedding sequenziell** (Ollama, ein Request nach dem anderen) | Bei 10 parallelen Agents warten alle aufeinander | Embedding-Cache + Batch-API |
-| **asyncpg Pool zu klein** (min=2, max=10) | Connection-Erschöpfung ab ~5 parallelen Agents | Pool-Größe + PgBouncer |
-| **MCP-Transport stdio** (P0-1) | Kein Netzwerkzugriff möglich | HTTP-Transport (Voraussetzung für alles) |
+| Problem | Impact | Fix |
+|---------|--------|-----|
+| **50 serial OPA calls** per search request (P2-1) | 1–2.5s overhead from policy checks alone | OPA batch or Qdrant filter |
+| **Embedding sequential** (Ollama, one request after another) | With 10 parallel agents, all wait for each other | Embedding cache + batch API |
+| **asyncpg pool too small** (min=2, max=10) | Connection exhaustion from ~5 parallel agents | Pool size + PgBouncer |
+| **MCP transport stdio** (P0-1) | No network access possible | HTTP transport (prerequisite for everything) |
 
-### Infrastruktur-Bottlenecks (werden durch Horizontal Scaling adressiert)
+### Infrastructure Bottlenecks (addressed by horizontal scaling)
 
-| Komponente | Bottleneck-Typ | Strategie |
-|-----------|---------------|-----------|
-| MCP-Server | CPU/IO-gebunden | Horizontal (stateless) |
-| Ollama (Embeddings) | GPU/CPU-gebunden, sequenziell | Batch-API + Cache + mehrere Instanzen |
-| vLLM / HF TEI | GPU-gebunden, intern gebaztcht | Mehrere Instanzen |
-| Reranker | CPU/GPU-gebunden | Horizontal (stateless) |
-| Qdrant | IO/Memory-gebunden | Nativer Cluster + Sharding |
-| PostgreSQL | IO-gebunden | PgBouncer + Read Replica |
+| Component | Bottleneck Type | Strategy |
+|-----------|----------------|----------|
+| MCP Server | CPU/IO-bound | Horizontal (stateless) |
+| Ollama (Embeddings) | GPU/CPU-bound, sequential | Batch API + cache + multiple instances |
+| vLLM / HF TEI | GPU-bound, internally batched | Multiple instances |
+| Reranker | CPU/GPU-bound | Horizontal (stateless) |
+| Qdrant | IO/Memory-bound | Native cluster + sharding |
+| PostgreSQL | IO-bound | PgBouncer + read replica |
 | OPA | CPU, in-memory | Horizontal trivial |
 
 ---
 
-## Ziel-Architektur (Multi-Agent, hohe Last)
+## Target Architecture (Multi-Agent, High Load)
 
 ```
                      Agents (n × parallel)
@@ -40,13 +40,13 @@ Sonst skaliert man nur das Problem.
                     ┌──────┴──────┐
                     │  Load       │
                     │  Balancer   │  (Traefik / Nginx / Envoy)
-                    │  + Rate     │  Rate-Limit pro Agent-ID
+                    │  + Rate     │  Rate-limit per agent ID
                     │  Limiting   │
                     └──────┬──────┘
                            │
           ┌────────────────┼────────────────┐
           ▼                ▼                ▼
-    MCP-Server 1     MCP-Server 2     MCP-Server N    (stateless, skalierbar)
+    MCP-Server 1     MCP-Server 2     MCP-Server N    (stateless, scalable)
           │                │                │
           └────────────────┼────────────────┘
                            │
@@ -57,13 +57,13 @@ Sonst skaliert man nur das Problem.
 │ Embedding   │   │   Qdrant        │   │   PostgreSQL    │
 │ Cache       │   │   Cluster       │   │   + PgBouncer   │
 │ (Redis)     │   │   (Sharding +   │   │   + Read Replica│
-└──────┬──────┘   │   Replikation)  │   └─────────────────┘
+└──────┬──────┘   │   Replication)  │   └─────────────────┘
        │          └─────────────────┘
        ▼
 ┌──────────────────────────────────┐
 │  Embedding Service Pool          │
 │  ├─ HF TEI 1 (GPU 0)             │
-│  ├─ HF TEI 2 (GPU 1)             │  ← oder vLLM multi-GPU
+│  ├─ HF TEI 2 (GPU 1)             │  ← or vLLM multi-GPU
 │  └─ Ollama (CPU Fallback)        │
 └──────────────────────────────────┘
 
@@ -75,22 +75,22 @@ Sonst skaliert man nur das Problem.
 
         ┌────────────────────┐
         │  OPA Pool          │
-        │  ├─ OPA 1          │  ← alle teilen dasselbe Bundle
+        │  ├─ OPA 1          │  ← all share the same bundle
         │  └─ OPA 2          │
         └────────────────────┘
 ```
 
 ---
 
-## Komponenten-Strategie im Detail
+## Component Strategy in Detail
 
-### MCP-Server (nach P0-1-Fix)
+### MCP Server (after P0-1 fix)
 
-Vollständig stateless — kein lokaler Zustand, alles in PG/Qdrant.
-Einfach horizontal skalierbar.
+Fully stateless — no local state, everything in PG/Qdrant.
+Easily horizontally scalable.
 
 ```yaml
-# docker-compose.yml (mit Replicas)
+# docker-compose.yml (with replicas)
 mcp-server:
   deploy:
     replicas: 3
@@ -99,27 +99,27 @@ mcp-server:
         cpus: '1.0'
         memory: 512M
 
-# ODER: Kubernetes HPA
+# OR: Kubernetes HPA
 # autoscaling: min=2, max=10, cpu-threshold=60%
 ```
 
-**Prometheus-Metriken bei mehreren Instanzen:**
-Jede Instanz exponiert `/metrics` auf ihrem eigenen Port. Prometheus scrapt
-alle Instanzen, unterscheidet über `instance`-Label. Kein Pushgateway nötig.
+**Prometheus metrics with multiple instances:**
+Each instance exposes `/metrics` on its own port. Prometheus scrapes
+all instances, differentiating via the `instance` label. No pushgateway needed.
 
-**Wichtig:** asyncpg-Pool-Größe an Replica-Anzahl anpassen:
+**Important:** Adjust asyncpg pool size to the number of replicas:
 ```
 max_connections (PG) = replicas × pool_max + overhead
-# 3 Replicas × 10 = 30 → PG max_connections: 50 reicht
-# Mit PgBouncer: keine direkte Relation mehr (s.u.)
+# 3 replicas × 10 = 30 → PG max_connections: 50 is sufficient
+# With PgBouncer: no direct relation anymore (see below)
 ```
 
 ---
 
-### Embedding-Cache (höchster ROI)
+### Embedding Cache (highest ROI)
 
-Gleiche Query → identischer Vektor. Cache-Hit-Rate in der Praxis: 40–70%
-(ähnliche Anfragen von Agents, wiederholte Lookups).
+Same query → identical vector. Cache hit rate in practice: 40–70%
+(similar requests from agents, repeated lookups).
 
 ```python
 # mcp-server/embedding_cache.py
@@ -156,7 +156,7 @@ async def embed_text(text: str) -> list[float]:
     return vector
 ```
 
-Redis-Konfiguration (docker-compose):
+Redis configuration (docker-compose):
 ```yaml
 redis:
   image: redis:7-alpine
@@ -173,22 +173,22 @@ redis:
 
 ---
 
-### OPA-Policy-Cache (P2-1-Fix + Skalierung)
+### OPA Policy Cache (P2-1 fix + scaling)
 
-Zwei Strategien, kombinierbar:
+Two strategies, combinable:
 
-**Strategie A: Qdrant-Payload-Filter statt OPA-Loop**
+**Strategy A: Qdrant payload filter instead of OPA loop**
 
-Klassifizierung bei Ingestion als Qdrant-Payload-Feld speichern und direkt
-als Suchfilter nutzen. OPA wird nur noch einmalig pro Request aufgerufen
-(Rollen-Prüfung), nicht mehr pro Ergebnis.
+Store classification at ingestion as a Qdrant payload field and use it
+directly as a search filter. OPA is then called only once per request
+(role check), no longer once per result.
 
 ```python
-# Statt: 50× OPA-Call in der Ergebnisliste
-# So: Klassifizierungsfilter direkt in Qdrant-Query
+# Instead of: 50× OPA calls in the result list
+# Like this: classification filter directly in Qdrant query
 
 allowed_classifications = _get_allowed_classifications(agent_role)
-# z.B. analyst → ["public", "internal"]
+# e.g. analyst → ["public", "internal"]
 
 qdrant_filter = Filter(
     must=[
@@ -198,15 +198,15 @@ qdrant_filter = Filter(
         )
     ]
 )
-# → ein OPA-Call für die Rolle, danach kein weiterer
+# → one OPA call for the role, no further calls after that
 ```
 
-**Strategie B: OPA-Entscheidungs-Cache (für komplexe Policies)**
+**Strategy B: OPA decision cache (for complex policies)**
 
 ```python
-# In-Memory LRU oder Redis
-# Cache-Key: (agent_role, classification, action)
-# TTL: 30s (Policies können sich ändern)
+# In-memory LRU or Redis
+# Cache key: (agent_role, classification, action)
+# TTL: 30s (policies can change)
 
 @lru_cache(maxsize=512)
 def _policy_cache_key(agent_role, classification, action):
@@ -217,9 +217,9 @@ def _policy_cache_key(agent_role, classification, action):
 
 ### PgBouncer (Connection Pooling)
 
-Verhindert PostgreSQL-Connection-Erschöpfung bei vielen MCP-Server-Replicas.
-PgBouncer hält wenige echte PG-Verbindungen offen, bedient beliebig viele
-Client-Verbindungen.
+Prevents PostgreSQL connection exhaustion with many MCP server replicas.
+PgBouncer keeps few real PG connections open, serving any number of
+client connections.
 
 ```yaml
 pgbouncer:
@@ -232,8 +232,8 @@ pgbouncer:
     POSTGRESQL_USERNAME: pb_admin
     POSTGRESQL_PASSWORD: ${PG_PASSWORD}
     PGBOUNCER_POOL_MODE: transaction      # transaction-level pooling
-    PGBOUNCER_MAX_CLIENT_CONN: 500        # max Clients
-    PGBOUNCER_DEFAULT_POOL_SIZE: 20       # echte PG-Verbindungen
+    PGBOUNCER_MAX_CLIENT_CONN: 500        # max clients
+    PGBOUNCER_DEFAULT_POOL_SIZE: 20       # real PG connections
     PGBOUNCER_MIN_POOL_SIZE: 5
   ports:
     - "5433:5432"
@@ -242,23 +242,23 @@ pgbouncer:
   restart: unless-stopped
 ```
 
-MCP-Server verbindet sich dann gegen PgBouncer statt direkt PG:
+MCP server then connects to PgBouncer instead of directly to PG:
 ```env
 POSTGRES_URL=postgresql://pb_admin:...@pgbouncer:5432/powerbrain
 ```
 
-**Wichtig bei `transaction`-Mode:** `LISTEN/NOTIFY` und `SET SESSION`-Statements
-funktionieren nicht — betrifft `app.current_user` in den Triggern (Snapshots,
-History). Workaround: Versioning-Operationen über dedizierte direkte PG-Verbindung.
+**Important with `transaction` mode:** `LISTEN/NOTIFY` and `SET SESSION` statements
+do not work — this affects `app.current_user` in the triggers (snapshots,
+history). Workaround: run versioning operations over a dedicated direct PG connection.
 
 ---
 
-### Qdrant-Cluster
+### Qdrant Cluster
 
-Qdrant unterstützt nativen Cluster-Betrieb mit Sharding und Replikation:
+Qdrant supports native cluster operation with sharding and replication:
 
 ```yaml
-# Qdrant Cluster-Node (Beispiel: 3 Nodes)
+# Qdrant cluster node (example: 3 nodes)
 qdrant-node-1:
   image: qdrant/qdrant:latest
   environment:
@@ -268,24 +268,24 @@ qdrant-node-1:
     - "6333:6333"
   # ...
 
-# Collections mit Replikation erstellen:
+# Create collections with replication:
 # PUT /collections/pb_general
 # {
 #   "vectors": {"size": 768, "distance": "Cosine"},
-#   "shard_number": 3,       ← über alle Nodes verteilt
-#   "replication_factor": 2  ← jeder Shard auf 2 Nodes
+#   "shard_number": 3,       ← distributed across all nodes
+#   "replication_factor": 2  ← each shard on 2 nodes
 # }
 ```
 
-Für die meisten Setups (< 10M Vektoren, < 100 QPS) reicht ein einzelner
-Qdrant-Node problemlos. Cluster erst ab messbarem Bedarf.
+For most setups (< 10M vectors, < 100 QPS) a single
+Qdrant node is sufficient. Use cluster only when there is measurable demand.
 
 ---
 
 ### Embedding Service Pool
 
 ```yaml
-# HF TEI mit mehreren Instanzen (eine pro GPU)
+# HF TEI with multiple instances (one per GPU)
 tei-1:
   image: ghcr.io/huggingface/text-embeddings-inference:latest
   profiles: ["gpu"]
@@ -310,7 +310,7 @@ tei-2:
             device_ids: ["1"]
             capabilities: [gpu]
 
-# Nginx als Load Balancer vor TEI-Instanzen:
+# Nginx as load balancer in front of TEI instances:
 tei-lb:
   image: nginx:alpine
   profiles: ["gpu"]
@@ -323,7 +323,7 @@ tei-lb:
 ```nginx
 # config/tei-nginx.conf
 upstream tei_pool {
-    least_conn;           # kürzeste Warteschlange
+    least_conn;           # shortest queue
     server tei-1:80;
     server tei-2:80;
 }
@@ -333,21 +333,21 @@ server {
 }
 ```
 
-HF TEI unterstützt batch-Embedding intern (dynamic batching) — mehrere
-simultane Requests werden automatisch zusammengefasst.
+HF TEI supports batch embedding internally (dynamic batching) — multiple
+simultaneous requests are automatically grouped together.
 
 ---
 
-### Reranker-Pool
+### Reranker Pool
 
-Stateless, einfach horizontal:
+Stateless, easily horizontal:
 
 ```yaml
 reranker:
   deploy:
     replicas: 2
 
-# Traefik-Labels für automatische Service-Discovery:
+# Traefik labels for automatic service discovery:
 labels:
   - "traefik.enable=true"
   - "traefik.http.services.reranker.loadbalancer.server.port=8082"
@@ -355,15 +355,15 @@ labels:
 
 ---
 
-### Batch-Embedding für die Ingestion-Pipeline
+### Batch Embedding for the Ingestion Pipeline
 
-Bei der Ingestion werden viele Dokumente sequenziell embedded. Batch-API
-nutzbar (HF TEI + vLLM unterstützen `list[str]` Input):
+During ingestion, many documents are embedded sequentially. The batch API
+can be used (HF TEI + vLLM support `list[str]` input):
 
 ```python
 async def embed_batch(texts: list[str]) -> list[list[float]]:
-    """Embeddet mehrere Texte in einem einzigen API-Call."""
-    # Prüfen ob im Cache
+    """Embeds multiple texts in a single API call."""
+    # Check if in cache
     results   = [None] * len(texts)
     uncached  = []
     indices   = []
@@ -377,7 +377,7 @@ async def embed_batch(texts: list[str]) -> list[list[float]]:
             indices.append(i)
 
     if uncached:
-        # Batch-Call (OpenAI-Format: input = list)
+        # Batch call (OpenAI format: input = list)
         resp = await http.post(f"{EMBEDDING_PROVIDER_URL}/v1/embeddings", json={
             "model": EMBEDDING_MODEL,
             "input": uncached,  # list → batch
@@ -393,10 +393,10 @@ async def embed_batch(texts: list[str]) -> list[list[float]]:
 
 ---
 
-### Load Balancer: Traefik (empfohlen für Docker)
+### Load Balancer: Traefik (recommended for Docker)
 
-Traefik erkennt Container automatisch über Docker-Labels, kein manuelles
-Nginx-Config-Reloading nötig:
+Traefik automatically detects containers via Docker labels, no manual
+Nginx config reloading required:
 
 ```yaml
 traefik:
@@ -409,8 +409,8 @@ traefik:
     - "--entrypoints.mcp.address=:8080"
   ports:
     - "80:80"
-    - "8080:8080"   # MCP-Endpunkt (nach P0-1-Fix)
-    - "8888:8080"   # Traefik Dashboard
+    - "8080:8080"   # MCP endpoint (after P0-1 fix)
+    - "8888:8080"   # Traefik dashboard
   volumes:
     - /var/run/docker.sock:/var/run/docker.sock:ro
   networks:
@@ -425,69 +425,69 @@ mcp-server:
     - "traefik.http.routers.mcp.entrypoints=mcp"
     - "traefik.http.services.mcp.loadbalancer.server.port=8080"
     - "traefik.http.services.mcp.loadbalancer.healthcheck.path=/health"
-    # Rate-Limiting: max 100 req/min pro Agent-IP
+    # Rate limiting: max 100 req/min per agent IP
     - "traefik.http.middlewares.mcp-ratelimit.ratelimit.average=100"
     - "traefik.http.middlewares.mcp-ratelimit.ratelimit.burst=20"
 ```
 
 ---
 
-## Skalierungsstufen
+## Scaling Levels
 
-### Stufe 1: Einzelmaschine, wenige Agents (aktueller Stand nach P0-Fix)
+### Level 1: Single machine, few agents (current state after P0 fix)
 
 ```
-1× MCP-Server → Ollama (CPU) → Qdrant (single) → PostgreSQL (direct)
+1× MCP Server → Ollama (CPU) → Qdrant (single) → PostgreSQL (direct)
 ```
 
-Reicht für: Entwicklung, 1–3 gleichzeitige Agents, < 50 req/min
+Sufficient for: development, 1–3 concurrent agents, < 50 req/min
 
-**Schnellste Verbesserungen:**
-1. Embedding-Cache (Redis) → sofort -40% Ollama-Last
-2. OPA-Fix (P2-1, Qdrant-Filter) → sofort -1–2s pro Suchanfrage
+**Fastest improvements:**
+1. Embedding cache (Redis) → immediate -40% Ollama load
+2. OPA fix (P2-1, Qdrant filter) → immediate -1–2s per search request
 
 ---
 
-### Stufe 2: Einzelmaschine mit GPU, moderate Last
+### Level 2: Single machine with GPU, moderate load
 
 ```
-2× MCP-Server → HF TEI (GPU) → Qdrant (single) → PgBouncer → PostgreSQL
+2× MCP Server → HF TEI (GPU) → Qdrant (single) → PgBouncer → PostgreSQL
              → vLLM (GPU, optional)
              → 2× Reranker
-Traefik als Load Balancer
-Redis für Embedding-Cache
+Traefik as load balancer
+Redis for embedding cache
 ```
 
-Reicht für: 5–20 gleichzeitige Agents, < 500 req/min
+Sufficient for: 5–20 concurrent agents, < 500 req/min
 
 ---
 
-### Stufe 3: Multi-Node, hohe Last
+### Level 3: Multi-node, high load
 
 ```
 Traefik Cluster
     ↓
-N× MCP-Server (verschiedene Nodes)
-    → TEI/vLLM Pool (GPU-Nodes)
-    → Qdrant Cluster (3 Nodes, Sharding + Replikation)
+N× MCP Server (different nodes)
+    → TEI/vLLM Pool (GPU nodes)
+    → Qdrant Cluster (3 nodes, sharding + replication)
     → PgBouncer → PG Primary + 1× Read Replica
-    → OPA Pool (2–3 Instanzen)
-    → Reranker Pool (GPU oder CPU)
-Redis Cluster für Embedding-Cache
+    → OPA Pool (2–3 instances)
+    → Reranker Pool (GPU or CPU)
+Redis Cluster for embedding cache
 ```
 
-Reicht für: 50+ gleichzeitige Agents, > 1000 req/min
+Sufficient for: 50+ concurrent agents, > 1000 req/min
 
 ---
 
-### Stufe 4: Kubernetes
+### Level 4: Kubernetes
 
-Ab Stufe 3 wird Kubernetes sinnvoll: HPA (Horizontal Pod Autoscaler) skaliert
-MCP-Server und Reranker automatisch nach CPU/Request-Rate. Qdrant und PostgreSQL
-laufen als StatefulSets.
+From level 3 onwards, Kubernetes becomes worthwhile: HPA (Horizontal Pod Autoscaler)
+scales MCP server and reranker automatically based on CPU/request rate. Qdrant and
+PostgreSQL run as StatefulSets.
 
 ```yaml
-# Kubernetes HPA für MCP-Server
+# Kubernetes HPA for MCP Server
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -512,30 +512,30 @@ spec:
           name: pb_mcp_requests_total
         target:
           type: AverageValue
-          averageValue: "50"   # max 50 req/s pro Pod
+          averageValue: "50"   # max 50 req/s per pod
 ```
 
 ---
 
-## Ingestion unter Last: Queue-basiertes Design
+## Ingestion Under Load: Queue-Based Design
 
-Aktuell: Ingestion ist synchron (Request → warte → Response).
-Bei vielen parallelen Ingestions blockiert das den HTTP-Thread.
+Currently: ingestion is synchronous (request → wait → response).
+With many parallel ingestions this blocks the HTTP thread.
 
-**Empfehlung: Async Job Queue (Redis Streams oder Postgres LISTEN/NOTIFY)**
+**Recommendation: Async job queue (Redis Streams or Postgres LISTEN/NOTIFY)**
 
 ```
-POST /ingest → Job in Queue → 202 Accepted + job_id
+POST /ingest → Job in queue → 202 Accepted + job_id
                     ↓
-             Worker Pool (3× Ingestion Worker)
+             Worker Pool (3× ingestion worker)
                     ↓
              embed_batch() → Qdrant upsert
                     ↓
-             Job Status in PG → GET /ingest/status/{job_id}
+             Job status in PG → GET /ingest/status/{job_id}
 ```
 
 ```python
-# Einfachste Implementierung mit PostgreSQL (kein extra Queue-Service):
+# Simplest implementation with PostgreSQL (no extra queue service):
 CREATE TABLE ingestion_jobs (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     status      VARCHAR(20) DEFAULT 'queued',  -- queued, processing, done, failed
@@ -547,27 +547,27 @@ CREATE TABLE ingestion_jobs (
     error       TEXT,
     result      JSONB
 );
--- Worker pollt: SELECT ... WHERE status='queued' FOR UPDATE SKIP LOCKED
+-- Worker polls: SELECT ... WHERE status='queued' FOR UPDATE SKIP LOCKED
 ```
 
-`FOR UPDATE SKIP LOCKED` ist der PostgreSQL-native Mechanismus für
-worker-safe Job-Queues ohne Redis/RabbitMQ.
+`FOR UPDATE SKIP LOCKED` is the PostgreSQL-native mechanism for
+worker-safe job queues without Redis/RabbitMQ.
 
 ---
 
-## Zusammenfassung: Prioritäten
+## Summary: Priorities
 
-| Maßnahme | Wann | Aufwand | Wirkung |
-|----------|------|---------|---------|
-| P0-1 Fix (HTTP Transport) | Sofort | Mittel | Voraussetzung für alles |
-| OPA-Fix (Qdrant-Filter, P2-1) | Sofort | Klein | -1–2s pro Suchanfrage |
-| Embedding-Cache (Redis) | Früh | Klein | -40–70% Embedding-Last |
-| PgBouncer | Früh | Klein | Connection-Stabilität |
-| Batch-Embedding in Ingestion | Früh | Klein | 5–10× Ingestion-Throughput |
-| MCP-Server horizontal (2–3×) + Traefik | Stufe 2 | Mittel | Parallelität |
-| HF TEI / vLLM statt Ollama | Stufe 2 | Mittel | Embedding-Throughput |
-| Reranker Pool | Stufe 2 | Klein | Reranking-Parallelität |
-| Ingestion Job Queue | Stufe 2 | Mittel | Entkopplung, Backpressure |
-| Qdrant Cluster | Stufe 3 | Groß | Nur bei > 5M Vektoren nötig |
-| PG Read Replica | Stufe 3 | Mittel | Analytics / Eval-Queries |
-| Kubernetes + HPA | Stufe 4 | Groß | Autoscaling |
+| Measure | When | Effort | Impact |
+|---------|------|--------|--------|
+| P0-1 fix (HTTP transport) | Immediately | Medium | Prerequisite for everything |
+| OPA fix (Qdrant filter, P2-1) | Immediately | Small | -1–2s per search request |
+| Embedding cache (Redis) | Early | Small | -40–70% embedding load |
+| PgBouncer | Early | Small | Connection stability |
+| Batch embedding in ingestion | Early | Small | 5–10× ingestion throughput |
+| MCP server horizontal (2–3×) + Traefik | Level 2 | Medium | Parallelism |
+| HF TEI / vLLM instead of Ollama | Level 2 | Medium | Embedding throughput |
+| Reranker pool | Level 2 | Small | Reranking parallelism |
+| Ingestion job queue | Level 2 | Medium | Decoupling, backpressure |
+| Qdrant cluster | Level 3 | Large | Only needed above > 5M vectors |
+| PG read replica | Level 3 | Medium | Analytics / eval queries |
+| Kubernetes + HPA | Level 4 | Large | Autoscaling |

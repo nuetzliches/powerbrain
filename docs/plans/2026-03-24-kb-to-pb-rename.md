@@ -692,16 +692,16 @@ git commit -m "docs: update CLAUDE.md for kb → pb rename"
 
 **Files:**
 - Modify: `README.md`
-- Modify: `docs/architektur.md`
+- Modify: `docs/architecture.md`
 - Modify: `docs/deployment.md`
-- Modify: `docs/skalierbarkeit.md`
-- Modify: `docs/technologie-entscheidungen.md`
+- Modify: `docs/scalability.md`
+- Modify: `docs/technology-decisions.md`
 
 - [ ] **Step 1: Update README.md**
 
 Replace Qdrant collection creation commands: `knowledge_general knowledge_code knowledge_rules` → `pb_general pb_code pb_rules` and any other `kb` references.
 
-- [ ] **Step 2: Update docs/architektur.md**
+- [ ] **Step 2: Update docs/architecture.md**
 
 Replace collection names (`knowledge_general`, `knowledge_code`, `knowledge_rules` → `pb_general`, `pb_code`, `pb_rules`) and any `kb_` metric references.
 
@@ -709,11 +709,11 @@ Replace collection names (`knowledge_general`, `knowledge_code`, `knowledge_rule
 
 Replace collection names in setup commands and any `kb` references.
 
-- [ ] **Step 4: Update docs/skalierbarkeit.md**
+- [ ] **Step 4: Update docs/scalability.md**
 
 Replace `knowledge_general` → `pb_general` in collection examples.
 
-- [ ] **Step 5: Update docs/technologie-entscheidungen.md**
+- [ ] **Step 5: Update docs/technology-decisions.md**
 
 Replace `kb-org` → `pb-org` and any other `kb` references.
 

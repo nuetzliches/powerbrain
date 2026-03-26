@@ -126,9 +126,9 @@ curl http://localhost:8090/v1/chat/completions \
 | Document | Description |
 |----------|-------------|
 | [What is Powerbrain?](docs/what-is-powerbrain.md) | Detailed overview and positioning |
-| [Architecture](docs/architektur.md) | Technical deep-dive |
+| [Architecture](docs/architecture.md) | Technical deep-dive |
 | [Deployment Guide](docs/deployment.md) | Dev, production, TLS, Docker Secrets |
-| [Technology Decisions](docs/technologie-entscheidungen.md) | ADRs and trade-offs |
+| [Technology Decisions](docs/technology-decisions.md) | ADRs and trade-offs |
 | [CLAUDE.md](CLAUDE.md) | Agent-facing reference (tools, schemas, conventions) |
 
 ## 🤝 Contributing

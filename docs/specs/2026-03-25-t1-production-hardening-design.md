@@ -13,7 +13,7 @@ Powerbrain's hot path (`search_knowledge`) currently takes 2.5–3.6s per reques
 3. **DB pool sizes** hardcoded — no env var tuning without code changes.
 4. **Health checks** missing for mcp-server, ingestion, ollama — Docker can't restart failed containers.
 
-`docs/skalierbarkeit.md` documents these bottlenecks and defines a T1–T4 priority scheme. This spec covers T1 only.
+`docs/scalability.md` documents these bottlenecks and defines a T1–T4 priority scheme. This spec covers T1 only.
 
 ## Constraints
 

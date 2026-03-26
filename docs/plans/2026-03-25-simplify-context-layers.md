@@ -26,7 +26,7 @@
 - `docker-compose.yml` — Remove `SUMMARIZATION_MODEL` fallback from mcp-server `LLM_MODEL`
 - `.env.example` — Remove legacy `SUMMARIZATION_MODEL` comment
 - `CLAUDE.md` — Update Context Layers and Summarization documentation
-- `docs/architektur.md` — Update layer section (remove OPA access control description)
+- `docs/architecture.md` — Update layer section (remove OPA access control description)
 
 ### Create (tests)
 - `mcp-server/tests/test_layer_filter.py` — Tests for `_build_qdrant_filter` with layer param (subset of old tests, no OPA)
@@ -449,7 +449,7 @@ git add -A && git commit -m "test: add simplified layer generation tests for ing
 **Files:**
 - Modify: `CLAUDE.md:150-157` (Summarization section — remove `SUMMARIZATION_MODEL` mention)
 - Modify: `CLAUDE.md:180` (Context Layers feature — remove OPA layer mention)
-- Modify: `docs/architektur.md:322-351` (Layer section — remove OPA access control)
+- Modify: `docs/architecture.md:322-351` (Layer section — remove OPA access control)
 - Modify: `.env.example:42` (already done in Task 3)
 
 - [ ] **Step 1: Update CLAUDE.md — remove SUMMARIZATION_MODEL backward-compat line**
@@ -460,7 +460,7 @@ Backward compat: `SUMMARIZATION_MODEL` still read as fallback if `LLM_MODEL` not
 ```
 with nothing (delete the line).
 
-- [ ] **Step 2: Update docs/architektur.md — simplify layer section**
+- [ ] **Step 2: Update docs/architecture.md — simplify layer section**
 
 Replace the OPA access control part of the layer section (lines ~342-346):
 

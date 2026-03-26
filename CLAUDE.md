@@ -97,11 +97,11 @@ powerbrain/
 └── docs/
     ├── what-is-powerbrain.md       ← Detailed overview and positioning
     ├── deployment.md               ← Dev, prod, TLS, Docker Secrets guide
-    ├── architektur.md              ← Technical deep-dive (components, GDPR)
+    ├── architecture.md             ← Technical deep-dive (components, GDPR)
     ├── KNOWN_ISSUES.md             ← Resolved issues archive (P0–P3)
-    ├── technologie-entscheidungen.md ← ADRs (VLM, vLLM, Git adapter, OTel)
-    ├── skalierbarkeit.md           ← Scaling, load balancing, caching
-    └── dsgvo-externe-ki-dienste.md ← Legal assessment for external LLMs
+    ├── technology-decisions.md     ← ADRs (VLM, vLLM, Git adapter, OTel)
+    ├── scalability.md              ← Scaling, load balancing, caching
+    └── gdpr-external-ai-services.md ← Legal assessment for external LLMs
 ```
 
 ## Components and Ports
@@ -371,7 +371,7 @@ All 4 services (mcp-server, proxy, reranker, ingestion) share a common telemetry
 19. ✅ **Structured Telemetry** — Shared OTel module (`shared/telemetry.py`), per-request `_telemetry` in search/chat responses, `/metrics/json` endpoints on all 4 services (mcp-server, proxy, reranker, ingestion), W3C traceparent propagation via auto-instrumented httpx
 20. ✅ **Per-Provider Key Management** — Flexible LLM API key resolution (central/user/hybrid modes) via `provider_keys` in `litellm_config.yaml`, `X-Provider-Key` header support
 
-Details on all features: see `docs/architektur.md`
+Details on all features: see `docs/architecture.md`
 
 ## Code Conventions
 
