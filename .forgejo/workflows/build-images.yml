@@ -1,0 +1,20 @@
+name: Build & Push Images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mcp-server/**'
+      - 'ingestion/**'
+      - 'reranker/**'
+      - 'pb-proxy/**'
+      - 'shared/**'
+      - 'init-db/**'
+      - 'opa-policies/**'
+
+jobs:
+  detect:
+    runs-on: baumeister-runner
+    steps:
+      - name: Detect and build changed images
+        run: /opt/_deploy/powerbrain/scripts/build-images.sh

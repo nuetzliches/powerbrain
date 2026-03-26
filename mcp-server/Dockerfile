@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY shared/ /app/shared/
 COPY mcp-server/*.py ./
+COPY init-db/ /app/init-db/
 
 EXPOSE 8080
 
