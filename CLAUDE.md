@@ -457,3 +457,4 @@ Tasks to complete before open-sourcing the repository:
 - [ ] **Review `.env.example`** — Ensure no real credentials or internal hostnames leaked
 - [ ] **Add LICENSE file** — Choose and add an open-source license
 - [ ] **Add generic GitHub Actions CI** — Replace Forgejo-specific workflows with GitHub Actions equivalents for the public repo
+- [ ] **Enable branch protection on `master`** — Requires GitHub Pro or public repo. Settings: require PR, require status checks (`unit-tests`, `opa-tests`, `docker-build`), disable direct push
