@@ -17,8 +17,10 @@ jobs:
   build:
     runs-on: baumeister-runner
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
       - name: Detect and build changed images
-        run: |
-          export REPO_DIR="$GITHUB_WORKSPACE"
-          cd "$REPO_DIR"
-          bash scripts/build-images.sh
+        run: bash scripts/build-images.sh
