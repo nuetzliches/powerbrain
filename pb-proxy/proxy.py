@@ -127,6 +127,7 @@ direct_acompletion: Any = None      # LiteLLM direct (for passthrough)
 model_list: list[dict[str, Any]] = []
 known_aliases: set[str] = set()     # Model names configured in Router
 key_verifier = ProxyKeyVerifier()
+provider_key_config: dict[str, str] = {}
 
 
 # ── OPA Helper ───────────────────────────────────────────────
@@ -218,10 +219,11 @@ def _load_llm_router() -> tuple[Any | None, Any, list[dict[str, Any]], set[str]]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global http_client, pii_http_client, router_acompletion, direct_acompletion, model_list, known_aliases
+    global http_client, pii_http_client, router_acompletion, direct_acompletion, model_list, known_aliases, provider_key_config
     http_client = httpx.AsyncClient(timeout=config.REQUEST_TIMEOUT)
     pii_http_client = httpx.AsyncClient(timeout=10)
     router_acompletion, direct_acompletion, model_list, known_aliases = _load_llm_router()
+    provider_key_config = config.load_provider_key_config()
     prom_start_http_server(config.METRICS_PORT)
     log.info("Prometheus metrics on port %d", config.METRICS_PORT)
 
@@ -363,7 +365,11 @@ def _parse_prom_labels(key: str) -> dict[str, str]:
     return labels
 
 
-def _resolve_provider_key(model: str) -> tuple[Any, dict[str, Any]]:
+def _resolve_provider_key(
+    model: str,
+    provider_key_header: str | None = None,
+    provider_key_config: dict[str, str] | None = None,
+) -> tuple[Any, dict[str, Any]]:
     """Determine which acompletion callable + extra kwargs to use.
 
     For known aliases: use Router.
@@ -388,17 +394,37 @@ def _resolve_provider_key(model: str) -> tuple[Any, dict[str, Any]]:
             ),
         )
 
-    provider = model.split("/")[0]
-
-    # Resolve API key: provider env var → reject
-    if provider in config.PROVIDER_KEY_MAP:
-        extra_kwargs["api_key"] = config.PROVIDER_KEY_MAP[provider]
-    else:
-        raise HTTPException(
-            status_code=401,
-            detail=f"No API key configured for provider '{provider}'. "
-                   f"Configure {provider.upper()}_API_KEY as env var / Docker Secret.",
-        )
+    provider = _extract_provider(model)
+    
+    key_source = (provider_key_config or {}).get(provider, "central")
+    
+    if key_source == "user":
+        if not provider_key_header:
+            raise HTTPException(
+                status_code=401,
+                detail=f"Provider '{provider}' requires X-Provider-Key header",
+            )
+        extra_kwargs["api_key"] = provider_key_header
+    elif key_source == "hybrid":
+        if provider_key_header:
+            extra_kwargs["api_key"] = provider_key_header
+        elif provider in config.PROVIDER_KEY_MAP:
+            extra_kwargs["api_key"] = config.PROVIDER_KEY_MAP[provider]
+        else:
+            raise HTTPException(
+                status_code=401,
+                detail=f"No API key available for provider '{provider}'. "
+                       f"Supply X-Provider-Key header or configure {provider.upper()}_API_KEY.",
+            )
+    else:  # "central" (default)
+        if provider in config.PROVIDER_KEY_MAP:
+            extra_kwargs["api_key"] = config.PROVIDER_KEY_MAP[provider]
+        else:
+            raise HTTPException(
+                status_code=401,
+                detail=f"No API key configured for provider '{provider}'. "
+                       f"Configure {provider.upper()}_API_KEY as env var / Docker Secret.",
+            )
 
     return direct_acompletion, extra_kwargs
 
@@ -414,6 +440,9 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
         agent_id = getattr(raw_request.state, "agent_id", "anonymous")
         agent_role = getattr(raw_request.state, "agent_role", "developer")
         user_api_key = getattr(raw_request.state, "bearer_token", None)
+        
+        # Extract provider key from header
+        provider_key_header = raw_request.headers.get("x-provider-key")
 
         # OPA policy check
         policy = await check_opa_policy(
@@ -505,7 +534,11 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
             litellm_kwargs["top_p"] = request.top_p
 
         # Resolve routing: alias → Router, provider/model → direct
-        acompletion, routing_kwargs = _resolve_provider_key(model=request.model)
+        acompletion, routing_kwargs = _resolve_provider_key(
+            model=request.model,
+            provider_key_header=provider_key_header,
+            provider_key_config=provider_key_config,
+        )
         litellm_kwargs.update(routing_kwargs)
 
         # Run agent loop
