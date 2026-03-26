@@ -23,7 +23,16 @@ jobs:
             "https://oauth2:${GITHUB_TOKEN}@git.nuetzliche.it/nuts/powerbrain.git" workspace
           cd workspace
 
+      - name: Login to Forgejo Registry
+        run: |
+          echo "${REGISTRY_PASSWORD}" | docker login git.nuetzliche.it -u "${REGISTRY_USER}" --password-stdin
+        env:
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+
       - name: Detect and build changed images
         run: |
           cd workspace
           bash scripts/build-images.sh
+        env:
+          FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}

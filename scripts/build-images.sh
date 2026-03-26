@@ -33,9 +33,15 @@ declare -A IMAGES=(
 )
 
 # ── Detect changes ──────────────────────────────────────────
-# If shared/ or init-db/ or opa-policies/ changed, rebuild all
-changed=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "ALL")
+# Force rebuild all on workflow_dispatch or if diff fails
+if [ "${FORCE_BUILD:-false}" = "true" ]; then
+  changed="ALL"
+  log "FORCE_BUILD=true, rebuilding all images."
+else
+  changed=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "ALL")
+fi
 
+# If shared/ or init-db/ or opa-policies/ changed, rebuild all
 rebuild_all=false
 if echo "$changed" | grep -qE '^(shared/|init-db/|opa-policies/)' || [ "$changed" = "ALL" ]; then
   rebuild_all=true
