@@ -14,6 +14,18 @@
 #   - Non-standard routing (e.g. GitHub Models, custom API base URLs)
 #   - Multi-key rotation / load balancing (LiteLLM Router feature)
 
+# ── Provider Key Sources ────────────────────────────────────
+# Controls how LLM provider API keys are resolved per provider.
+# Options: central (default), user, hybrid
+#   central — use env var / Docker Secret (default, backward-compatible)
+#   user    — require X-Provider-Key header from client
+#   hybrid  — try X-Provider-Key first, fall back to central
+#
+# provider_keys:
+#   anthropic: central
+#   openai: hybrid
+#   github: central
+
 model_list:
   # ── GitHub Models (via PAT) ────────────────────────────────
   # Uses GitHub Models API — needs alias because the provider prefix

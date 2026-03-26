@@ -104,6 +104,14 @@ def test_auth_required_valid_key(mock_base_deps, mock_verifier):
     with patch("config.AUTH_REQUIRED", True), \
          patch("proxy.key_verifier", mock_verifier):
         from proxy import app
+        from middleware import ProxyAuthMiddleware
+        # Middleware captured the original key_verifier at registration time.
+        # Patch the stored kwargs so the middleware stack is built with our mock.
+        app.middleware_stack = None  # force rebuild
+        for mw in app.user_middleware:
+            if mw.cls is ProxyAuthMiddleware:
+                mw.kwargs["key_verifier"] = mock_verifier
+                break
         client = TestClient(app, raise_server_exceptions=False)
         response = client.post(
             "/v1/chat/completions",

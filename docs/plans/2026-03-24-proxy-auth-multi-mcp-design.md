@@ -264,6 +264,7 @@ before injection into the LLM request.
 - Granular scopes / Phase 2 (deferred, documented in api-key-auth-design.md)
 - Connection pooling for MCP sessions (backlog)
 - Client tool passthrough (backlog)
+- External IdP / OIDC support (backlog) — e.g. Authentik, Keycloak; verifier-chain in middleware dispatches `pb_` → DB lookup, JWT → OIDC validation + claim-to-role mapping
 - User-supplied LLM provider keys (not needed)
 
 ## 8. Backward Compatibility

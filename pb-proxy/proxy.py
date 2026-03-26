@@ -32,6 +32,7 @@ from prometheus_client import (
 )
 
 import config
+from middleware import ProxyAuthMiddleware
 
 # Try to import telemetry - fallback if not available (for tests)
 try:
@@ -74,6 +75,7 @@ from pii_middleware import (
     build_system_hint,
 )
 from auth import ProxyKeyVerifier
+from middleware import ProxyAuthMiddleware
 
 # ── Logging ──────────────────────────────────────────────────
 
@@ -125,6 +127,7 @@ direct_acompletion: Any = None      # LiteLLM direct (for passthrough)
 model_list: list[dict[str, Any]] = []
 known_aliases: set[str] = set()     # Model names configured in Router
 key_verifier = ProxyKeyVerifier()
+provider_key_config: dict[str, str] = {}
 
 
 # ── OPA Helper ───────────────────────────────────────────────
@@ -170,6 +173,19 @@ class ChatCompletionRequest(BaseModel):
     model_config = {"extra": "allow"}
 
 
+# ── Helper Functions ─────────────────────────────────────────
+
+def _extract_provider(model: str) -> str | None:
+    """Extract provider prefix from model string.
+    
+    'anthropic/claude-opus-4-20250514' → 'anthropic'
+    'gpt-4o' (alias) → None
+    """
+    if "/" in model:
+        return model.split("/")[0]
+    return None
+
+
 # ── LLM Router ───────────────────────────────────────────────
 
 def _load_llm_router() -> tuple[Any | None, Any, list[dict[str, Any]], set[str]]:
@@ -203,10 +219,11 @@ def _load_llm_router() -> tuple[Any | None, Any, list[dict[str, Any]], set[str]]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global http_client, pii_http_client, router_acompletion, direct_acompletion, model_list, known_aliases
+    global http_client, pii_http_client, router_acompletion, direct_acompletion, model_list, known_aliases, provider_key_config
     http_client = httpx.AsyncClient(timeout=config.REQUEST_TIMEOUT)
     pii_http_client = httpx.AsyncClient(timeout=10)
     router_acompletion, direct_acompletion, model_list, known_aliases = _load_llm_router()
+    provider_key_config = config.load_provider_key_config()
     prom_start_http_server(config.METRICS_PORT)
     log.info("Prometheus metrics on port %d", config.METRICS_PORT)
 
@@ -241,6 +258,8 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+app.add_middleware(ProxyAuthMiddleware, key_verifier=key_verifier)
 
 _proxy_tracer = init_telemetry("pb-proxy")
 setup_auto_instrumentation(app)
@@ -346,7 +365,11 @@ def _parse_prom_labels(key: str) -> dict[str, str]:
     return labels
 
 
-def _resolve_provider_key(model: str) -> tuple[Any, dict[str, Any]]:
+def _resolve_provider_key(
+    model: str,
+    provider_key_header: str | None = None,
+    provider_key_config: dict[str, str] | None = None,
+) -> tuple[Any, dict[str, Any]]:
     """Determine which acompletion callable + extra kwargs to use.
 
     For known aliases: use Router.
@@ -371,17 +394,37 @@ def _resolve_provider_key(model: str) -> tuple[Any, dict[str, Any]]:
             ),
         )
 
-    provider = model.split("/")[0]
-
-    # Resolve API key: provider env var → reject
-    if provider in config.PROVIDER_KEY_MAP:
-        extra_kwargs["api_key"] = config.PROVIDER_KEY_MAP[provider]
-    else:
-        raise HTTPException(
-            status_code=401,
-            detail=f"No API key configured for provider '{provider}'. "
-                   f"Configure {provider.upper()}_API_KEY as env var / Docker Secret.",
-        )
+    provider = _extract_provider(model)
+    
+    key_source = (provider_key_config or {}).get(provider, "central")
+    
+    if key_source == "user":
+        if not provider_key_header:
+            raise HTTPException(
+                status_code=401,
+                detail=f"Provider '{provider}' requires X-Provider-Key header",
+            )
+        extra_kwargs["api_key"] = provider_key_header
+    elif key_source == "hybrid":
+        if provider_key_header:
+            extra_kwargs["api_key"] = provider_key_header
+        elif provider in config.PROVIDER_KEY_MAP:
+            extra_kwargs["api_key"] = config.PROVIDER_KEY_MAP[provider]
+        else:
+            raise HTTPException(
+                status_code=401,
+                detail=f"No API key available for provider '{provider}'. "
+                       f"Supply X-Provider-Key header or configure {provider.upper()}_API_KEY.",
+            )
+    else:  # "central" (default)
+        if provider in config.PROVIDER_KEY_MAP:
+            extra_kwargs["api_key"] = config.PROVIDER_KEY_MAP[provider]
+        else:
+            raise HTTPException(
+                status_code=401,
+                detail=f"No API key configured for provider '{provider}'. "
+                       f"Configure {provider.upper()}_API_KEY as env var / Docker Secret.",
+            )
 
     return direct_acompletion, extra_kwargs
 
@@ -393,32 +436,13 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
     trace_id = _uuid.uuid4().hex[:16]
 
     with request_telemetry_context(trace_id) as req_telemetry:
-        # ── Authentication ────────────────────────────────────────
-        agent_id: str = "anonymous"
-        agent_role: str = "developer"
-        user_api_key: str | None = None  # For MCP server identity propagation
-
-        auth_header = raw_request.headers.get("authorization", "")
-        bearer_token: str | None = None
-        if auth_header.lower().startswith("bearer "):
-            bearer_token = auth_header[7:].strip()
-
-        with trace_operation(_proxy_tracer, "auth", "pb-proxy"):
-            if config.AUTH_REQUIRED:
-                if not bearer_token:
-                    raise HTTPException(status_code=401, detail="Authentication required")
-                verified = await key_verifier.verify(bearer_token)
-                if verified is None:
-                    raise HTTPException(status_code=401, detail="Invalid or expired API key")
-                agent_id = verified["agent_id"]
-                agent_role = verified["agent_role"]
-                user_api_key = bearer_token  # Will be forwarded to MCP servers
-                log.info("Authenticated: agent_id=%s, agent_role=%s", agent_id, agent_role)
-            else:
-                # Legacy mode: no auth, hardcoded developer role
-                # Still check if bearer looks like a provider key for backward compat
-                if bearer_token and len(bearer_token) > 10 and ("-" in bearer_token or bearer_token.startswith("sk")):
-                    user_api_key = bearer_token
+        # ── Authentication (via middleware) ──────────────────────────
+        agent_id = getattr(raw_request.state, "agent_id", "anonymous")
+        agent_role = getattr(raw_request.state, "agent_role", "developer")
+        user_api_key = getattr(raw_request.state, "bearer_token", None)
+        
+        # Extract provider key from header
+        provider_key_header = raw_request.headers.get("x-provider-key")
 
         # OPA policy check
         policy = await check_opa_policy(
@@ -510,7 +534,11 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
             litellm_kwargs["top_p"] = request.top_p
 
         # Resolve routing: alias → Router, provider/model → direct
-        acompletion, routing_kwargs = _resolve_provider_key(model=request.model)
+        acompletion, routing_kwargs = _resolve_provider_key(
+            model=request.model,
+            provider_key_header=provider_key_header,
+            provider_key_config=provider_key_config,
+        )
         litellm_kwargs.update(routing_kwargs)
 
         # Run agent loop
