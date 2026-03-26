@@ -696,6 +696,18 @@ async def _generate_sse_stream(
             "usage": usage,
         })
 
+    # Emit telemetry as a dedicated chunk before [DONE]
+    telemetry = response_data.get("_telemetry")
+    if telemetry:
+        yield _sse_chunk({
+            "id": chat_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [],
+            "_telemetry": telemetry,
+        })
+
     yield "data: [DONE]\n\n"
 
 
