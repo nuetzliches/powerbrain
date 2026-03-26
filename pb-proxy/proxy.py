@@ -32,6 +32,7 @@ from prometheus_client import (
 )
 
 import config
+from middleware import ProxyAuthMiddleware
 
 # Try to import telemetry - fallback if not available (for tests)
 try:
@@ -74,6 +75,7 @@ from pii_middleware import (
     build_system_hint,
 )
 from auth import ProxyKeyVerifier
+from middleware import ProxyAuthMiddleware
 
 # ── Logging ──────────────────────────────────────────────────
 
@@ -242,6 +244,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(ProxyAuthMiddleware, key_verifier=key_verifier)
+
 _proxy_tracer = init_telemetry("pb-proxy")
 setup_auto_instrumentation(app)
 _proxy_metrics = MetricsAggregator("pb-proxy")
@@ -393,32 +397,10 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
     trace_id = _uuid.uuid4().hex[:16]
 
     with request_telemetry_context(trace_id) as req_telemetry:
-        # ── Authentication ────────────────────────────────────────
-        agent_id: str = "anonymous"
-        agent_role: str = "developer"
-        user_api_key: str | None = None  # For MCP server identity propagation
-
-        auth_header = raw_request.headers.get("authorization", "")
-        bearer_token: str | None = None
-        if auth_header.lower().startswith("bearer "):
-            bearer_token = auth_header[7:].strip()
-
-        with trace_operation(_proxy_tracer, "auth", "pb-proxy"):
-            if config.AUTH_REQUIRED:
-                if not bearer_token:
-                    raise HTTPException(status_code=401, detail="Authentication required")
-                verified = await key_verifier.verify(bearer_token)
-                if verified is None:
-                    raise HTTPException(status_code=401, detail="Invalid or expired API key")
-                agent_id = verified["agent_id"]
-                agent_role = verified["agent_role"]
-                user_api_key = bearer_token  # Will be forwarded to MCP servers
-                log.info("Authenticated: agent_id=%s, agent_role=%s", agent_id, agent_role)
-            else:
-                # Legacy mode: no auth, hardcoded developer role
-                # Still check if bearer looks like a provider key for backward compat
-                if bearer_token and len(bearer_token) > 10 and ("-" in bearer_token or bearer_token.startswith("sk")):
-                    user_api_key = bearer_token
+        # ── Authentication (via middleware) ──────────────────────────
+        agent_id = getattr(raw_request.state, "agent_id", "anonymous")
+        agent_role = getattr(raw_request.state, "agent_role", "developer")
+        user_api_key = getattr(raw_request.state, "bearer_token", None)
 
         # OPA policy check
         policy = await check_opa_policy(

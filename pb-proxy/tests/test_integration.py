@@ -33,7 +33,7 @@ class TestProxyIntegration:
         assert data["tools_loaded"] > 0
 
     def test_chat_completions_without_api_key(self):
-        """Request without LLM API key should fail gracefully."""
+        """Request without API key should be rejected by middleware with 401."""
         resp = httpx.post(
             f"{PROXY_URL}/v1/chat/completions",
             json={
@@ -42,5 +42,5 @@ class TestProxyIntegration:
             },
             timeout=30,
         )
-        # Should fail with 502 (LLM provider error) not 500 (server crash)
-        assert resp.status_code in (502, 403)
+        # Now handled by middleware: should be 401 (authentication required)
+        assert resp.status_code == 401

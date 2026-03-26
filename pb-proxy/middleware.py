@@ -7,6 +7,8 @@ except whitelisted paths (e.g. /health).
 import json
 import logging
 
+import config as _config
+
 log = logging.getLogger("pb-proxy.middleware")
 
 
@@ -21,10 +23,9 @@ class ProxyAuthMiddleware:
 
     WHITELIST = {"/health"}
 
-    def __init__(self, app, key_verifier, auth_required: bool = True) -> None:
+    def __init__(self, app, key_verifier) -> None:
         self.app = app
         self.key_verifier = key_verifier
-        self.auth_required = auth_required
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http":
@@ -33,7 +34,7 @@ class ProxyAuthMiddleware:
         path = scope.get("path", "")
 
         # Whitelisted paths and auth-disabled mode: set anonymous defaults
-        if path in self.WHITELIST or not self.auth_required:
+        if path in self.WHITELIST or not _config.AUTH_REQUIRED:
             scope.setdefault("state", {})
             scope["state"]["agent_id"] = "anonymous"
             scope["state"]["agent_role"] = "developer"

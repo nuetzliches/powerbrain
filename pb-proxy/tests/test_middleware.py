@@ -2,7 +2,7 @@
 
 import json
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 def _make_scope(path="/v1/models", method="GET", headers=None):
@@ -76,66 +76,72 @@ class TestMiddlewareAuthRequired:
 
     def _make_middleware(self, app, verifier):
         from middleware import ProxyAuthMiddleware
-        return ProxyAuthMiddleware(app, key_verifier=verifier, auth_required=True)
+        return ProxyAuthMiddleware(app, key_verifier=verifier)
 
     @pytest.mark.asyncio
     async def test_rejects_no_auth_header(self, mock_app, mock_verifier):
-        mw = self._make_middleware(mock_app, mock_verifier)
-        scope = _make_scope(path="/v1/models")
-        resp, body = await _collect_response(mw, scope)
-        assert resp["status"] == 401
-        assert json.loads(body)["detail"] == "Authentication required"
-        assert resp["headers"]["www-authenticate"] == "Bearer"
-        assert len(mock_app.calls) == 0
+        with patch("middleware._config.AUTH_REQUIRED", True):
+            mw = self._make_middleware(mock_app, mock_verifier)
+            scope = _make_scope(path="/v1/models")
+            resp, body = await _collect_response(mw, scope)
+            assert resp["status"] == 401
+            assert json.loads(body)["detail"] == "Authentication required"
+            assert resp["headers"]["www-authenticate"] == "Bearer"
+            assert len(mock_app.calls) == 0
 
     @pytest.mark.asyncio
     async def test_rejects_invalid_key(self, mock_app, mock_verifier):
-        mw = self._make_middleware(mock_app, mock_verifier)
-        scope = _make_scope(
-            path="/v1/models",
-            headers={"Authorization": "Bearer pb_bad_key_does_not_exist_1234567"},
-        )
-        resp, body = await _collect_response(mw, scope)
-        assert resp["status"] == 401
-        assert json.loads(body)["detail"] == "Invalid or expired API key"
+        with patch("middleware._config.AUTH_REQUIRED", True):
+            mw = self._make_middleware(mock_app, mock_verifier)
+            scope = _make_scope(
+                path="/v1/models",
+                headers={"Authorization": "Bearer pb_bad_key_does_not_exist_1234567"},
+            )
+            resp, body = await _collect_response(mw, scope)
+            assert resp["status"] == 401
+            assert json.loads(body)["detail"] == "Invalid or expired API key"
 
     @pytest.mark.asyncio
     async def test_passes_valid_key(self, mock_app, mock_verifier):
-        mw = self._make_middleware(mock_app, mock_verifier)
-        scope = _make_scope(
-            path="/v1/models",
-            headers={"Authorization": "Bearer pb_valid_key_123456789012345678901"},
-        )
-        resp, _ = await _collect_response(mw, scope)
-        assert resp["status"] == 200
-        assert len(mock_app.calls) == 1
-        assert mock_app.calls[0]["agent_id"] == "test-agent"
-        assert mock_app.calls[0]["agent_role"] == "analyst"
-        assert mock_app.calls[0]["bearer_token"] == "pb_valid_key_123456789012345678901"
+        with patch("middleware._config.AUTH_REQUIRED", True):
+            mw = self._make_middleware(mock_app, mock_verifier)
+            scope = _make_scope(
+                path="/v1/models",
+                headers={"Authorization": "Bearer pb_valid_key_123456789012345678901"},
+            )
+            resp, _ = await _collect_response(mw, scope)
+            assert resp["status"] == 200
+            assert len(mock_app.calls) == 1
+            assert mock_app.calls[0]["agent_id"] == "test-agent"
+            assert mock_app.calls[0]["agent_role"] == "analyst"
+            assert mock_app.calls[0]["bearer_token"] == "pb_valid_key_123456789012345678901"
 
     @pytest.mark.asyncio
     async def test_skips_health_endpoint(self, mock_app, mock_verifier):
-        mw = self._make_middleware(mock_app, mock_verifier)
-        scope = _make_scope(path="/health")
-        resp, _ = await _collect_response(mw, scope)
-        assert resp["status"] == 200
-        assert len(mock_app.calls) == 1
-        assert mock_app.calls[0]["agent_id"] == "anonymous"
-        mock_verifier.verify.assert_not_called()
+        with patch("middleware._config.AUTH_REQUIRED", True):
+            mw = self._make_middleware(mock_app, mock_verifier)
+            scope = _make_scope(path="/health")
+            resp, _ = await _collect_response(mw, scope)
+            assert resp["status"] == 200
+            assert len(mock_app.calls) == 1
+            assert mock_app.calls[0]["agent_id"] == "anonymous"
+            mock_verifier.verify.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_protects_metrics_json(self, mock_app, mock_verifier):
-        mw = self._make_middleware(mock_app, mock_verifier)
-        scope = _make_scope(path="/metrics/json")
-        resp, body = await _collect_response(mw, scope)
-        assert resp["status"] == 401
+        with patch("middleware._config.AUTH_REQUIRED", True):
+            mw = self._make_middleware(mock_app, mock_verifier)
+            scope = _make_scope(path="/metrics/json")
+            resp, body = await _collect_response(mw, scope)
+            assert resp["status"] == 401
 
     @pytest.mark.asyncio
     async def test_protects_v1_models(self, mock_app, mock_verifier):
-        mw = self._make_middleware(mock_app, mock_verifier)
-        scope = _make_scope(path="/v1/models")
-        resp, body = await _collect_response(mw, scope)
-        assert resp["status"] == 401
+        with patch("middleware._config.AUTH_REQUIRED", True):
+            mw = self._make_middleware(mock_app, mock_verifier)
+            scope = _make_scope(path="/v1/models")
+            resp, body = await _collect_response(mw, scope)
+            assert resp["status"] == 401
 
     @pytest.mark.asyncio
     async def test_ignores_non_http_scope(self, mock_app, mock_verifier):
@@ -144,10 +150,11 @@ class TestMiddlewareAuthRequired:
         calls = []
         async def passthrough_app(scope, receive, send):
             calls.append(True)
-        mw = ProxyAuthMiddleware(passthrough_app, key_verifier=mock_verifier, auth_required=True)
-        scope = {"type": "lifespan"}
-        await mw(scope, None, None)
-        assert len(calls) == 1
+        with patch("middleware._config.AUTH_REQUIRED", True):
+            mw = ProxyAuthMiddleware(passthrough_app, key_verifier=mock_verifier)
+            scope = {"type": "lifespan"}
+            await mw(scope, None, None)
+            assert len(calls) == 1
 
 
 class TestMiddlewareAuthDisabled:
@@ -155,21 +162,23 @@ class TestMiddlewareAuthDisabled:
 
     def _make_middleware(self, app, verifier):
         from middleware import ProxyAuthMiddleware
-        return ProxyAuthMiddleware(app, key_verifier=verifier, auth_required=False)
+        return ProxyAuthMiddleware(app, key_verifier=verifier)
 
     @pytest.mark.asyncio
     async def test_allows_anonymous(self, mock_app, mock_verifier):
-        mw = self._make_middleware(mock_app, mock_verifier)
-        scope = _make_scope(path="/v1/models")
-        resp, _ = await _collect_response(mw, scope)
-        assert resp["status"] == 200
-        assert mock_app.calls[0]["agent_id"] == "anonymous"
-        assert mock_app.calls[0]["agent_role"] == "developer"
-        mock_verifier.verify.assert_not_called()
+        with patch("middleware._config.AUTH_REQUIRED", False):
+            mw = self._make_middleware(mock_app, mock_verifier)
+            scope = _make_scope(path="/v1/models")
+            resp, _ = await _collect_response(mw, scope)
+            assert resp["status"] == 200
+            assert mock_app.calls[0]["agent_id"] == "anonymous"
+            assert mock_app.calls[0]["agent_role"] == "developer"
+            mock_verifier.verify.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_allows_metrics_anonymous(self, mock_app, mock_verifier):
-        mw = self._make_middleware(mock_app, mock_verifier)
-        scope = _make_scope(path="/metrics/json")
-        resp, _ = await _collect_response(mw, scope)
-        assert resp["status"] == 200
+        with patch("middleware._config.AUTH_REQUIRED", False):
+            mw = self._make_middleware(mock_app, mock_verifier)
+            scope = _make_scope(path="/metrics/json")
+            resp, _ = await _collect_response(mw, scope)
+            assert resp["status"] == 200
