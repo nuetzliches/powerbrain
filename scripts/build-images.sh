@@ -41,9 +41,22 @@ else
   changed=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "ALL")
 fi
 
-# If shared/ or init-db/ or opa-policies/ changed, rebuild all
+# If nothing service-relevant changed, rebuild all (safety net)
 rebuild_all=false
-if echo "$changed" | grep -qE '^(shared/|init-db/|opa-policies/)' || [ "$changed" = "ALL" ]; then
+has_service_change=false
+for svc in mcp-server ingestion reranker pb-proxy shared init-db opa-policies; do
+  if echo "$changed" | grep -q "^${svc}/"; then
+    has_service_change=true
+    break
+  fi
+done
+
+if [ "$changed" = "ALL" ] || [ "$has_service_change" = false ]; then
+  rebuild_all=true
+  log "Rebuilding all images."
+fi
+
+if echo "$changed" | grep -qE '^(shared/|init-db/|opa-policies/)'; then
   rebuild_all=true
 fi
 
