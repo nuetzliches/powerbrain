@@ -29,8 +29,8 @@ SHORT_SHA=$(git rev-parse --short HEAD)
 declare -A IMAGES=(
   [mcp-server]="mcp-server/Dockerfile:."
   [ingestion]="ingestion/Dockerfile:."
-  [reranker]="reranker/Dockerfile:reranker"
-  [pb-proxy]="pb-proxy/Dockerfile:pb-proxy"
+  [reranker]="reranker/Dockerfile:."
+  [pb-proxy]="pb-proxy/Dockerfile:."
 )
 
 # ── Detect changes ──────────────────────────────────────────

@@ -10,7 +10,8 @@ RUN pip install --no-cache-dir \
     torch \
     prometheus-client
 
-COPY service.py .
+COPY shared/ ./shared/
+COPY reranker/service.py .
 
 # Modell beim Build vorladen (schnellerer Start)
 RUN python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
