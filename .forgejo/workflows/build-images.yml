@@ -2,7 +2,7 @@ name: Build & Push Images
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - 'mcp-server/**'
       - 'ingestion/**'
@@ -11,10 +11,14 @@ on:
       - 'shared/**'
       - 'init-db/**'
       - 'opa-policies/**'
+  workflow_dispatch:
 
 jobs:
-  detect:
+  build:
     runs-on: baumeister-runner
     steps:
       - name: Detect and build changed images
-        run: /opt/_deploy/powerbrain/scripts/build-images.sh
+        run: |
+          export REPO_DIR="$GITHUB_WORKSPACE"
+          cd "$REPO_DIR"
+          bash scripts/build-images.sh

@@ -16,19 +16,9 @@ err()  { printf '\033[1;31m[error]\033[0m %s\n' >&2 "$*"; }
 REGISTRY="${REGISTRY:-git.nuetzliche.it}"
 ORG="${ORG:-nuts}"
 REPO="${REPO:-powerbrain}"
-REPO_DIR="${REPO_DIR:-/opt/_deploy/powerbrain}"
-BARE_REPO="${BARE_REPO:-/repos/nuts/powerbrain.git}"
+REPO_DIR="${REPO_DIR:-$(pwd)}"
 
-# ── Checkout ────────────────────────────────────────────────
-if [ -d "$REPO_DIR/.git" ]; then
-  cd "$REPO_DIR"
-  git fetch origin main
-  git reset --hard origin/main
-else
-  mkdir -p "$REPO_DIR"
-  git clone --no-hardlinks "$BARE_REPO" "$REPO_DIR"
-  cd "$REPO_DIR"
-fi
+cd "$REPO_DIR"
 
 SHORT_SHA=$(git rev-parse --short HEAD)
 
