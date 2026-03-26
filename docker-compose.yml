@@ -154,8 +154,8 @@ services:
   # ── Reranker (Cross-Encoder) ──────────────────────────────
   reranker:
     build:
-      context: ./reranker
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: reranker/Dockerfile
     container_name: pb-reranker
     ports:
       - "8082:8082"
@@ -383,8 +383,8 @@ services:
   pb-proxy:
     profiles: ["proxy"]
     build:
-      context: ./pb-proxy
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: pb-proxy/Dockerfile
     container_name: pb-proxy
     ports:
       - "${PROXY_PORT:-8090}:8090"
