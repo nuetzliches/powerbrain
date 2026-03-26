@@ -23,13 +23,14 @@ cd "$REPO_DIR"
 SHORT_SHA=$(git rev-parse --short HEAD)
 
 # ── Image Map ───────────────────────────────────────────────
-# service-name -> Dockerfile path (relative to repo root)
-# All images use repo root as build context (for shared/ access)
+# service-name -> "Dockerfile:build-context" (relative to repo root)
+# mcp-server/ingestion need repo root for shared/ access
+# reranker/pb-proxy use their own directory as context
 declare -A IMAGES=(
-  [mcp-server]="mcp-server/Dockerfile"
-  [ingestion]="ingestion/Dockerfile"
-  [reranker]="reranker/Dockerfile"
-  [pb-proxy]="pb-proxy/Dockerfile"
+  [mcp-server]="mcp-server/Dockerfile:."
+  [ingestion]="ingestion/Dockerfile:."
+  [reranker]="reranker/Dockerfile:reranker"
+  [pb-proxy]="pb-proxy/Dockerfile:pb-proxy"
 )
 
 # ── Detect changes ──────────────────────────────────────────
@@ -63,7 +64,8 @@ fi
 # ── Build & Push ────────────────────────────────────────────
 built=0
 for service in "${!IMAGES[@]}"; do
-  dockerfile="${IMAGES[$service]}"
+  entry="${IMAGES[$service]}"
+  dockerfile="${entry%%:*}"
 
   # Skip if not changed (unless rebuild_all)
   if [ "$rebuild_all" = false ]; then
@@ -74,13 +76,14 @@ for service in "${!IMAGES[@]}"; do
   fi
 
   image="${REGISTRY}/${ORG}/${REPO}/${service}"
-  log "Building ${image}..."
+  context="${entry#*:}"
+  log "Building ${image} (context: ${context})..."
 
   docker build \
     -f "$dockerfile" \
     -t "${image}:latest" \
     -t "${image}:sha-${SHORT_SHA}" \
-    .
+    "$context"
 
   log "Pushing ${image}..."
   docker push "${image}:latest"
