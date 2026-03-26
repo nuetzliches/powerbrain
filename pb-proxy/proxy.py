@@ -172,6 +172,19 @@ class ChatCompletionRequest(BaseModel):
     model_config = {"extra": "allow"}
 
 
+# ── Helper Functions ─────────────────────────────────────────
+
+def _extract_provider(model: str) -> str | None:
+    """Extract provider prefix from model string.
+    
+    'anthropic/claude-opus-4-20250514' → 'anthropic'
+    'gpt-4o' (alias) → None
+    """
+    if "/" in model:
+        return model.split("/")[0]
+    return None
+
+
 # ── LLM Router ───────────────────────────────────────────────
 
 def _load_llm_router() -> tuple[Any | None, Any, list[dict[str, Any]], set[str]]:

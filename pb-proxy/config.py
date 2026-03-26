@@ -6,6 +6,7 @@ Supports Docker Secrets via _FILE suffix convention.
 
 import os
 import logging
+import yaml
 
 log = logging.getLogger("pb-proxy")
 
@@ -97,3 +98,26 @@ for _provider, _env_var in _PROVIDER_ENV_VARS.items():
         # Also export to os.environ for LiteLLM (if not already set)
         if _env_var not in os.environ:
             os.environ[_env_var] = _key
+
+
+def load_provider_key_config(config_path: str | None = None) -> dict[str, str]:
+    """Load provider_keys section from litellm_config.yaml.
+    
+    Returns dict mapping provider name → key_source ('central'|'user'|'hybrid').
+    Defaults to 'central' for unconfigured providers.
+    """
+    path = config_path or LITELLM_CONFIG
+    try:
+        with open(path) as f:
+            cfg = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        return {}
+    
+    raw = cfg.get("provider_keys", {}) or {}
+    result = {}
+    for provider, source in raw.items():
+        if source not in ("central", "user", "hybrid"):
+            log.warning("Invalid key_source '%s' for provider '%s', using 'central'", source, provider)
+            source = "central"
+        result[provider] = source
+    return result
