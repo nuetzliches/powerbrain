@@ -335,6 +335,27 @@ RUN_INTEGRATION_TESTS=1 python3 -m pytest tests/integration/e2e/test_smoke.py::T
 Tests are gated behind `RUN_INTEGRATION_TESTS=1` and take ~90s (plus stack startup on first run).
 The `docker_stack` fixture calls `docker compose down -v` before and after the test session.
 
+### CI / PR Validation
+PR workflow (`.forgejo/workflows/pr-validate.yml`) runs on every PR to `master`:
+- **unit-tests** — All service tests in `python:3.12-slim` container (`-m "not integration"`)
+- **opa-tests** — OPA policy tests (`opa test opa-policies/pb/`)
+- **docker-build** — Build all 4 images (no push)
+
+All three jobs must pass before merge. Branch protection requires PR — no direct pushes to master.
+
+Run tests locally (same as CI):
+```bash
+docker run --rm -v "$(pwd):/app" -w /app python:3.12-slim bash -c "
+  pip install -q -r requirements-dev.txt \
+    -r mcp-server/requirements.txt \
+    -r ingestion/requirements.txt \
+    -r pb-proxy/requirements.txt \
+    fastapi uvicorn pydantic prometheus-client pyyaml python-dotenv &&
+  PYTHONPATH=.:mcp-server:ingestion:reranker:pb-proxy \
+  python -m pytest -m 'not integration' --tb=short -q
+"
+```
+
 ### Performance Caches (T1)
 - **Embedding Cache** — In-process TTL cache (`shared/embedding_cache.py`). SHA-256 key of `model:text`. Configurable via `EMBEDDING_CACHE_SIZE` (default 2048), `EMBEDDING_CACHE_TTL` (default 3600s), `EMBEDDING_CACHE_ENABLED`.
 - **OPA Result Cache** — TTL cache for `check_opa_policy()` in MCP server. Key: `(role, classification, action)`. Only `pb.access.allow` is cached (deterministic). Configurable via `OPA_CACHE_TTL` (default 60s), `OPA_CACHE_ENABLED`.
@@ -426,3 +447,13 @@ Implementation plans and design specs are stored centrally:
 | TLS | Caddy (optional profile) | Nginx, Traefik | Zero-config HTTPS, simple Caddyfile |
 | Secrets | Docker Secrets + env fallback | Vault, SOPS | Simple, no extra infrastructure |
 | LLM Provider | OpenAI-compat (`shared/llm_provider.py`) | Direct Ollama API | Supports vLLM, TEI, infinity, any OpenAI-compat |
+
+## Pre-Public Checklist
+
+Tasks to complete before open-sourcing the repository:
+
+- [ ] **Move `.forgejo/` workflows to internal infra repo** — `build-images.yml` and `pr-validate.yml` contain Forgejo-specific runner names (`baumeister-runner`), internal registry URL (`git.nuetzliche.it`), and org secrets. Create a dedicated internal CI repo (e.g., in `nuts-infra`) and move these workflows there. The public repo should only contain generic `.github/workflows/` if needed.
+- [ ] **Audit secrets and internal URLs** — Grep for `nuetzliche.it`, `baumeister`, internal IPs, and remove or parameterize them
+- [ ] **Review `.env.example`** — Ensure no real credentials or internal hostnames leaked
+- [ ] **Add LICENSE file** — Choose and add an open-source license
+- [ ] **Add generic GitHub Actions CI** — Replace Forgejo-specific workflows with GitHub Actions equivalents for the public repo

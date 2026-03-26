@@ -1,0 +1,68 @@
+name: PR Validate
+
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  unit-tests:
+    runs-on: baumeister-runner
+    steps:
+      - name: Checkout PR branch
+        run: |
+          git clone --depth 5 --branch "${{ github.head_ref }}" \
+            "https://oauth2:${GITHUB_TOKEN}@git.nuetzliche.it/nuts/powerbrain.git" workspace
+
+      - name: Run unit tests
+        run: |
+          docker run --rm -v "$(pwd)/workspace:/app" -w /app python:3.12-slim bash -c "
+            pip install --no-cache-dir -q \
+              -r requirements-dev.txt \
+              -r mcp-server/requirements.txt \
+              -r ingestion/requirements.txt \
+              -r pb-proxy/requirements.txt \
+              fastapi uvicorn pydantic prometheus-client pyyaml python-dotenv &&
+            PYTHONPATH=.:mcp-server:ingestion:reranker:pb-proxy \
+            python -m pytest \
+              shared/tests \
+              mcp-server/tests \
+              ingestion/tests \
+              reranker/tests \
+              pb-proxy/tests \
+              -m 'not integration' \
+              --tb=short -q
+          "
+
+  opa-tests:
+    runs-on: baumeister-runner
+    steps:
+      - name: Checkout PR branch
+        run: |
+          git clone --depth 5 --branch "${{ github.head_ref }}" \
+            "https://oauth2:${GITHUB_TOKEN}@git.nuetzliche.it/nuts/powerbrain.git" workspace
+
+      - name: Run OPA policy tests
+        run: |
+          curl -sSL -o opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+          chmod +x opa
+          ./opa test workspace/opa-policies/pb/ -v
+
+  docker-build:
+    runs-on: baumeister-runner
+    steps:
+      - name: Checkout PR branch
+        run: |
+          git clone --depth 5 --branch "${{ github.head_ref }}" \
+            "https://oauth2:${GITHUB_TOKEN}@git.nuetzliche.it/nuts/powerbrain.git" workspace
+
+      - name: Build mcp-server image
+        run: docker build -f workspace/mcp-server/Dockerfile -t pb-mcp-server:pr-test workspace
+
+      - name: Build ingestion image
+        run: docker build -f workspace/ingestion/Dockerfile -t pb-ingestion:pr-test workspace
+
+      - name: Build reranker image
+        run: docker build -f workspace/reranker/Dockerfile -t pb-reranker:pr-test workspace
+
+      - name: Build pb-proxy image
+        run: docker build -f workspace/pb-proxy/Dockerfile -t pb-proxy:pr-test workspace
