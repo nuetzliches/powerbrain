@@ -43,8 +43,11 @@ max_iterations := 10 if {
 
 default pii_scan_enabled := true
 
-pii_scan_forced if {
-    input.pii_scan_forced == true
+default pii_scan_forced := true
+
+pii_scan_forced := false if {
+    input.agent_role == "admin"
+    input.pii_scan_forced_override == false
 }
 
 pii_scan_opt_out_allowed if {

@@ -42,7 +42,7 @@ try:
     from shared.telemetry import (
         init_telemetry, setup_auto_instrumentation, trace_operation,
         request_telemetry_context, get_current_telemetry,
-        MetricsAggregator, TELEMETRY_IN_RESPONSE,
+        MetricsAggregator, PipelineStep, TELEMETRY_IN_RESPONSE,
     )
 except ImportError:
     # Mock for tests
@@ -65,6 +65,11 @@ except ImportError:
         def histogram_percentiles(self, *args, **kwargs): 
             return {"p50_ms": 0, "p95_ms": 0, "p99_ms": 0}
     TELEMETRY_IN_RESPONSE = False
+    from dataclasses import dataclass, field
+    @dataclass
+    class PipelineStep:
+        name: str; service: str; duration_ms: float; status: str
+        metadata: dict = field(default_factory=dict)
 from tool_injection import ToolInjector
 from agent_loop import AgentLoop, AgentLoopResult
 from pii_middleware import (
@@ -463,57 +468,105 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
         pii_reverse_map: dict[str, str] = {}
         pii_enabled = policy.get("pii_scan_enabled", config.PII_SCAN_ENABLED)
         pii_forced = policy.get("pii_scan_forced", config.PII_SCAN_FORCED)
+        pii_mode = "forced" if pii_forced else ("enabled" if pii_enabled else "disabled")
 
         if pii_enabled:
-            with trace_operation(_proxy_tracer, "pii_pseudonymize", "pb-proxy"):
-                # Filter non-text content first (images, files)
-                non_text_action = policy.get("non_text_content_action", "placeholder")
-                try:
-                    filtered_messages, had_non_text = filter_non_text_content(
-                        request.messages, action=non_text_action
-                    )
-                    if had_non_text:
-                        request.messages = filtered_messages
-                        log.info("Non-text content filtered (action=%s)", non_text_action)
-                except ValueError as e:
-                    raise HTTPException(status_code=400, detail=str(e))
+            t0_pii = time.perf_counter()
+            pii_status = "ok"
+            pii_meta: dict[str, Any] = {"mode": pii_mode}
 
-                # Pseudonymize PII in messages
-                session_salt = generate_session_salt()
-                try:
-                    pseudonymized_messages, pii_reverse_map = await pseudonymize_messages(
-                        request.messages, session_salt, pii_http_client
-                    )
-                    # Inject system hint if PII was found
-                    if pii_reverse_map:
-                        entity_types = list({
-                            m.group(1) for m in re.finditer(
-                                r"\[([A-Z_]+):[a-f0-9]{8}\]",
-                                " ".join(
-                                    m.get("content", "") for m in pseudonymized_messages
-                                    if isinstance(m.get("content"), str)
-                                ),
-                            )
-                        })
-                        for et in entity_types:
-                            PII_ENTITIES_PSEUDONYMIZED.labels(entity_type=et).inc()
-                        hint = build_system_hint(entity_types)
-                        if hint:
-                            pseudonymized_messages.insert(0, {
-                                "role": "system",
-                                "content": hint,
-                            })
-                    request.messages = pseudonymized_messages
-                except Exception as e:
-                    if pii_forced:
-                        log.error("PII scan forced but failed: %s", e)
-                        PII_SCAN_FAILURES.labels(fail_mode="closed").inc()
-                        raise HTTPException(
-                            status_code=503,
-                            detail="PII protection required but scanner unavailable",
+            # Filter non-text content first (images, files)
+            non_text_action = policy.get("non_text_content_action", "placeholder")
+            try:
+                filtered_messages, had_non_text = filter_non_text_content(
+                    request.messages, action=non_text_action
+                )
+                if had_non_text:
+                    request.messages = filtered_messages
+                    log.info("Non-text content filtered (action=%s)", non_text_action)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
+            # Pseudonymize PII in messages
+            session_salt = generate_session_salt()
+            try:
+                pseudonymized_messages, pii_reverse_map = await pseudonymize_messages(
+                    request.messages, session_salt, pii_http_client
+                )
+                entity_types: list[str] = []
+                if pii_reverse_map:
+                    entity_types = sorted({
+                        m.group(1) for m in re.finditer(
+                            r"\[([A-Z_]+):[a-f0-9]{8}\]",
+                            " ".join(
+                                m.get("content", "") for m in pseudonymized_messages
+                                if isinstance(m.get("content"), str)
+                            ),
                         )
-                    PII_SCAN_FAILURES.labels(fail_mode="open").inc()
-                    log.warning("PII scan failed (non-forced, continuing): %s", e)
+                    })
+                    for et in entity_types:
+                        PII_ENTITIES_PSEUDONYMIZED.labels(entity_type=et).inc()
+                    hint = build_system_hint(entity_types)
+                    if hint:
+                        pseudonymized_messages.insert(0, {
+                            "role": "system",
+                            "content": hint,
+                        })
+                request.messages = pseudonymized_messages
+                pii_meta["entities_found"] = len(pii_reverse_map)
+                pii_meta["entities_pseudonymized"] = len(pii_reverse_map)
+                pii_meta["entity_types"] = entity_types
+                log.info(
+                    "PII scan: status=ok, mode=%s, entities_found=%d%s",
+                    pii_mode, len(pii_reverse_map),
+                    f", types={entity_types}" if entity_types else "",
+                )
+            except Exception as e:
+                if pii_forced:
+                    pii_status = "fail_closed"
+                    pii_meta["fail_mode"] = "closed"
+                    pii_meta["error"] = str(e)
+                    log.error(
+                        "PII scan: status=fail_closed, mode=forced, error=%r", str(e),
+                    )
+                    PII_SCAN_FAILURES.labels(fail_mode="closed").inc()
+                    # Record telemetry before raising
+                    rt = get_current_telemetry()
+                    if rt is not None:
+                        rt.add_step(PipelineStep(
+                            name="pii_pseudonymize", service="pb-proxy",
+                            duration_ms=round((time.perf_counter() - t0_pii) * 1000, 2),
+                            status=pii_status, metadata=pii_meta,
+                        ))
+                    raise HTTPException(
+                        status_code=503,
+                        detail="PII protection required but scanner unavailable",
+                    )
+                pii_status = "fail_open"
+                pii_meta["fail_mode"] = "open"
+                pii_meta["error"] = str(e)
+                log.warning(
+                    "PII scan: status=fail_open, mode=enabled, error=%r", str(e),
+                )
+                PII_SCAN_FAILURES.labels(fail_mode="open").inc()
+
+            # Record PII telemetry step
+            rt = get_current_telemetry()
+            if rt is not None:
+                rt.add_step(PipelineStep(
+                    name="pii_pseudonymize", service="pb-proxy",
+                    duration_ms=round((time.perf_counter() - t0_pii) * 1000, 2),
+                    status=pii_status, metadata=pii_meta,
+                ))
+        else:
+            log.info("PII scan: status=skipped, mode=disabled")
+            rt = get_current_telemetry()
+            if rt is not None:
+                rt.add_step(PipelineStep(
+                    name="pii_pseudonymize", service="pb-proxy",
+                    duration_ms=0.0, status="skipped",
+                    metadata={"mode": "disabled"},
+                ))
 
         # Merge Powerbrain tools into request (skip if disabled or client sends own tools)
         if config.TOOL_INJECTION_ENABLED:

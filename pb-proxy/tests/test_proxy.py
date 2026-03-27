@@ -352,17 +352,25 @@ class TestPIIProtection:
         # Response should contain original name, not pseudonym
         assert data["choices"][0]["message"]["content"] == "Sebastian sollte den Termin bestätigen."
 
-    def test_pii_scan_fail_open_when_not_forced(self, client, mock_deps):
+    def test_pii_scan_fail_open_when_not_forced(self, mock_deps):
         """When PII scan fails and not forced, request continues (fail-open)."""
+        mock_deps["opa"].return_value = {
+            "provider_allowed": True,
+            "max_iterations": 10,
+            "pii_scan_enabled": True,
+            "pii_scan_forced": False,
+        }
         mock_deps["pii_http"].post = AsyncMock(
             side_effect=httpx.ConnectError("ingestion down")
         )
 
-        response = client.post("/v1/chat/completions", json={
+        from proxy import app
+        test_client = TestClient(app)
+        response = test_client.post("/v1/chat/completions", json={
             "model": "gpt-4",
             "messages": [{"role": "user", "content": "Sebastian Test"}],
         })
-        # Should succeed (fail-open) since pii_scan_forced defaults to False
+        # Should succeed (fail-open) since pii_scan_forced explicitly False
         assert response.status_code == 200
 
     def test_pii_scan_fail_closed_when_forced(self, mock_deps):

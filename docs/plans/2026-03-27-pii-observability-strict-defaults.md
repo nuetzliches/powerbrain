@@ -1,6 +1,6 @@
 # PII Scan Observability & Strict Defaults
 
-**Status**: Backlog
+**Status**: Done
 **Priority**: High
 **Created**: 2026-03-27
 **Context**: Demo-Testing ergab, dass PII-Scan-Status in Logs nicht unterscheidbar ist

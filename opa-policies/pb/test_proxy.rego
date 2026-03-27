@@ -71,8 +71,8 @@ test_pii_scan_enabled_for_developer if {
     proxy.pii_scan_enabled with input as {"agent_role": "developer"}
 }
 
-test_pii_scan_admin_opt_out_allowed if {
-    not proxy.pii_scan_enabled with input as {
+test_pii_scan_admin_opt_out_blocked_by_default if {
+    proxy.pii_scan_enabled with input as {
         "agent_role": "admin",
         "pii_scan_opt_out": true,
     }
@@ -82,7 +82,14 @@ test_pii_scan_admin_opt_out_blocked_when_forced if {
     proxy.pii_scan_enabled with input as {
         "agent_role": "admin",
         "pii_scan_opt_out": true,
-        "pii_scan_forced": true,
+    }
+}
+
+test_pii_scan_admin_opt_out_allowed_when_override if {
+    not proxy.pii_scan_enabled with input as {
+        "agent_role": "admin",
+        "pii_scan_opt_out": true,
+        "pii_scan_forced_override": false,
     }
 }
 
@@ -99,8 +106,15 @@ test_pii_entity_types_defined if {
     "EMAIL_ADDRESS" in proxy.pii_entity_types
 }
 
-test_pii_scan_forced_default_false if {
-    not proxy.pii_scan_forced with input as {}
+test_pii_scan_forced_default_true if {
+    proxy.pii_scan_forced with input as {}
+}
+
+test_pii_scan_forced_admin_override if {
+    not proxy.pii_scan_forced with input as {
+        "agent_role": "admin",
+        "pii_scan_forced_override": false,
+    }
 }
 
 # ── Non-Text Content Tests ───────────────────────────────────

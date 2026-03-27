@@ -58,7 +58,7 @@ METRICS_PORT = int(os.getenv("METRICS_PORT", "9092"))
 # ── PII Protection ───────────────────────────────────────────
 INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8081")
 PII_SCAN_ENABLED = os.getenv("PII_SCAN_ENABLED", "true").lower() == "true"
-PII_SCAN_FORCED = os.getenv("PII_SCAN_FORCED", "false").lower() == "true"
+PII_SCAN_FORCED = os.getenv("PII_SCAN_FORCED", "true").lower() == "true"
 
 # ── Connection Pool ──────────────────────────────────────────
 PG_POOL_MIN = int(os.getenv("PG_POOL_MIN", "1"))
