@@ -42,10 +42,10 @@ jobs:
 
       - name: Trigger deploy via nuts-infra
         run: |
+          AUTH=$(echo -n "${DEPLOY_USER}:${DEPLOY_PASSWORD}" | base64)
           wget -q --post-data='{"ref":"main"}' \
             --header="Content-Type: application/json" \
-            --http-user="${DEPLOY_USER}" \
-            --http-password="${DEPLOY_PASSWORD}" \
+            --header="Authorization: Basic ${AUTH}" \
             -O- "https://git.nuetzliche.it/api/v1/repos/nuts/nuts-infra/actions/workflows/rebuild-powerbrain.yml/dispatches"
           echo "✅ Deploy dispatch sent to nuts-infra"
         env:
