@@ -467,9 +467,9 @@ Implementation plans and design specs are stored centrally:
 
 Tasks to complete before open-sourcing the repository:
 
-- [ ] **Move `.forgejo/` workflows to internal infra repo** — `build-images.yml` and `pr-validate.yml` contain Forgejo-specific runner names (`baumeister-runner`), internal registry URL (`git.nuetzliche.it`), and org secrets. Create a dedicated internal CI repo (e.g., in `nuts-infra`) and move these workflows there. The public repo should only contain generic `.github/workflows/` if needed.
-- [ ] **Audit secrets and internal URLs** — Grep for `nuetzliche.it`, `baumeister`, internal IPs, and remove or parameterize them
-- [ ] **Review `.env.example`** — Ensure no real credentials or internal hostnames leaked
-- [ ] **Add LICENSE file** — Choose and add an open-source license
+- [x] **Audit secrets and internal URLs** — Grepped for internal domains, runner names, personal paths. Parameterized `build-images.sh`, sanitized doc paths. `.forgejo/` workflows contain Forgejo-specific references but are kept for internal CI use.
+- [x] **Review `.env.example`** — No real credentials or internal hostnames
+- [x] **Add LICENSE file** — Apache 2.0
+- [ ] **Move `.forgejo/` workflows to internal infra repo** — `build-images.yml` and `pr-validate.yml` use Forgejo-specific runner names and internal registry. Move to dedicated internal CI repo before open-sourcing.
 - [ ] **Add generic GitHub Actions CI** — Replace Forgejo-specific workflows with GitHub Actions equivalents for the public repo
 - [ ] **Enable branch protection on `master`** — Requires GitHub Pro or public repo. Settings: require PR, require status checks (`unit-tests`, `opa-tests`, `docker-build`), disable direct push

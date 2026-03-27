@@ -60,16 +60,6 @@ Der `except ImportError`-Fallback definiert einen eigenen `PipelineStep`, der vo
 
 Generische GitHub Actions als Ersatz für Forgejo-spezifische Workflows.
 
-### B-23: Secrets/URLs Audit (Pre-Public)
-**Priorität:** Hoch (Pre-Public)
-**Aufwand:** ~0.5 Tag
-
-Grep nach `nuetzliche.it`, `baumeister`, internen IPs. Parameterisieren oder entfernen.
-
-### B-24: LICENSE-Datei hinzufügen
-**Priorität:** Hoch (Pre-Public)
-**Aufwand:** ~5 Min
-
 ---
 
 ## Erledigt
@@ -80,6 +70,12 @@ Rego enthält nur noch Logik. JSON-Schema-Validierung. 85 OPA-Tests (vorher: 33)
 
 ### ✅ B-02: E2E Smoke Tests für pb-proxy (2026-03-27)
 `tests/integration/e2e/test_proxy_smoke.py` — Auth, OPA-Policy, Tool-Injection, Health/Models/Metrics.
+
+### ✅ B-23: Secrets/URLs Audit (2026-03-27)
+`build-images.sh` parameterisiert (REGISTRY als Required-Var), Doku-Pfade bereinigt, `.env.example` verifiziert.
+
+### ✅ B-24: LICENSE-Datei (2026-03-27)
+Apache License 2.0 hinzugefügt.
 
 ### ✅ B-03: Reranker Provider Integrationstest (2026-03-27)
 `mcp-server/tests/test_reranker_integration.py` — 7 Tests für Provider-Wechsel (powerbrain/tei/cohere), Graceful Fallback bei Timeout/Connection-Error/500.

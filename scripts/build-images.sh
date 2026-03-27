@@ -4,7 +4,7 @@
 #  Called by Forgejo Actions after mirror-sync from GitHub.
 #
 #  Images are tagged with :latest and :sha-<short-hash>.
-#  Registry: git.nuetzliche.it/nuts/powerbrain/<service>
+#  Registry: ${REGISTRY}/${ORG}/${REPO}/<service>
 # ============================================================
 set -euo pipefail
 
@@ -13,8 +13,8 @@ ok()   { printf '\033[1;32m[  ok ]\033[0m %s\n' "$*"; }
 err()  { printf '\033[1;31m[error]\033[0m %s\n' >&2 "$*"; }
 
 # ── Config ──────────────────────────────────────────────────
-REGISTRY="${REGISTRY:-git.nuetzliche.it}"
-ORG="${ORG:-nuts}"
+REGISTRY="${REGISTRY:?Set REGISTRY env var (e.g. ghcr.io)}"
+ORG="${ORG:-powerbrain}"
 REPO="${REPO:-powerbrain}"
 REPO_DIR="${REPO_DIR:-$(pwd)}"
 

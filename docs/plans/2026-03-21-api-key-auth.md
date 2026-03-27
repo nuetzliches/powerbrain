@@ -479,7 +479,7 @@ git commit -m "feat: remove agent_id/agent_role from tool schemas (now from auth
 ### Task 7: Update Skill Documentation
 
 **Files:**
-- Modify: `/home/sebastian/.config/opencode/skills/superpowers/querying-knowledge-base/SKILL.md`
+- Modify: `~/.config/opencode/skills/superpowers/querying-knowledge-base/SKILL.md`
 
 **Step 1: Update the skill to include auth headers**
 
@@ -497,7 +497,7 @@ not from the request.
 **Step 2: Commit**
 
 ```bash
-git add /home/sebastian/.config/opencode/skills/superpowers/querying-knowledge-base/SKILL.md
+git add ~/.config/opencode/skills/superpowers/querying-knowledge-base/SKILL.md
 git commit -m "docs: update querying-knowledge-base skill for API key auth"
 ```
 
