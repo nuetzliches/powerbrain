@@ -14,9 +14,10 @@ jobs:
 
       - name: Run backfill script
         run: |
+          cd workspace
           docker run --rm \
             --network powerbrain_pb-net \
-            -v "$(pwd)/workspace/scripts:/scripts:ro" \
+            -v "$(pwd)/scripts:/scripts:ro" \
             -e QDRANT_URL=http://qdrant:6333 \
             -e COLLECTION=pb_general \
             python:3-slim \
