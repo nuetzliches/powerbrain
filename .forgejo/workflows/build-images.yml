@@ -35,6 +35,9 @@ jobs:
           cd workspace
           bash scripts/build-images.sh
         env:
+          REGISTRY: git.nuetzliche.it
+          ORG: nuts
+          REPO: powerbrain
           FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
 
       - name: Trigger deploy via nuts-infra
