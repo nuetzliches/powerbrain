@@ -1,0 +1,23 @@
+name: Backfill source_type in Qdrant
+
+on:
+  workflow_dispatch:
+
+jobs:
+  backfill:
+    runs-on: baumeister-runner
+    steps:
+      - name: Checkout
+        run: |
+          git clone --depth 1 --branch master \
+            "https://oauth2:${GITHUB_TOKEN}@git.nuetzliche.it/nuts/powerbrain.git" workspace
+
+      - name: Run backfill script
+        run: |
+          docker run --rm \
+            --network powerbrain_pb-net \
+            -v "$(pwd)/workspace/scripts:/scripts:ro" \
+            -e QDRANT_URL=http://qdrant:6333 \
+            -e COLLECTION=pb_general \
+            python:3-slim \
+            python /scripts/backfill-source-type.py
