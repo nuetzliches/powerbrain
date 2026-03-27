@@ -79,6 +79,49 @@ servers:
     os.unlink(f.name)
 
 
+def test_forward_headers_loaded_from_yaml():
+    """forward_headers field is loaded from YAML config."""
+    from mcp_config import load_mcp_servers
+
+    yaml_content = """
+servers:
+  - name: external
+    url: http://ext:8080/mcp
+    auth: none
+    forward_headers:
+      - x-tenant-id
+      - x-custom-token
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(yaml_content)
+        f.flush()
+        servers = load_mcp_servers(f.name)
+
+    os.unlink(f.name)
+
+    assert len(servers) == 1
+    assert servers[0].forward_headers == ["x-tenant-id", "x-custom-token"]
+
+
+def test_forward_headers_defaults_to_none():
+    """forward_headers defaults to None when not specified in YAML."""
+    from mcp_config import load_mcp_servers
+
+    yaml_content = """
+servers:
+  - name: basic
+    url: http://basic:8080/mcp
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(yaml_content)
+        f.flush()
+        servers = load_mcp_servers(f.name)
+
+    os.unlink(f.name)
+
+    assert servers[0].forward_headers is None
+
+
 def test_duplicate_name_raises():
     """Duplicate server names in config raise ValueError."""
     from mcp_config import load_mcp_servers

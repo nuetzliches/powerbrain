@@ -215,6 +215,15 @@ class ToolInjector:
         """Names of all configured servers."""
         return [s.name for s in self._servers]
 
+    @property
+    def forwardable_headers(self) -> set[str]:
+        """Union of all forward_headers across all servers (lowercased)."""
+        result: set[str] = set()
+        for s in self._servers:
+            if s.forward_headers:
+                result.update(h.lower() for h in s.forward_headers)
+        return result
+
     def resolve_tool(self, name: str) -> ToolEntry | None:
         """Look up a tool by its prefixed name. Returns ToolEntry or None."""
         return self._tools.get(name)

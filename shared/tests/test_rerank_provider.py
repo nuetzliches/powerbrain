@@ -424,3 +424,11 @@ class TestCreateRerankProvider:
     def test_unknown_backend_raises(self):
         with pytest.raises(ValueError, match="Unknown reranker backend: 'magic'"):
             create_rerank_provider(backend="magic")
+
+    def test_cohere_requires_model(self):
+        with pytest.raises(ValueError, match="Cohere reranker backend requires a model"):
+            create_rerank_provider(backend="cohere", base_url="https://api.cohere.com")
+
+    def test_cohere_empty_model_raises(self):
+        with pytest.raises(ValueError, match="Cohere reranker backend requires a model"):
+            create_rerank_provider(backend="cohere", base_url="https://api.cohere.com", model="")

@@ -236,6 +236,45 @@ def test_streaming_returns_sse(client, mock_deps):
     assert "data: [DONE]" in body
 
 
+def test_streaming_includes_telemetry_chunk(mock_deps):
+    """SSE stream includes _telemetry chunk before [DONE] when enabled."""
+    import proxy
+
+    # Inject _telemetry into the mock response data
+    mock_deps["result"].response.model_dump.return_value = {
+        "id": "chatcmpl-123",
+        "model": "gpt-4o",
+        "choices": [{"message": {"content": "Hi!"}}],
+        "_telemetry": {
+            "trace_id": "abc123",
+            "steps": [{"name": "pii_pseudonymize", "duration_ms": 5.0}],
+        },
+    }
+
+    original = proxy.TELEMETRY_IN_RESPONSE
+    proxy.TELEMETRY_IN_RESPONSE = True
+    try:
+        from proxy import app
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4o",
+                "messages": [{"role": "user", "content": "Hi"}],
+                "stream": True,
+            },
+        )
+        assert response.status_code == 200
+        body = response.text
+        assert "_telemetry" in body
+        # Telemetry chunk must appear before [DONE]
+        telemetry_pos = body.index("_telemetry")
+        done_pos = body.index("[DONE]")
+        assert telemetry_pos < done_pos
+    finally:
+        proxy.TELEMETRY_IN_RESPONSE = original
+
+
 def test_agent_loop_receives_acompletion(client, mock_deps):
     """AgentLoop is created with the correct acompletion callable."""
     response = client.post(
@@ -415,6 +454,62 @@ class TestPIIProtection:
         # AgentLoop should have been created with empty pii_reverse_map
         call_kwargs = mock_deps["loop_cls"].call_args
         assert call_kwargs.kwargs.get("pii_reverse_map") == {}
+
+    def test_pii_disabled_records_skipped_telemetry(self, mock_deps):
+        """When PII scan disabled, response includes skipped telemetry step."""
+        import proxy
+
+        mock_deps["opa"].return_value = {
+            "provider_allowed": True,
+            "max_iterations": 10,
+            "pii_scan_enabled": False,
+        }
+        mock_deps["result"].response.model_dump.return_value = {
+            "id": "chatcmpl-123",
+            "choices": [{"message": {"content": "Hello!"}}],
+        }
+
+        original = proxy.TELEMETRY_IN_RESPONSE
+        proxy.TELEMETRY_IN_RESPONSE = True
+        try:
+            from proxy import app
+            test_client = TestClient(app)
+            response = test_client.post("/v1/chat/completions", json={
+                "model": "gpt-4",
+                "messages": [{"role": "user", "content": "Hallo"}],
+            })
+            assert response.status_code == 200
+            data = response.json()
+            telemetry = data.get("_telemetry", {})
+            steps = telemetry.get("steps", [])
+            pii_steps = [s for s in steps if s["name"] == "pii_pseudonymize"]
+            assert len(pii_steps) == 1
+            assert pii_steps[0]["status"] == "skipped"
+            # metadata is flattened into the step dict by PipelineStep.to_dict()
+            assert pii_steps[0]["mode"] == "disabled"
+        finally:
+            proxy.TELEMETRY_IN_RESPONSE = original
+
+    def test_pii_fail_closed_records_telemetry(self, mock_deps):
+        """When PII scan fails in forced mode, 503 response is returned."""
+        mock_deps["opa"].return_value = {
+            "provider_allowed": True,
+            "max_iterations": 10,
+            "pii_scan_enabled": True,
+            "pii_scan_forced": True,
+        }
+        mock_deps["pii_http"].post = AsyncMock(
+            side_effect=httpx.ConnectError("ingestion down")
+        )
+
+        from proxy import app
+        test_client = TestClient(app)
+        response = test_client.post("/v1/chat/completions", json={
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Sebastian Test"}],
+        })
+        assert response.status_code == 503
+        assert "PII protection required" in response.json()["detail"]
 
 
 # ── Passthrough Routing Tests ──────────────────────────────────

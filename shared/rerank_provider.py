@@ -256,4 +256,6 @@ def create_rerank_provider(
         raise ValueError(
             f"Unknown reranker backend: {backend!r}. Supported: {supported}"
         )
+    if backend == "cohere" and not model:
+        raise ValueError("Cohere reranker backend requires a model name (e.g., 'rerank-v3.5')")
     return cls(base_url=base_url, api_key=api_key, model=model)

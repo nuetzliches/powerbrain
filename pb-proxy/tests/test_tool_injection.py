@@ -152,3 +152,78 @@ def test_mcp_headers_none():
     server = McpServerConfig(name="s", url="http://s:8080/mcp", auth="none")
     headers = _mcp_headers(server)
     assert headers == {}
+
+
+# ── forward_headers tests ────────────────────────────────────
+
+
+def test_mcp_headers_forwards_configured_headers():
+    """forward_headers picks matching headers from client request."""
+    from tool_injection import _mcp_headers
+
+    server = McpServerConfig(
+        name="s", url="http://s:8080/mcp", auth="none",
+        forward_headers=["x-custom-token", "x-tenant-id"],
+    )
+    client_headers = {
+        "x-custom-token": "secret-123",
+        "x-tenant-id": "tenant-42",
+        "authorization": "Bearer pb_key",
+        "host": "localhost",
+    }
+    headers = _mcp_headers(server, client_headers=client_headers)
+    assert headers == {
+        "x-custom-token": "secret-123",
+        "x-tenant-id": "tenant-42",
+    }
+
+
+def test_mcp_headers_forward_missing_header_is_skipped():
+    """Missing client headers are silently skipped (no crash)."""
+    from tool_injection import _mcp_headers
+
+    server = McpServerConfig(
+        name="s", url="http://s:8080/mcp", auth="none",
+        forward_headers=["x-custom-token", "x-missing"],
+    )
+    client_headers = {"x-custom-token": "val"}
+    headers = _mcp_headers(server, client_headers=client_headers)
+    assert headers == {"x-custom-token": "val"}
+
+
+def test_mcp_headers_forward_none_means_no_forwarding():
+    """forward_headers=None (default) forwards nothing."""
+    from tool_injection import _mcp_headers
+
+    server = McpServerConfig(name="s", url="http://s:8080/mcp", auth="none")
+    client_headers = {"x-custom-token": "val", "x-tenant-id": "t1"}
+    headers = _mcp_headers(server, client_headers=client_headers)
+    assert headers == {}
+
+
+def test_mcp_headers_forward_no_client_headers():
+    """forward_headers set but client_headers is None — no crash."""
+    from tool_injection import _mcp_headers
+
+    server = McpServerConfig(
+        name="s", url="http://s:8080/mcp", auth="none",
+        forward_headers=["x-custom-token"],
+    )
+    headers = _mcp_headers(server, client_headers=None)
+    assert headers == {}
+
+
+def test_mcp_headers_forward_combined_with_bearer_auth():
+    """forward_headers works alongside bearer auth headers."""
+    from tool_injection import _mcp_headers
+
+    server = McpServerConfig(
+        name="s", url="http://s:8080/mcp", auth="bearer",
+        forward_headers=["x-tenant-id"],
+    )
+    client_headers = {"x-tenant-id": "tenant-42"}
+    headers = _mcp_headers(server, user_token="pb_key_123", client_headers=client_headers)
+    assert headers == {
+        "Authorization": "Bearer pb_key_123",
+        "x-tenant-id": "tenant-42",
+    }

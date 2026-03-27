@@ -252,7 +252,8 @@ Sits between AI consumers and LLM providers:
 
 **Multi-MCP-Server Aggregation:**
 - Configured via `pb-proxy/mcp_servers.yaml` (mounted as Docker volume)
-- Each server has: `name`, `url`, `auth_mode` (`bearer` / `none`), optional `prefix`
+- Each server has: `name`, `url`, `auth_mode` (`bearer` / `none`), optional `prefix`, optional `forward_headers`
+- `forward_headers`: list of header names to forward from the original client request to this MCP server (e.g., `["x-tenant-id"]`). Only listed headers are forwarded; all others are filtered out.
 - Tools are namespaced with prefix: `servername__toolname` (double underscore separator)
 - OPA policy `pb.proxy.mcp_servers_allowed` controls which servers each role can access
 - `ToolInjector` discovers tools from all configured servers, merges with prefix dedup
