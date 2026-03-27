@@ -1,4 +1,4 @@
-name: Build & Push Images
+name: Build, Push & Deploy
 
 on:
   push:
@@ -36,3 +36,14 @@ jobs:
           bash scripts/build-images.sh
         env:
           FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
+
+      - name: Trigger deploy via nuts-infra
+        run: |
+          curl -sf -X POST \
+            "https://git.nuetzliche.it/api/v1/repos/nuts/nuts-infra/dispatches" \
+            -H "Authorization: token ${DEPLOY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"event_type":"powerbrain-updated"}'
+          echo "✅ Deploy dispatch sent to nuts-infra"
+        env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
