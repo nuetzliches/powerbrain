@@ -39,11 +39,10 @@ jobs:
 
       - name: Trigger deploy via nuts-infra
         run: |
-          curl -sf -X POST \
-            "https://git.nuetzliche.it/api/v1/repos/nuts/nuts-infra/dispatches" \
-            -H "Authorization: token ${DEPLOY_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{"event_type":"powerbrain-updated"}'
+          wget -q --post-data='{"event_type":"powerbrain-updated"}' \
+            --header="Authorization: token ${DEPLOY_TOKEN}" \
+            --header="Content-Type: application/json" \
+            -O- "https://git.nuetzliche.it/api/v1/repos/nuts/nuts-infra/dispatches"
           echo "✅ Deploy dispatch sent to nuts-infra"
         env:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
