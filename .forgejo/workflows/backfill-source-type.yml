@@ -14,13 +14,9 @@ jobs:
 
       - name: Run backfill script
         run: |
-          SCRIPTS_DIR="$(pwd)/workspace/scripts"
-          echo "Mounting: ${SCRIPTS_DIR}"
-          ls "${SCRIPTS_DIR}/backfill-source-type.py"
-          docker run --rm \
+          docker run --rm -i \
             --network powerbrain_pb-net \
-            -v "${SCRIPTS_DIR}:/scripts:ro" \
             -e QDRANT_URL=http://qdrant:6333 \
             -e COLLECTION=pb_general \
             python:3-slim \
-            python /scripts/backfill-source-type.py
+            python - < workspace/scripts/backfill-source-type.py
