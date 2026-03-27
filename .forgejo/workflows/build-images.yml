@@ -42,8 +42,8 @@ jobs:
 
       - name: Trigger deploy via nuts-infra
         run: |
-          AUTH=$(printf '%s:%s' "${REGISTRY_USER}" "${REGISTRY_PASSWORD}" | busybox base64)
-          wget -q --post-data='{"ref":"main"}' \
+          AUTH=$(printf '%s:%s' "${REGISTRY_USER}" "${REGISTRY_PASSWORD}" | busybox base64 | tr -d '\n')
+          wget -q --post-data='{"ref":"main","inputs":{}}' \
             --header="Content-Type: application/json" \
             --header="Authorization: Basic ${AUTH}" \
             -O- "https://git.nuetzliche.it/api/v1/repos/nuts/nuts-infra/actions/workflows/rebuild-powerbrain.yml/dispatches"
