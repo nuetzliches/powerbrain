@@ -50,13 +50,25 @@ The graph complements vector search with structured relationships. An agent can 
 
 MCP tools: `graph_query` (read, traverse, find paths) and `graph_mutate` (create nodes/relationships, developer/admin only).
 
-### 2.5 Reranker (Cross-Encoder)
+### 2.5 Reranker (Configurable Backend)
 
-Standalone FastAPI service. Evaluates query-document pairs using a cross-encoder model. Significantly more accurate than cosine similarity, but slower — therefore used as a second stage after Qdrant oversampling.
+Evaluates query-document pairs for relevance. Significantly more accurate than cosine similarity, but slower — therefore used as a second stage after Qdrant oversampling.
 
-Model options:
+The reranker backend is configurable via `RERANKER_BACKEND` (default: `powerbrain`):
+
+| Backend | Service | API Format | Use Case |
+|---|---|---|---|
+| `powerbrain` | Built-in Cross-Encoder (`reranker/service.py`) | Powerbrain `/rerank` | Default, self-hosted, GDPR-safe |
+| `tei` | HuggingFace Text Embeddings Inference | TEI `/rerank` | GPU-accelerated, self-hosted |
+| `cohere` | Cohere Rerank API v2 | Cohere `/v2/rerank` | Best quality, external SaaS |
+
+**Abstraction:** `shared/rerank_provider.py` implements a strategy pattern with format translation per backend. The MCP server calls `_rerank_provider.rerank()` without knowing which backend is active. Each provider handles request/response mapping (e.g., TEI uses flat `texts[]` array + index-based response mapping, Cohere uses `relevance_score` + model parameter).
+
+**Built-in model options** (when `RERANKER_BACKEND=powerbrain`):
 - `cross-encoder/ms-marco-MiniLM-L-6-v2` (default, fast)
 - `BAAI/bge-reranker-v2-m3` (multilingual, for DE+EN)
+
+**GDPR note:** External backends (`cohere`, remote `tei`) send document content outside your infrastructure. Ensure compliance with data processing agreements. See `docs/gdpr-external-ai-services.md`.
 
 ### 2.6 Ollama
 
@@ -74,7 +86,7 @@ Existing instance in the network. Repositories:
 
 ```
 Query → Embedding (Ollama) → Qdrant (top_k × 5)
-  → OPA Policy Filter → Cross-Encoder Reranking → Top-K Results
+  → OPA Policy Filter → Reranker (configurable backend) → Top-K Results
 ```
 
 Oversampling factor: 5. With top_k=10, Qdrant fetches 50 results, OPA filters to e.g. 35, the reranker selects the 10 most relevant.
@@ -311,7 +323,7 @@ Optional via `OTEL_ENABLED=true` in the MCP server. Traces are sent via OTLP gRP
 
 ## 9. Roadmap
 
-1. ✅ Reranking (Cross-Encoder)
+1. ✅ Reranking (Cross-Encoder, configurable backend via `shared/rerank_provider.py`)
 2. ✅ Knowledge Graph (Apache AGE as PG extension)
 3. ✅ Evaluation + Feedback Loop (`evaluation/run_eval.py`, MCP tools `submit_feedback`/`get_eval_stats`)
 4. ✅ Knowledge Versioning (`ingestion/snapshot_service.py`, MCP tools `create_snapshot`/`list_snapshots`)

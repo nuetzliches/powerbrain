@@ -44,6 +44,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.llm_provider import EmbeddingProvider, CompletionProvider
+from shared.rerank_provider import create_rerank_provider, RerankDocument
 from shared.config import read_secret, build_postgres_url, PG_POOL_MIN, PG_POOL_MAX
 from shared.telemetry import (
     init_telemetry, setup_auto_instrumentation, trace_operation,
@@ -61,8 +62,11 @@ POSTGRES_URL  = build_postgres_url()
 OPA_URL       = os.getenv("OPA_URL",       "http://localhost:8181")
 FORGEJO_URL   = os.getenv("FORGEJO_URL",   "http://forgejo.local:3000")
 FORGEJO_TOKEN = read_secret("FORGEJO_TOKEN")
-RERANKER_URL  = os.getenv("RERANKER_URL",  "http://reranker:8082")
+RERANKER_URL     = os.getenv("RERANKER_URL",     "http://reranker:8082")
 RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
+RERANKER_BACKEND = os.getenv("RERANKER_BACKEND", "powerbrain")
+RERANKER_API_KEY = os.getenv("RERANKER_API_KEY", "")
+RERANKER_MODEL_NAME = os.getenv("RERANKER_MODEL", "")
 INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8081")
 
 # ── Backward-compat fallback ──
@@ -81,6 +85,10 @@ SUMMARIZATION_ENABLED  = os.getenv("SUMMARIZATION_ENABLED", "true").lower() == "
 
 embedding_provider = EmbeddingProvider(base_url=EMBEDDING_PROVIDER_URL, api_key=EMBEDDING_API_KEY)
 llm_provider       = CompletionProvider(base_url=LLM_PROVIDER_URL, api_key=LLM_API_KEY)
+_rerank_provider   = create_rerank_provider(
+    backend=RERANKER_BACKEND, base_url=RERANKER_URL,
+    api_key=RERANKER_API_KEY, model=RERANKER_MODEL_NAME,
+)
 
 from shared.embedding_cache import EmbeddingCache
 embedding_cache = EmbeddingCache()
@@ -463,25 +471,17 @@ async def rerank_results(query: str, documents: list[dict], top_n: int) -> list[
     with trace_operation(tracer, "reranking", "mcp-server",
                          input_count=len(documents), top_n=top_n):
         try:
-            resp = await http.post(f"{RERANKER_URL}/rerank", json={
-                "query": query,
-                "documents": [
-                    {"id": doc["id"], "content": doc["content"],
-                     "score": doc.get("score", 0.0), "metadata": doc.get("metadata", {})}
-                    for doc in documents
-                ],
-                "top_n": top_n,
-                "return_scores": True,
-            })
-            resp.raise_for_status()
-            data = resp.json()
-            return [
-                {"id": r["id"], "score": r["original_score"], "rerank_score": r["rerank_score"],
-                 "rank": r["rank"], "content": r["content"], "metadata": r["metadata"]}
-                for r in data["results"]
+            docs = [
+                RerankDocument(
+                    id=d["id"], content=d["content"],
+                    score=d.get("score", 0.0), metadata=d.get("metadata", {}),
+                )
+                for d in documents
             ]
+            results = await _rerank_provider.rerank(http, query, docs, top_n)
+            return [r.to_dict() for r in results]
         except Exception as e:
-            log.warning(f"Reranker nicht erreichbar, nutze Original-Reihenfolge: {e}")
+            log.warning(f"Reranker not reachable, using original order: {e}")
             mcp_rerank_fallback_total.inc()
             return documents[:top_n]
 

@@ -44,8 +44,10 @@ powerbrain/
 │   ├── __init__.py
 │   ├── llm_provider.py    ← OpenAI-compat LLM provider abstraction
 │   ├── telemetry.py       ← OTel init, trace_operation, MetricsAggregator
+│   ├── rerank_provider.py  ← Configurable reranker backend (Powerbrain/TEI/Cohere)
 │   └── tests/
-│       └── test_llm_provider.py
+│       ├── test_llm_provider.py
+│       └── test_rerank_provider.py
 ├── mcp-server/
 │   ├── server.py          ← MCP Server (10 tools)
 │   ├── graph_service.py   ← Knowledge Graph (Apache AGE)
@@ -138,8 +140,14 @@ OPA checks classification on **every** MCP request.
 ### Search Pipeline (3-stage)
 1. **Qdrant** returns `top_k × 5` results (oversampling)
 2. **OPA** filters by policy and classification
-3. **Cross-Encoder** scores query-document relevance, returns top-k
+3. **Reranker** scores query-document relevance, returns top-k
 
+Reranker backend is configurable via `RERANKER_BACKEND`:
+- `powerbrain` (default) — built-in Cross-Encoder service
+- `tei` — HuggingFace Text Embeddings Inference `/rerank` endpoint
+- `cohere` — Cohere Rerank API v2 (external, requires API key)
+
+Abstraction: `shared/rerank_provider.py` (follows `shared/llm_provider.py` pattern).
 If the reranker is down → graceful fallback to Qdrant ordering.
 
 ### Context Summarization (OPA-controlled)
@@ -392,6 +400,7 @@ All 4 services (mcp-server, proxy, reranker, ingestion) share a common telemetry
 19. ✅ **Structured Telemetry** — Shared OTel module (`shared/telemetry.py`), per-request `_telemetry` in search/chat responses, `/metrics/json` endpoints on all 4 services (mcp-server, proxy, reranker, ingestion), W3C traceparent propagation via auto-instrumented httpx
 20. ✅ **Per-Provider Key Management** — Flexible LLM API key resolution (central/user/hybrid modes) via `provider_keys` in `litellm_config.yaml`, `X-Provider-Key` header support
 21. ✅ **PII Scan Observability & Strict Defaults** — `PII_SCAN_FORCED` defaults to `true` (fail-closed). Telemetry step `pii_pseudonymize` includes `mode`, `entities_found`, `entity_types`, `fail_mode`. OPA policy `pb.proxy.pii_scan_forced` defaults to `true`, admin can override via `pii_scan_forced_override: false`
+22. ✅ **Reranker Provider Abstraction** — Configurable reranker backend via `RERANKER_BACKEND` env var (`powerbrain`/`tei`/`cohere`). Strategy pattern in `shared/rerank_provider.py`, transparent format translation, graceful fallback preserved
 
 Details on all features: see `docs/architecture.md`
 
@@ -439,6 +448,7 @@ Implementation plans and design specs are stored centrally:
 | Vector DB | Qdrant | Milvus, ChromaDB | Best perf + filtering + clustering |
 | Embedding | nomic-embed-text (768d) | mxbai-embed-large | Quality/speed balance |
 | Reranker | ms-marco-MiniLM-L-6-v2 | bge-reranker-v2-m3 | Fast; multilingual as option |
+| Reranker Abstraction | Strategy pattern (`shared/rerank_provider.py`) | Hardcoded HTTP call | Supports TEI, Cohere, custom backends |
 | Summarization | qwen2.5:3b (Ollama) | llama3.2:3b | Small, fast, good instruction following |
 | Policy Engine | OPA (Rego) | Cerbos, GoRules | CNCF standard, battle-tested |
 | PII Scanner | Presidio | spaCy NER | Broad entity detection + extensible |

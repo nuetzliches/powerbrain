@@ -207,8 +207,10 @@ services:
       FORGEJO_URL:     ${FORGEJO_URL:-http://forgejo.local:3000}
       FORGEJO_TOKEN_FILE: /run/secrets/forgejo_token
       VAULT_HMAC_SECRET_FILE: /run/secrets/vault_hmac_secret
-      RERANKER_URL:    http://reranker:8082
+      RERANKER_URL:     http://reranker:8082
       RERANKER_ENABLED: "true"
+      RERANKER_BACKEND: ${RERANKER_BACKEND:-powerbrain}
+      RERANKER_API_KEY: ${RERANKER_API_KEY:-}
       AUTH_REQUIRED:   ${AUTH_REQUIRED:-true}
       MCP_HOST:        0.0.0.0
       MCP_PORT:        "8080"
