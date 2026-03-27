@@ -42,10 +42,10 @@ jobs:
 
       - name: Trigger deploy via nuts-infra
         run: |
-          wget -q --post-data='{"event_type":"powerbrain-updated"}' \
+          wget -q --post-data='{"ref":"main"}' \
             --header="Authorization: token ${DEPLOY_TOKEN}" \
             --header="Content-Type: application/json" \
-            -O- "https://git.nuetzliche.it/api/v1/repos/nuts/nuts-infra/dispatches"
+            -O- "https://git.nuetzliche.it/api/v1/repos/nuts/nuts-infra/actions/workflows/rebuild-powerbrain.yml/dispatches"
           echo "✅ Deploy dispatch sent to nuts-infra"
         env:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
