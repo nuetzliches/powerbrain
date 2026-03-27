@@ -2,6 +2,8 @@
 #  Powerbrain – AI Provider Proxy Policies
 #  Package: pb.proxy
 #
+#  Data-driven: roles, thresholds, entity types from data.json
+#
 #  Controls the AI Provider Proxy behavior:
 #  - Which agent roles may use the proxy
 #  - Which MCP tools are mandatory (injected into every request)
@@ -18,28 +20,37 @@ import rego.v1
 default provider_allowed := false
 
 provider_allowed if {
-    input.agent_role in {"analyst", "developer", "admin"}
+    some role in data.pb.config.proxy.allowed_roles
+    input.agent_role == role
 }
 
 # ── Required Tools ───────────────────────────────────────────
 # MCP tools that MUST be injected into every LLM request.
-# The proxy merges these into the tools[] array transparently.
 
-default required_tools := {"search_knowledge", "check_policy"}
+default required_tools := set()
+
+required_tools := {t | some t in data.pb.config.proxy.required_tools}
 
 # ── Max Iterations ───────────────────────────────────────────
 # Maximum agent-loop iterations (tool-call cycles) per role.
-# Prevents runaway loops.
 
 default max_iterations := 5
 
-max_iterations := 10 if {
-    input.agent_role in {"developer", "admin"}
+_is_elevated_role if {
+    some role in data.pb.config.proxy.elevated_roles
+    input.agent_role == role
+}
+
+max_iterations := data.pb.config.proxy.max_iterations.elevated if {
+    _is_elevated_role
+}
+
+max_iterations := data.pb.config.proxy.max_iterations.default if {
+    not _is_elevated_role
 }
 
 # ── PII Protection ───────────────────────────────────────────
 # Controls whether outbound LLM requests are scanned for PII.
-# Enabled by default; only admin may opt out (unless forced).
 
 default pii_scan_enabled := true
 
@@ -60,13 +71,11 @@ pii_scan_enabled := false if {
     pii_scan_opt_out_allowed
 }
 
-pii_entity_types := {"PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "IBAN_CODE", "LOCATION"}
+pii_entity_types := {t | some t in data.pb.config.pii_entity_types}
 
 default pii_system_prompt_injection := true
 
 # ── Non-Text Content ─────────────────────────────────────────
-# Controls how non-text content (images, PDFs, etc.) is handled.
-# Default: replace with placeholder; admin may allow passthrough.
 
 default non_text_content_action := "placeholder"
 
@@ -75,11 +84,13 @@ non_text_content_action := "allow" if {
 }
 
 # ── MCP Server Access ────────────────────────────────────────
-# Controls which MCP servers each role may access.
-# Default: only powerbrain. Developer and admin: all configured servers.
 
 default mcp_servers_allowed := ["powerbrain"]
 
 mcp_servers_allowed := input.configured_servers if {
-    input.agent_role in {"developer", "admin"}
+    _is_elevated_role
+}
+
+mcp_servers_allowed := data.pb.config.proxy.default_mcp_servers if {
+    not _is_elevated_role
 }

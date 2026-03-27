@@ -1,0 +1,100 @@
+{
+  "pb": {
+    "config": {
+      "roles": ["viewer", "analyst", "developer", "admin"],
+      "classifications": ["public", "internal", "confidential", "restricted"],
+
+      "access_matrix": {
+        "public":       ["viewer", "analyst", "developer", "admin"],
+        "internal":     ["analyst", "developer", "admin"],
+        "confidential": ["admin"],
+        "restricted":   ["admin"]
+      },
+      "write_roles": ["admin", "developer"],
+      "write_classifications": ["public", "internal"],
+
+      "allowed_purposes": {
+        "customer_data":  ["support", "billing", "contract_fulfillment"],
+        "employee_data":  ["hr_management", "payroll"],
+        "analytics_data": ["reporting", "product_improvement"],
+        "marketing_data": ["campaign_management", "consent_based_contact"]
+      },
+
+      "retention_days": {
+        "default": 365,
+        "analytics_data": 90,
+        "contract_data": 730,
+        "accounting_data": 1095
+      },
+
+      "retention_obligations": {
+        "accounting_data": 3650,
+        "contract_data": 1095
+      },
+
+      "fields_to_redact": {
+        "default":              ["email", "phone", "iban", "birthdate", "address"],
+        "reporting":            ["email", "phone", "address", "iban", "birthdate"],
+        "support":              ["iban", "birthdate", "address"],
+        "product_improvement":  ["email", "phone", "iban", "birthdate", "address"],
+        "billing":              ["birthdate"],
+        "contract_fulfillment": []
+      },
+
+      "pii_actions": {
+        "public":       "mask",
+        "internal":     "pseudonymize",
+        "confidential": "encrypt_and_store",
+        "restricted":   "block"
+      },
+
+      "pii_entity_types": ["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "IBAN_CODE", "LOCATION"],
+
+      "proxy": {
+        "allowed_roles": ["analyst", "developer", "admin"],
+        "required_tools": ["search_knowledge", "check_policy"],
+        "max_iterations": { "default": 5, "elevated": 10 },
+        "elevated_roles": ["developer", "admin"],
+        "default_mcp_servers": ["powerbrain"]
+      },
+
+      "summarization": {
+        "denied_roles": ["viewer"],
+        "required_classifications": ["confidential"],
+        "brief_classifications": ["restricted"]
+      },
+
+      "rules": {
+        "pricing": {
+          "discount_max_percent": 15,
+          "approval_required_above": 10000,
+          "currency": "EUR",
+          "rules": [
+            "Rabatte über 10% erfordern Teamlead-Freigabe",
+            "Neukunden erhalten maximal 5% Erstkundenrabatt",
+            "Jahresverträge berechtigen zu 10% Rabatt"
+          ]
+        },
+        "workflow": {
+          "phases": ["Planung", "Umsetzung", "Review", "Abnahme"],
+          "rules": [
+            "Jede Phase muss dokumentiert werden",
+            "Review erfordert mindestens 2 Reviewer",
+            "Abnahme nur durch Projektleiter oder Kunde"
+          ],
+          "escalation": { "after_days": 5, "notify": ["projektleiter", "teamlead"] }
+        },
+        "compliance": {
+          "data_retention_days": 365,
+          "gdpr_relevant": true,
+          "rules": [
+            "Personenbezogene Daten müssen nach 365 Tagen gelöscht werden",
+            "Jeder Datenzugriff wird im Audit-Log protokolliert",
+            "Export von confidential-Daten ist untersagt",
+            "Datenverarbeitung nur innerhalb der EU"
+          ]
+        }
+      }
+    }
+  }
+}

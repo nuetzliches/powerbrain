@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://powerbrain.dev/schemas/policy-data.json",
+  "title": "Powerbrain OPA Policy Data",
+  "description": "JSON Schema for data.json — configurable policy data consumed by OPA Rego rules",
+  "type": "object",
+  "required": ["pb"],
+  "additionalProperties": false,
+  "properties": {
+    "pb": {
+      "type": "object",
+      "required": ["config"],
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "type": "object",
+          "required": [
+            "roles", "classifications", "access_matrix",
+            "write_roles", "write_classifications",
+            "allowed_purposes", "retention_days", "retention_obligations",
+            "fields_to_redact", "pii_actions", "pii_entity_types",
+            "proxy", "summarization", "rules"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "roles": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 1,
+              "description": "All available agent roles"
+            },
+            "classifications": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["public", "internal", "confidential", "restricted"] },
+              "minItems": 1,
+              "description": "Data classification levels (ordered by sensitivity)"
+            },
+            "access_matrix": {
+              "type": "object",
+              "description": "Maps classification → list of roles allowed to read",
+              "additionalProperties": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            },
+            "write_roles": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Roles allowed to write data"
+            },
+            "write_classifications": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Classifications that can be written to"
+            },
+            "allowed_purposes": {
+              "type": "object",
+              "description": "Maps data_category → list of allowed processing purposes",
+              "additionalProperties": {
+                "type": "array",
+                "items": { "type": "string" },
+                "minItems": 1
+              }
+            },
+            "retention_days": {
+              "type": "object",
+              "description": "Maps data_category → retention period in days",
+              "required": ["default"],
+              "properties": {
+                "default": { "type": "integer", "minimum": 1 }
+              },
+              "additionalProperties": { "type": "integer", "minimum": 1 }
+            },
+            "retention_obligations": {
+              "type": "object",
+              "description": "Maps data_category → legal retention obligation in days (blocks deletion)",
+              "additionalProperties": { "type": "integer", "minimum": 1 }
+            },
+            "fields_to_redact": {
+              "type": "object",
+              "description": "Maps purpose → list of PII fields to redact",
+              "required": ["default"],
+              "properties": {
+                "default": { "type": "array", "items": { "type": "string" } }
+              },
+              "additionalProperties": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            },
+            "pii_actions": {
+              "type": "object",
+              "description": "Maps classification → PII handling action",
+              "additionalProperties": {
+                "type": "string",
+                "enum": ["mask", "pseudonymize", "encrypt_and_store", "block"]
+              }
+            },
+            "pii_entity_types": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 1,
+              "description": "Presidio entity types to scan for"
+            },
+            "proxy": {
+              "type": "object",
+              "required": ["allowed_roles", "required_tools", "max_iterations", "elevated_roles", "default_mcp_servers"],
+              "additionalProperties": false,
+              "properties": {
+                "allowed_roles": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Roles allowed to use the AI proxy"
+                },
+                "required_tools": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "MCP tools injected into every request"
+                },
+                "max_iterations": {
+                  "type": "object",
+                  "required": ["default", "elevated"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "default": { "type": "integer", "minimum": 1 },
+                    "elevated": { "type": "integer", "minimum": 1 }
+                  }
+                },
+                "elevated_roles": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Roles that get elevated iteration limits and full MCP server access"
+                },
+                "default_mcp_servers": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "MCP servers accessible to non-elevated roles"
+                }
+              }
+            },
+            "summarization": {
+              "type": "object",
+              "required": ["denied_roles", "required_classifications", "brief_classifications"],
+              "additionalProperties": false,
+              "properties": {
+                "denied_roles": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Roles that may NOT request summaries"
+                },
+                "required_classifications": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Classifications where summarization is mandatory (no raw chunks)"
+                },
+                "brief_classifications": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Classifications limited to brief summaries only"
+                }
+              }
+            },
+            "rules": {
+              "type": "object",
+              "description": "Business rules by category, queried by agents",
+              "additionalProperties": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

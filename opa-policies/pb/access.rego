@@ -1,6 +1,8 @@
 # ============================================================
 #  Wissensdatenbank – OPA Rego Policies
 #  Paket: pb.access
+#
+#  Data-driven: role/classification matrix from data.json
 # ============================================================
 
 package pb.access
@@ -10,36 +12,20 @@ import rego.v1
 # Default: Zugriff verweigert
 default allow := false
 
-# Public-Daten sind für alle zugänglich
+# Read-Zugriff: Rolle muss in der access_matrix stehen
 allow if {
-    input.classification == "public"
+    input.action != "write"
+    some role in data.pb.config.access_matrix[input.classification]
+    input.agent_role == role
 }
 
-# Internal-Daten für Analysten und Admins
-allow if {
-    input.classification == "internal"
-    input.agent_role in {"analyst", "admin", "developer"}
-}
-
-# Confidential-Daten nur für Admins
-allow if {
-    input.classification == "confidential"
-    input.agent_role == "admin"
-}
-
-# Restricted: nur Admin + expliziter Zweck
-allow if {
-    input.classification == "restricted"
-    input.agent_role == "admin"
-    input.action == "read"
-    # Zusätzliche Prüfungen können hier ergänzt werden
-}
-
-# Write-Zugriff nur für Admins und Developer
+# Write-Zugriff: nur konfigurierte Rollen auf konfigurierte Klassifizierungen
 allow if {
     input.action == "write"
-    input.agent_role in {"admin", "developer"}
-    input.classification in {"public", "internal"}
+    some role in data.pb.config.write_roles
+    input.agent_role == role
+    some cls in data.pb.config.write_classifications
+    input.classification == cls
 }
 
 # Deny-Reason für Debugging

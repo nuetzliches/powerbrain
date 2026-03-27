@@ -2,6 +2,8 @@
 #  Powerbrain – Context Summarization Policies
 #  Package: pb.summarization
 #
+#  Data-driven: roles, classifications from data.json
+#
 #  Controls whether search results are summarized before
 #  delivery to agents. Supports three modes:
 #  - allowed: agent may request summaries
@@ -14,30 +16,30 @@ package pb.summarization
 import rego.v1
 
 # ── Summarize Allowed ────────────────────────────────────────
-# All roles except viewer may request summaries.
+# All roles except denied roles may request summaries.
 
 default summarize_allowed := false
 
 summarize_allowed if {
-    input.agent_role != "viewer"
+    not input.agent_role in {r | some r in data.pb.config.summarization.denied_roles}
 }
 
 # ── Summarize Required ───────────────────────────────────────
-# Confidential data: only summaries, never raw chunks.
-# This is a privacy enhancement — the agent gets the information
-# but never the original text.
+# Certain classifications require summarization (never raw chunks).
 
 default summarize_required := false
 
 summarize_required if {
-    input.classification == "confidential"
+    some cls in data.pb.config.summarization.required_classifications
+    input.classification == cls
 }
 
 # ── Detail Level ─────────────────────────────────────────────
-# Controls summary granularity. Restricted data gets brief only.
+# Controls summary granularity. Some classifications get brief only.
 
 default summarize_detail := "standard"
 
 summarize_detail := "brief" if {
-    input.classification == "restricted"
+    some cls in data.pb.config.summarization.brief_classifications
+    input.classification == cls
 }

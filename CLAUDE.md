@@ -69,11 +69,13 @@ powerbrain/
 │   ├── 003_knowledge_graph.sql ← Apache AGE graph setup
 │   └── 007_pii_vault.sql  ← Sealed Vault (PII originals + mappings)
 ├── opa-policies/pb/
-│   ├── access.rego         ← Access control
-│   ├── rules.rego          ← Business rules
-│   ├── privacy.rego        ← GDPR policies
-│   ├── summarization.rego  ← Context summarization policies
-│   └── proxy.rego          ← Proxy policies (provider access, MCP server ACL)
+│   ├── data.json           ← Policy data (configurable without Rego knowledge)
+│   ├── policy_data_schema.json ← JSON Schema for data.json validation
+│   ├── access.rego         ← Access control (logic only, data from data.json)
+│   ├── rules.rego          ← Business rules (logic only)
+│   ├── privacy.rego        ← GDPR policies (logic only)
+│   ├── summarization.rego  ← Context summarization policies (logic only)
+│   └── proxy.rego          ← Proxy policies (logic only)
 ├── caddy/
 │   └── Caddyfile           ← Reverse proxy config (optional TLS profile)
 ├── secrets/
@@ -314,7 +316,7 @@ curl http://localhost:11434/api/tags       # Ollama
 
 ### OPA Policy Tests
 ```bash
-# Run all OPA tests (including summarization)
+# Run all OPA tests (85 tests: access, privacy, rules, summarization, proxy)
 docker exec pb-opa /opa test /policies/pb/ -v
 
 # Evaluate a specific policy
@@ -402,6 +404,7 @@ All 4 services (mcp-server, proxy, reranker, ingestion) share a common telemetry
 20. ✅ **Per-Provider Key Management** — Flexible LLM API key resolution (central/user/hybrid modes) via `provider_keys` in `litellm_config.yaml`, `X-Provider-Key` header support
 21. ✅ **PII Scan Observability & Strict Defaults** — `PII_SCAN_FORCED` defaults to `true` (fail-closed). Telemetry step `pii_pseudonymize` includes `mode`, `entities_found`, `entity_types`, `fail_mode`. OPA policy `pb.proxy.pii_scan_forced` defaults to `true`, admin can override via `pii_scan_forced_override: false`
 22. ✅ **Reranker Provider Abstraction** — Configurable reranker backend via `RERANKER_BACKEND` env var (`powerbrain`/`tei`/`cohere`). Strategy pattern in `shared/rerank_provider.py`, transparent format translation, graceful fallback preserved
+23. ✅ **Data-Driven OPA Policies** — All business data (access matrix, purposes, retention, field redaction, pricing/workflow/compliance rules, PII entity types, proxy config) extracted from Rego into `opa-policies/pb/data.json`. Rego files contain only logic, data is configurable via JSON without Rego knowledge. JSON Schema validation (`policy_data_schema.json`). Full OPA test coverage: 85 tests across all 5 policy packages.
 
 Details on all features: see `docs/architecture.md`
 
@@ -410,7 +413,7 @@ Details on all features: see `docs/architecture.md`
 - Python 3.12+, type hints everywhere
 - Async/await for all I/O operations
 - Pydantic models for request/response
-- Rego policies in `opa-policies/pb/` with package `pb.*`
+- Rego policies in `opa-policies/pb/` with package `pb.*`, data-driven via `data.json`
 - SQL migrations numbered: `001_schema.sql`, `002_privacy.sql`, ...
 - Docker images: multi-stage where useful, Alpine-based where possible
 - Environment variables for all configuration (no hardcoded values)

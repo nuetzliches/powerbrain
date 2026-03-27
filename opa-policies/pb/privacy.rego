@@ -2,6 +2,8 @@
 #  Wissensdatenbank – DSGVO / Datenschutz Policies
 #  Paket: pb.privacy
 #
+#  Data-driven: purposes, retention, field redaction from data.json
+#
 #  Regelt: Zweckbindung, PII-Zugriff, Aufbewahrungsfristen,
 #  Recht auf Löschung, Datenminimierung
 # ============================================================
@@ -16,13 +18,8 @@ import rego.v1
 
 default purpose_allowed := false
 
-# Erlaubte Verarbeitungszwecke pro Datenklasse
-allowed_purposes := {
-    "customer_data":   {"support", "billing", "contract_fulfillment"},
-    "employee_data":   {"hr_management", "payroll"},
-    "analytics_data":  {"reporting", "product_improvement"},
-    "marketing_data":  {"campaign_management", "consent_based_contact"},
-}
+# Erlaubte Verarbeitungszwecke aus data.json
+allowed_purposes := data.pb.config.allowed_purposes
 
 purpose_allowed if {
     not input.contains_pii
@@ -31,7 +28,8 @@ purpose_allowed if {
 purpose_allowed if {
     input.contains_pii
     purposes := allowed_purposes[input.data_category]
-    input.purpose in purposes
+    some p in purposes
+    input.purpose == p
 }
 
 purpose_denied_reason := reason if {
@@ -48,16 +46,13 @@ purpose_denied_reason := reason if {
 
 default fields_to_redact := set()
 
-fields_to_redact := {"email", "phone", "address", "iban", "birthdate"} if {
-    input.purpose == "reporting"
+fields_to_redact := {f | some f in data.pb.config.fields_to_redact[input.purpose]} if {
+    data.pb.config.fields_to_redact[input.purpose]
 }
 
-fields_to_redact := {"iban", "birthdate", "address"} if {
-    input.purpose == "support"
-}
-
-fields_to_redact := {"email", "phone", "iban", "birthdate", "address"} if {
-    input.purpose == "product_improvement"
+fields_to_redact := {f | some f in data.pb.config.fields_to_redact["default"]} if {
+    not data.pb.config.fields_to_redact[input.purpose]
+    input.purpose
 }
 
 # ── PII-Ingestion-Policy ───────────────────────────────────
@@ -65,45 +60,31 @@ fields_to_redact := {"email", "phone", "iban", "birthdate", "address"} if {
 
 default pii_action := "block"
 
-# Public-Daten: PII immer maskieren
-pii_action := "mask" if {
-    input.classification == "public"
+pii_action := data.pb.config.pii_actions[input.classification] if {
     input.contains_pii == true
+    data.pb.config.pii_actions[input.classification]
+    # Confidential benötigt legal_basis
+    input.classification != "confidential"
 }
 
-# Internal: PII pseudonymisieren (reversibel mit Schlüssel)
-pii_action := "pseudonymize" if {
-    input.classification == "internal"
-    input.contains_pii == true
-}
-
-# Confidential: PII speichern, aber verschlüsselt + zweckgebunden
 pii_action := "encrypt_and_store" if {
-    input.classification == "confidential"
     input.contains_pii == true
+    input.classification == "confidential"
     input.legal_basis != ""
 }
 
-# Restricted: Nie PII in die Wissensdatenbank
 pii_action := "block" if {
-    input.classification == "restricted"
     input.contains_pii == true
+    input.classification == "confidential"
+    not input.legal_basis
 }
 
 # ── Aufbewahrungsfristen (Art. 5 Abs. 1 lit. e DSGVO) ──────
 
 default retention_days := 365
 
-retention_days := 90 if {
-    input.data_category == "analytics_data"
-}
-
-retention_days := 730 if {
-    input.data_category == "contract_data"
-}
-
-retention_days := 1095 if {
-    input.data_category == "accounting_data"
+retention_days := data.pb.config.retention_days[input.data_category] if {
+    data.pb.config.retention_days[input.data_category]
 }
 
 # ── Recht auf Löschung (Art. 17 DSGVO) ─────────────────────
@@ -117,13 +98,8 @@ deletion_allowed if {
 }
 
 has_legal_retention_obligation if {
-    input.data_category == "accounting_data"
-    input.age_days < 3650
-}
-
-has_legal_retention_obligation if {
-    input.data_category == "contract_data"
-    input.age_days < 1095
+    max_age := data.pb.config.retention_obligations[input.data_category]
+    input.age_days < max_age
 }
 
 deletion_response := response if {
@@ -148,7 +124,6 @@ deletion_response := response if {
 
 # ── Dual Storage Policy ─────────────────────────────────────
 # Bestimmt pro Klassifizierung, ob Original + Pseudonym gespeichert werden.
-# Änderbar ohne Code-Deployment.
 
 default dual_storage_enabled := false
 
@@ -164,7 +139,6 @@ dual_storage_enabled if {
 
 # ── Vault Access Policy ─────────────────────────────────────
 # Prüft ob ein Agent auf Original-Daten im Vault zugreifen darf.
-# Erfordert gültigen Token + Zweckbindung.
 
 default vault_access_allowed := false
 
@@ -176,42 +150,26 @@ vault_access_allowed if {
 }
 
 purpose_allowed_for_vault if {
-    some allowed_purpose in allowed_purposes[input.data_category]
-    input.purpose == allowed_purpose
+    purposes := allowed_purposes[input.data_category]
+    some p in purposes
+    input.purpose == p
 }
 
 role_allowed_for_classification if {
-    input.classification == "internal"
-    input.agent_role in {"analyst", "admin", "developer"}
-}
-
-role_allowed_for_classification if {
-    input.classification == "confidential"
-    input.agent_role == "admin"
+    some role in data.pb.config.access_matrix[input.classification]
+    input.agent_role == role
+    input.classification != "public"
 }
 
 # ── Vault Field Redaction ───────────────────────────────────
 # Welche Felder im Original redaktiert werden, abhängig vom Zweck.
-# Nutzt gleiche Logik wie fields_to_redact, aber explizit für Vault.
 
-default vault_fields_to_redact := {"email", "phone", "iban", "birthdate", "address"}
+default vault_fields_to_redact := set()
 
-vault_fields_to_redact := {"email", "phone", "iban", "birthdate", "address"} if {
-    input.purpose == "reporting"
+vault_fields_to_redact := {f | some f in data.pb.config.fields_to_redact[input.purpose]} if {
+    data.pb.config.fields_to_redact[input.purpose]
 }
 
-vault_fields_to_redact := {"iban", "birthdate", "address"} if {
-    input.purpose == "support"
-}
-
-vault_fields_to_redact := {"email", "phone", "iban", "birthdate", "address"} if {
-    input.purpose == "product_improvement"
-}
-
-vault_fields_to_redact := {"birthdate"} if {
-    input.purpose == "billing"
-}
-
-vault_fields_to_redact := set() if {
-    input.purpose == "contract_fulfillment"
+vault_fields_to_redact := {f | some f in data.pb.config.fields_to_redact["default"]} if {
+    not data.pb.config.fields_to_redact[input.purpose]
 }
