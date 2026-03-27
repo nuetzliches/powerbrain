@@ -246,6 +246,7 @@ class ChunkIngestRequest(BaseModel):
     classification: str = "internal"
     metadata: dict[str, Any] = {}
     source: str
+    source_type: str = "text"
 
 
 # ── Hilfsfunktionen ─────────────────────────────────────────
@@ -481,6 +482,7 @@ async def ingest_text_chunks(
     classification: str,
     project: str | None,
     metadata: dict[str, Any],
+    source_type: str = "text",
 ) -> dict:
     """Vektorisiert Chunks und speichert sie in Qdrant + PostgreSQL.
 
@@ -647,6 +649,7 @@ async def ingest_text_chunks(
         payload = {
             "text": text,
             "source": source,
+            "source_type": source_type,
             "classification": classification,
             "project": project or "",
             "chunk_index": meta["chunk_index"],
@@ -690,6 +693,7 @@ async def ingest_text_chunks(
                     payload={
                         "text": l0_text,
                         "source": source,
+                        "source_type": source_type,
                         "classification": classification,
                         "project": project or "",
                         "chunk_index": 0,
@@ -719,6 +723,7 @@ async def ingest_text_chunks(
                     payload={
                         "text": l1_text,
                         "source": source,
+                        "source_type": source_type,
                         "classification": classification,
                         "project": project or "",
                         "chunk_index": 0,
@@ -877,13 +882,15 @@ async def ingest(req: IngestRequest):
     try:
         collection = req.collection or DEFAULT_COLLECTION
         chunks = chunk_text(req.source)
+        source_type = req.source_type or "text"
         result = await ingest_text_chunks(
             chunks=chunks,
             collection=collection,
-            source=f"{req.source_type or 'text'}:inline",
+            source=f"{source_type}:inline",
             classification=req.classification,
             project=req.project,
             metadata=req.metadata,
+            source_type=source_type,
         )
         pb_ingestion_requests.labels(endpoint="ingest", status="ok").inc() if pb_ingestion_requests else None
         return result
@@ -906,6 +913,7 @@ async def ingest_chunks(req: ChunkIngestRequest):
             classification=req.classification,
             project=req.project,
             metadata=req.metadata,
+            source_type=req.source_type,
         )
         pb_ingestion_requests.labels(endpoint="ingest_chunks", status="ok").inc() if pb_ingestion_requests else None
         return result

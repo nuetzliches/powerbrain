@@ -199,14 +199,17 @@ class TokenBucket:
         self.capacity = capacity
         self.tokens = capacity
         self.refill_rate = refill_rate  # tokens per second
-        self.last_refill = asyncio.get_event_loop().time() if asyncio.get_event_loop().is_running() else 0.0
+        try:
+            self.last_refill = asyncio.get_running_loop().time()
+        except RuntimeError:
+            self.last_refill = 0.0
         self._lock = asyncio.Lock()
         self.last_used = self.last_refill
 
     async def consume(self) -> tuple[bool, float]:
         """Try to consume a token. Returns (allowed, retry_after_seconds)."""
         async with self._lock:
-            now = asyncio.get_event_loop().time()
+            now = asyncio.get_running_loop().time()
             elapsed = now - self.last_refill
             self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate)
             self.last_refill = now
@@ -237,7 +240,7 @@ def _get_bucket(agent_id: str, role: str) -> TokenBucket:
     _rate_limit_cleanup_counter += 1
     if _rate_limit_cleanup_counter >= 100:
         _rate_limit_cleanup_counter = 0
-        now = asyncio.get_event_loop().time()
+        now = asyncio.get_running_loop().time()
         stale = [k for k, v in _rate_limit_buckets.items()
                  if now - v.last_used > 600]
         for k in stale:
@@ -261,9 +264,9 @@ class RateLimitMiddleware:
             return await self.app(scope, receive, send)
 
         try:
-            # Extract agent info from auth state (set by AuthContextMiddleware)
+            # Extract agent info from auth state (set by AuthenticationMiddleware)
             user = scope.get("user")
-            if user and hasattr(user, "identity"):
+            if user and hasattr(user, "identity") and user.identity:
                 agent_id = user.identity
                 role = user.scopes[0] if user.scopes else "analyst"
                 bucket = _get_bucket(agent_id, role)
@@ -288,9 +291,10 @@ class RateLimitMiddleware:
                         "body": response_body,
                     })
                     return
+            # No authenticated user — skip rate limiting (auth middleware handles rejection)
         except Exception as e:
             # Fail open — rate limiter error should not block requests
-            log.warning(f"Rate limiter Fehler, Request wird durchgelassen: {e}")
+            log.warning(f"Rate limiter Fehler, Request wird durchgelassen: {e!r}")
 
         return await self.app(scope, receive, send)
 
