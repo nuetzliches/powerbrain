@@ -27,12 +27,17 @@ class ToolEntry:
     server_config: McpServerConfig
 
 
-def _mcp_headers(server: McpServerConfig, user_token: str | None = None) -> dict[str, str]:
+def _mcp_headers(
+    server: McpServerConfig,
+    user_token: str | None = None,
+    client_headers: dict[str, str] | None = None,
+) -> dict[str, str]:
     """Build auth headers for an MCP server connection.
 
     Args:
         server: The MCP server config.
         user_token: The user's pb_ API key (for bearer auth mode).
+        client_headers: Original client request headers (for forward_headers).
     """
     headers: dict[str, str] = {}
     if server.auth == "bearer":
@@ -45,6 +50,14 @@ def _mcp_headers(server: McpServerConfig, user_token: str | None = None) -> dict
             if token:
                 headers["Authorization"] = f"Bearer {token}"
     # auth == "none": no headers
+
+    # Forward configured headers from the original client request
+    if server.forward_headers and client_headers:
+        for header_name in server.forward_headers:
+            value = client_headers.get(header_name.lower())
+            if value:
+                headers[header_name] = value
+
     return headers
 
 
@@ -211,6 +224,7 @@ class ToolInjector:
         entry: ToolEntry,
         arguments: dict,
         user_token: str | None = None,
+        client_headers: dict[str, str] | None = None,
     ) -> str:
         """Execute a tool call against the correct MCP server.
 
@@ -218,8 +232,9 @@ class ToolInjector:
             entry: The ToolEntry (from resolve_tool).
             arguments: Tool arguments dict.
             user_token: User's pb_ key for bearer auth propagation.
+            client_headers: Original client request headers (for forward_headers).
         """
-        headers = _mcp_headers(entry.server_config, user_token=user_token)
+        headers = _mcp_headers(entry.server_config, user_token=user_token, client_headers=client_headers)
 
         async with streamablehttp_client(
             entry.server_config.url, headers=headers,

@@ -58,6 +58,7 @@ class AgentLoop:
         tool_call_timeout: int | None = None,
         pii_reverse_map: dict[str, str] | None = None,
         user_token: str | None = None,
+        client_headers: dict[str, str] | None = None,
     ) -> None:
         self._injector = tool_injector
         self._acompletion = acompletion
@@ -65,6 +66,7 @@ class AgentLoop:
         self._tool_call_timeout = tool_call_timeout or config.TOOL_CALL_TIMEOUT
         self._pii_reverse_map = pii_reverse_map or {}
         self._user_token = user_token
+        self._client_headers = client_headers
 
     async def run(
         self,
@@ -145,6 +147,7 @@ class AgentLoop:
                                 self._injector.call_tool(
                                     entry, arguments,
                                     user_token=self._user_token,
+                                    client_headers=self._client_headers,
                                 ),
                                 timeout=self._tool_call_timeout,
                             )

@@ -602,6 +602,7 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
                 max_iterations=max_iterations,
                 pii_reverse_map=pii_reverse_map,
                 user_token=user_api_key,
+                client_headers=dict(raw_request.headers),
             )
             try:
                 result: AgentLoopResult = await asyncio.wait_for(

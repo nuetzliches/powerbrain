@@ -26,6 +26,7 @@ class McpServerConfig:
     prefix: str | None = None       # tool name prefix (defaults to name)
     required: bool = False          # fail-fast if unreachable
     tool_whitelist: list[str] | None = None  # None = all tools
+    forward_headers: list[str] | None = None  # headers to forward from client request
 
     def __post_init__(self) -> None:
         if self.prefix is None:
@@ -85,6 +86,7 @@ def load_mcp_servers(config_path: str) -> list[McpServerConfig]:
             prefix=entry.get("prefix"),
             required=entry.get("required", False),
             tool_whitelist=entry.get("tool_whitelist"),
+            forward_headers=entry.get("forward_headers"),
         ))
 
     # Validate: no duplicate names or prefixes
