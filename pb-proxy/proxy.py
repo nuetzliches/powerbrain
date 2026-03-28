@@ -6,7 +6,9 @@ Transparently injects Powerbrain MCP tools into every LLM request
 and executes tool calls via the MCP server.
 
 Activation: docker compose --profile proxy up -d
-Endpoint: POST /v1/chat/completions (OpenAI-compatible)
+Endpoints:
+  POST /v1/chat/completions  (OpenAI-compatible)
+  POST /v1/messages           (Anthropic Messages API)
 """
 
 import asyncio
@@ -72,6 +74,16 @@ except ImportError:
         metadata: dict = field(default_factory=dict)
 from tool_injection import ToolInjector
 from agent_loop import AgentLoop, AgentLoopResult
+from anthropic_format import (
+    anthropic_messages_to_openai,
+    openai_response_to_anthropic,
+    openai_tools_to_anthropic,
+    format_anthropic_sse_message_start,
+    format_anthropic_sse_content_start,
+    format_anthropic_sse_text_delta,
+    format_anthropic_sse_block_stop,
+    format_anthropic_sse_message_delta,
+)
 from pii_middleware import (
     pseudonymize_messages,
     depseudonymize_text,
@@ -175,6 +187,22 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
 
     # Pass through any additional parameters
+    model_config = {"extra": "allow"}
+
+
+class MessagesRequest(BaseModel):
+    """Anthropic Messages API request model."""
+    model: str
+    messages: list[dict]
+    system: str | list[dict] | None = None
+    tools: list[dict] | None = None
+    max_tokens: int = 4096
+    temperature: float | None = None
+    top_p: float | None = None
+    stream: bool = False
+    stop_sequences: list[str] | None = None
+    metadata: dict | None = None
+
     model_config = {"extra": "allow"}
 
 
@@ -766,6 +794,298 @@ async def _generate_sse_stream(
         })
 
     yield "data: [DONE]\n\n"
+
+
+# ── Anthropic Messages API ───────────────────────────────────
+
+@app.post("/v1/messages")
+async def messages(request: MessagesRequest, raw_request: Request):
+    """Anthropic Messages API endpoint.
+
+    Accepts requests in Anthropic format, translates to internal OpenAI format
+    for the agent loop, then translates the response back to Anthropic format.
+    This allows Claude Desktop/Code to use pb-proxy as ANTHROPIC_BASE_URL.
+    """
+    start_time = time.monotonic()
+    is_streaming = request.stream
+    trace_id = _uuid.uuid4().hex[:16]
+
+    with request_telemetry_context(trace_id) as req_telemetry:
+        # ── Authentication (via middleware) ──────────────────────────
+        agent_id = getattr(raw_request.state, "agent_id", "anonymous")
+        agent_role = getattr(raw_request.state, "agent_role", "developer")
+        user_api_key = getattr(raw_request.state, "bearer_token", None)
+        provider_key_header = raw_request.headers.get("x-provider-key")
+
+        # OPA policy check
+        policy = await check_opa_policy(
+            agent_role, request.model, tool_injector.server_names,
+        )
+        if not policy.get("provider_allowed", False):
+            PROXY_REQUESTS.labels(model=request.model, status="denied").inc()
+            raise HTTPException(
+                status_code=403,
+                detail=f"Provider '{request.model}' not allowed for role '{agent_role}'",
+            )
+
+        max_iterations = policy.get("max_iterations", config.MAX_ITERATIONS)
+        allowed_servers = policy.get("mcp_servers_allowed", tool_injector.server_names)
+
+        # ── Convert Anthropic messages to OpenAI format ─────────────
+        openai_messages = anthropic_messages_to_openai(request.messages)
+
+        # Prepend system message if provided
+        if request.system:
+            system_text = request.system if isinstance(request.system, str) else \
+                "\n".join(b.get("text", "") for b in request.system if isinstance(b, dict))
+            openai_messages.insert(0, {"role": "system", "content": system_text})
+
+        # ── PII Protection ──────────────────────────────────────────
+        pii_reverse_map: dict[str, str] = {}
+        pii_enabled = policy.get("pii_scan_enabled", config.PII_SCAN_ENABLED)
+        pii_forced = policy.get("pii_scan_forced", config.PII_SCAN_FORCED)
+
+        if pii_enabled:
+            session_salt = generate_session_salt()
+            try:
+                pseudonymized_messages, pii_reverse_map = await pseudonymize_messages(
+                    openai_messages, session_salt, pii_http_client
+                )
+                if pii_reverse_map:
+                    entity_types = sorted({
+                        m.group(1) for m in re.finditer(
+                            r"\[([A-Z_]+):[a-f0-9]{8}\]",
+                            " ".join(
+                                m.get("content", "") for m in pseudonymized_messages
+                                if isinstance(m.get("content"), str)
+                            ),
+                        )
+                    })
+                    for et in entity_types:
+                        PII_ENTITIES_PSEUDONYMIZED.labels(entity_type=et).inc()
+                    hint = build_system_hint(entity_types)
+                    if hint:
+                        pseudonymized_messages.insert(0, {"role": "system", "content": hint})
+                openai_messages = pseudonymized_messages
+            except Exception as e:
+                if pii_forced:
+                    PII_SCAN_FAILURES.labels(fail_mode="closed").inc()
+                    raise HTTPException(
+                        status_code=503,
+                        detail="PII protection required but scanner unavailable",
+                    )
+                PII_SCAN_FAILURES.labels(fail_mode="open").inc()
+                log.warning("PII scan failed (open mode): %s", e)
+
+        # ── Tool injection ──────────────────────────────────────────
+        if config.TOOL_INJECTION_ENABLED:
+            merged_tools = tool_injector.merge_tools(None, allowed_servers=allowed_servers)
+        else:
+            merged_tools = []
+
+        # Client-provided tools (Anthropic format) → merge as OpenAI format
+        if request.tools:
+            for tool in request.tools:
+                name = tool.get("name", "")
+                if name and not any(
+                    t.get("function", {}).get("name") == name for t in merged_tools
+                ):
+                    merged_tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "description": tool.get("description", ""),
+                            "parameters": tool.get("input_schema", {"type": "object"}),
+                        },
+                    })
+
+        # ── LiteLLM kwargs ──────────────────────────────────────────
+        litellm_kwargs: dict[str, Any] = {}
+        if request.temperature is not None:
+            litellm_kwargs["temperature"] = request.temperature
+        if request.max_tokens is not None:
+            litellm_kwargs["max_tokens"] = min(request.max_tokens, 16384)
+        if request.top_p is not None:
+            litellm_kwargs["top_p"] = request.top_p
+
+        # Resolve routing
+        acompletion, routing_kwargs = _resolve_provider_key(
+            model=request.model,
+            provider_key_header=provider_key_header,
+            provider_key_config=provider_key_config,
+        )
+        litellm_kwargs.update(routing_kwargs)
+
+        # ── Run agent loop ──────────────────────────────────────────
+        with trace_operation(_proxy_tracer, "agent_loop", "pb-proxy", model=request.model):
+            loop = AgentLoop(
+                tool_injector,
+                acompletion=acompletion,
+                max_iterations=max_iterations,
+                pii_reverse_map=pii_reverse_map,
+                user_token=user_api_key,
+                client_headers={
+                    k: v for k, v in raw_request.headers.items()
+                    if k in tool_injector.forwardable_headers
+                },
+            )
+            try:
+                result: AgentLoopResult = await asyncio.wait_for(
+                    loop.run(
+                        model=request.model,
+                        messages=openai_messages,
+                        tools=merged_tools,
+                        **litellm_kwargs,
+                    ),
+                    timeout=config.REQUEST_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                PROXY_REQUESTS.labels(model=request.model, status="timeout").inc()
+                raise HTTPException(status_code=504, detail="Request timed out")
+            except Exception as e:
+                PROXY_REQUESTS.labels(model=request.model, status="error").inc()
+                log.error("Agent loop failed: %s", e)
+                raise HTTPException(status_code=502, detail="LLM request failed")
+
+        # ── Metrics ─────────────────────────────────────────────────
+        latency = time.monotonic() - start_time
+        PROXY_REQUESTS.labels(model=request.model, status="ok").inc()
+        PROXY_LATENCY.labels(model=request.model).observe(latency)
+        PROXY_ITERATIONS.observe(result.iterations)
+        for tool_name in result.tools_used:
+            PROXY_TOOL_CALLS.labels(tool_name=tool_name).inc()
+
+        # ── Build Anthropic response ────────────────────────────────
+        openai_response = result.response.model_dump()
+
+        # De-pseudonymize
+        if pii_reverse_map:
+            for choice in openai_response.get("choices", []):
+                msg = choice.get("message", {})
+                if isinstance(msg.get("content"), str):
+                    msg["content"] = depseudonymize_text(msg["content"], pii_reverse_map)
+
+        anthropic_response = openai_response_to_anthropic(
+            openai_response, model=request.model,
+        )
+
+        # Proxy metadata headers
+        headers = {
+            "X-Proxy-Iterations": str(result.iterations),
+            "X-Proxy-Tool-Calls": str(result.tool_calls_executed),
+        }
+        if result.max_iterations_reached:
+            headers["X-Proxy-Max-Iterations-Reached"] = "true"
+
+        if is_streaming:
+            return StreamingResponse(
+                _generate_anthropic_sse_stream(anthropic_response),
+                media_type="text/event-stream",
+                headers={
+                    **headers,
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
+        return JSONResponse(content=anthropic_response, headers=headers)
+
+
+# ── Anthropic SSE Streaming ──────────────────────────────────
+
+def _anthropic_sse_event(event_type: str, data: dict) -> str:
+    """Format an Anthropic SSE event."""
+    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+
+async def _generate_anthropic_sse_stream(
+    response: dict,
+) -> AsyncGenerator[str, None]:
+    """Convert a complete Anthropic response to Anthropic SSE stream format.
+
+    Event sequence: message_start → content_block_start → content_block_delta(s)
+    → content_block_stop → message_delta → message_stop
+    """
+    msg_id = response.get("id", f"msg_{_uuid.uuid4().hex[:24]}")
+    model = response.get("model", "unknown")
+    usage = response.get("usage", {})
+    input_tokens = usage.get("input_tokens", 0)
+    output_tokens = usage.get("output_tokens", 0)
+
+    # message_start
+    yield _anthropic_sse_event(
+        "message_start",
+        format_anthropic_sse_message_start(msg_id, model, input_tokens),
+    )
+
+    # Content blocks
+    content = response.get("content", [])
+    for idx, block in enumerate(content):
+        block_type = block.get("type", "text")
+
+        if block_type == "text":
+            # content_block_start
+            yield _anthropic_sse_event(
+                "content_block_start",
+                format_anthropic_sse_content_start(idx, "text"),
+            )
+
+            # Stream text in chunks
+            text = block.get("text", "")
+            chunk_size = 20
+            for i in range(0, max(len(text), 1), chunk_size):
+                piece = text[i: i + chunk_size]
+                if piece:
+                    yield _anthropic_sse_event(
+                        "content_block_delta",
+                        format_anthropic_sse_text_delta(idx, piece),
+                    )
+
+            # content_block_stop
+            yield _anthropic_sse_event(
+                "content_block_stop",
+                format_anthropic_sse_block_stop(idx),
+            )
+
+        elif block_type == "tool_use":
+            # content_block_start with tool info
+            yield _anthropic_sse_event("content_block_start", {
+                "type": "content_block_start",
+                "index": idx,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": block.get("id", ""),
+                    "name": block.get("name", ""),
+                    "input": {},
+                },
+            })
+
+            # Send input as JSON delta
+            input_json = json.dumps(block.get("input", {}))
+            yield _anthropic_sse_event("content_block_delta", {
+                "type": "content_block_delta",
+                "index": idx,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": input_json,
+                },
+            })
+
+            yield _anthropic_sse_event(
+                "content_block_stop",
+                format_anthropic_sse_block_stop(idx),
+            )
+
+    # message_delta
+    stop_reason = response.get("stop_reason", "end_turn")
+    yield _anthropic_sse_event(
+        "message_delta",
+        format_anthropic_sse_message_delta(stop_reason, output_tokens),
+    )
+
+    # message_stop
+    yield _anthropic_sse_event("message_stop", {"type": "message_stop"})
 
 
 # ── Entrypoint ───────────────────────────────────────────────
