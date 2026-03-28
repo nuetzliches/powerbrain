@@ -815,7 +815,12 @@ async def messages(request: MessagesRequest, raw_request: Request):
         agent_id = getattr(raw_request.state, "agent_id", "anonymous")
         agent_role = getattr(raw_request.state, "agent_role", "developer")
         user_api_key = getattr(raw_request.state, "bearer_token", None)
-        provider_key_header = raw_request.headers.get("x-provider-key")
+        # Claude Code/Desktop sends Anthropic API key as x-api-key header
+        # or Authorization: Bearer. Use as provider key for LiteLLM routing.
+        provider_key_header = (
+            raw_request.headers.get("x-provider-key")
+            or raw_request.headers.get("x-api-key")
+        )
 
         # Auto-prefix model for Anthropic Messages API:
         # Claude Code/Desktop sends bare model names like "claude-sonnet-4-6-20250514"
