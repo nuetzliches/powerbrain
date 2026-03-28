@@ -817,15 +817,23 @@ async def messages(request: MessagesRequest, raw_request: Request):
         user_api_key = getattr(raw_request.state, "bearer_token", None)
         provider_key_header = raw_request.headers.get("x-provider-key")
 
+        # Auto-prefix model for Anthropic Messages API:
+        # Claude Code/Desktop sends bare model names like "claude-sonnet-4-6-20250514"
+        # but LiteLLM needs "anthropic/claude-..." for passthrough routing.
+        llm_model = request.model
+        if llm_model.startswith("claude-") and "/" not in llm_model and llm_model not in known_aliases:
+            llm_model = f"anthropic/{llm_model}"
+            log.info("Auto-prefixed model: %s → %s", request.model, llm_model)
+
         # OPA policy check
         policy = await check_opa_policy(
-            agent_role, request.model, tool_injector.server_names,
+            agent_role, llm_model, tool_injector.server_names,
         )
         if not policy.get("provider_allowed", False):
-            PROXY_REQUESTS.labels(model=request.model, status="denied").inc()
+            PROXY_REQUESTS.labels(model=llm_model, status="denied").inc()
             raise HTTPException(
                 status_code=403,
-                detail=f"Provider '{request.model}' not allowed for role '{agent_role}'",
+                detail=f"Provider '{llm_model}' not allowed for role '{agent_role}'",
             )
 
         max_iterations = policy.get("max_iterations", config.MAX_ITERATIONS)
@@ -910,14 +918,14 @@ async def messages(request: MessagesRequest, raw_request: Request):
 
         # Resolve routing
         acompletion, routing_kwargs = _resolve_provider_key(
-            model=request.model,
+            model=llm_model,
             provider_key_header=provider_key_header,
             provider_key_config=provider_key_config,
         )
         litellm_kwargs.update(routing_kwargs)
 
         # ── Run agent loop ──────────────────────────────────────────
-        with trace_operation(_proxy_tracer, "agent_loop", "pb-proxy", model=request.model):
+        with trace_operation(_proxy_tracer, "agent_loop", "pb-proxy", model=llm_model):
             loop = AgentLoop(
                 tool_injector,
                 acompletion=acompletion,
@@ -932,7 +940,7 @@ async def messages(request: MessagesRequest, raw_request: Request):
             try:
                 result: AgentLoopResult = await asyncio.wait_for(
                     loop.run(
-                        model=request.model,
+                        model=llm_model,
                         messages=openai_messages,
                         tools=merged_tools,
                         **litellm_kwargs,
@@ -940,17 +948,17 @@ async def messages(request: MessagesRequest, raw_request: Request):
                     timeout=config.REQUEST_TIMEOUT,
                 )
             except asyncio.TimeoutError:
-                PROXY_REQUESTS.labels(model=request.model, status="timeout").inc()
+                PROXY_REQUESTS.labels(model=llm_model, status="timeout").inc()
                 raise HTTPException(status_code=504, detail="Request timed out")
             except Exception as e:
-                PROXY_REQUESTS.labels(model=request.model, status="error").inc()
+                PROXY_REQUESTS.labels(model=llm_model, status="error").inc()
                 log.error("Agent loop failed: %s", e)
                 raise HTTPException(status_code=502, detail="LLM request failed")
 
         # ── Metrics ─────────────────────────────────────────────────
         latency = time.monotonic() - start_time
-        PROXY_REQUESTS.labels(model=request.model, status="ok").inc()
-        PROXY_LATENCY.labels(model=request.model).observe(latency)
+        PROXY_REQUESTS.labels(model=llm_model, status="ok").inc()
+        PROXY_LATENCY.labels(model=llm_model).observe(latency)
         PROXY_ITERATIONS.observe(result.iterations)
         for tool_name in result.tools_used:
             PROXY_TOOL_CALLS.labels(tool_name=tool_name).inc()
@@ -966,7 +974,7 @@ async def messages(request: MessagesRequest, raw_request: Request):
                     msg["content"] = depseudonymize_text(msg["content"], pii_reverse_map)
 
         anthropic_response = openai_response_to_anthropic(
-            openai_response, model=request.model,
+            openai_response, model=request.model,  # Return original model name to client
         )
 
         # Proxy metadata headers
