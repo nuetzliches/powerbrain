@@ -815,11 +815,13 @@ async def messages(request: MessagesRequest, raw_request: Request):
         agent_id = getattr(raw_request.state, "agent_id", "anonymous")
         agent_role = getattr(raw_request.state, "agent_role", "developer")
         user_api_key = getattr(raw_request.state, "bearer_token", None)
-        # Claude Code/Desktop sends Anthropic API key as x-api-key header
-        # or Authorization: Bearer. Use as provider key for LiteLLM routing.
+        # Claude Code/Desktop sends the Anthropic API key as x-api-key header.
+        # For /v1/messages this is always the LLM provider key — pass it through
+        # directly to LiteLLM regardless of provider_keys config.
+        anthropic_api_key = raw_request.headers.get("x-api-key")
         provider_key_header = (
             raw_request.headers.get("x-provider-key")
-            or raw_request.headers.get("x-api-key")
+            or anthropic_api_key
         )
 
         # Auto-prefix model for Anthropic Messages API:
@@ -921,13 +923,18 @@ async def messages(request: MessagesRequest, raw_request: Request):
         if request.top_p is not None:
             litellm_kwargs["top_p"] = request.top_p
 
-        # Resolve routing
-        acompletion, routing_kwargs = _resolve_provider_key(
-            model=llm_model,
-            provider_key_header=provider_key_header,
-            provider_key_config=provider_key_config,
-        )
-        litellm_kwargs.update(routing_kwargs)
+        # Resolve routing — for /v1/messages, if client sent x-api-key,
+        # always use it as the LLM provider key (Anthropic standard).
+        if anthropic_api_key:
+            acompletion = direct_acompletion
+            litellm_kwargs["api_key"] = anthropic_api_key
+        else:
+            acompletion, routing_kwargs = _resolve_provider_key(
+                model=llm_model,
+                provider_key_header=provider_key_header,
+                provider_key_config=provider_key_config,
+            )
+            litellm_kwargs.update(routing_kwargs)
 
         # ── Run agent loop ──────────────────────────────────────────
         with trace_operation(_proxy_tracer, "agent_loop", "pb-proxy", model=llm_model):
