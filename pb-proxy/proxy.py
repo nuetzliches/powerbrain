@@ -892,14 +892,19 @@ async def messages(request: MessagesRequest, raw_request: Request):
                 PII_SCAN_FAILURES.labels(fail_mode="open").inc()
                 log.warning("PII scan failed (open mode): %s", e)
 
-        # ── Tools ────────────────────────────────────────────────────
-        # No MCP tool injection for /v1/messages — Claude Desktop/Code
-        # manages its own tools. Only pass through client-provided tools.
-        merged_tools = []
+        # ── Tool injection ──────────────────────────────────────────
+        if config.TOOL_INJECTION_ENABLED:
+            merged_tools = tool_injector.merge_tools(None, allowed_servers=allowed_servers)
+        else:
+            merged_tools = []
+
+        # Client-provided tools (Anthropic format) → merge as OpenAI format
         if request.tools:
             for tool in request.tools:
                 name = tool.get("name", "")
-                if name:
+                if name and not any(
+                    t.get("function", {}).get("name") == name for t in merged_tools
+                ):
                     merged_tools.append({
                         "type": "function",
                         "function": {
@@ -931,16 +936,25 @@ async def messages(request: MessagesRequest, raw_request: Request):
             )
             litellm_kwargs.update(routing_kwargs)
 
-        # ── Single LLM call (no agent loop) ─────────────────────────
-        # /v1/messages is a transparent pass-through — Claude Desktop/Code
-        # manages its own tool calls. No agent loop, no tool execution.
-        with trace_operation(_proxy_tracer, "llm_call", "pb-proxy", model=llm_model):
+        # ── Run agent loop ──────────────────────────────────────────
+        with trace_operation(_proxy_tracer, "agent_loop", "pb-proxy", model=llm_model):
+            loop = AgentLoop(
+                tool_injector,
+                acompletion=acompletion,
+                max_iterations=max_iterations,
+                pii_reverse_map=pii_reverse_map,
+                user_token=user_api_key,
+                client_headers={
+                    k: v for k, v in raw_request.headers.items()
+                    if k in tool_injector.forwardable_headers
+                },
+            )
             try:
-                response = await asyncio.wait_for(
-                    acompletion(
+                result: AgentLoopResult = await asyncio.wait_for(
+                    loop.run(
                         model=llm_model,
                         messages=openai_messages,
-                        tools=merged_tools if merged_tools else None,
+                        tools=merged_tools,
                         **litellm_kwargs,
                     ),
                     timeout=config.REQUEST_TIMEOUT,
@@ -950,16 +964,19 @@ async def messages(request: MessagesRequest, raw_request: Request):
                 raise HTTPException(status_code=504, detail="Request timed out")
             except Exception as e:
                 PROXY_REQUESTS.labels(model=llm_model, status="error").inc()
-                log.error("LLM call failed: %s", e)
+                log.error("Agent loop failed: %s", e)
                 raise HTTPException(status_code=502, detail="LLM request failed")
 
         # ── Metrics ─────────────────────────────────────────────────
         latency = time.monotonic() - start_time
         PROXY_REQUESTS.labels(model=llm_model, status="ok").inc()
         PROXY_LATENCY.labels(model=llm_model).observe(latency)
+        PROXY_ITERATIONS.observe(result.iterations)
+        for tool_name in result.tools_used:
+            PROXY_TOOL_CALLS.labels(tool_name=tool_name).inc()
 
         # ── Build Anthropic response ────────────────────────────────
-        openai_response = response.model_dump()
+        openai_response = result.response.model_dump()
 
         # De-pseudonymize
         if pii_reverse_map:
@@ -969,10 +986,16 @@ async def messages(request: MessagesRequest, raw_request: Request):
                     msg["content"] = depseudonymize_text(msg["content"], pii_reverse_map)
 
         anthropic_response = openai_response_to_anthropic(
-            openai_response, model=request.model,
+            openai_response, model=request.model,  # Return original model name to client
         )
 
-        headers = {}
+        # Proxy metadata headers
+        headers = {
+            "X-Proxy-Iterations": str(result.iterations),
+            "X-Proxy-Tool-Calls": str(result.tool_calls_executed),
+        }
+        if result.max_iterations_reached:
+            headers["X-Proxy-Max-Iterations-Reached"] = "true"
 
         if is_streaming:
             return StreamingResponse(
