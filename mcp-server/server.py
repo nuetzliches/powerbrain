@@ -1967,7 +1967,14 @@ if __name__ == "__main__":
     app = RateLimitMiddleware(app)
     if AUTH_REQUIRED:
         # RequireAuthMiddleware: rejects unauthenticated requests with 401
-        app = RequireAuthMiddleware(app, required_scopes=[])
+        # resource_metadata_url tells Claude Desktop where to find OAuth config
+        from urllib.parse import urlparse
+        _parsed = urlparse(MCP_PUBLIC_URL)
+        _resource_meta = f"{_parsed.scheme}://{_parsed.netloc}/.well-known/oauth-protected-resource{_parsed.path.rstrip('/')}/mcp"
+        app = RequireAuthMiddleware(
+            app, required_scopes=[],
+            resource_metadata_url=AnyHttpUrl(_resource_meta),
+        )
     # AuthenticationMiddleware: extracts Bearer token, calls verifier
     app = AuthenticationMiddleware(app, backend=BearerAuthBackend(verifier))
 
