@@ -28,11 +28,16 @@ from mcp.types import Tool, TextContent
 from mcp.server.auth.provider import TokenVerifier, AccessToken
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend, RequireAuthMiddleware
 from mcp.server.auth.middleware.auth_context import AuthContextMiddleware, get_access_token
+from mcp.server.auth.routes import create_auth_routes
 from starlette.applications import Starlette
-from starlette.responses import PlainTextResponse, JSONResponse
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse, JSONResponse, HTMLResponse, RedirectResponse
 from starlette.routing import Route
 from starlette.types import Scope, Receive, Send
 from starlette.middleware.authentication import AuthenticationMiddleware
+
+from oauth_provider import PowerbrainOAuthProvider, CombinedTokenVerifier
+from login_page import render_login_page
 from prometheus_client import (
     Counter, Histogram, Gauge,
     start_http_server as prom_start_http_server,
@@ -96,6 +101,7 @@ embedding_cache = EmbeddingCache()
 MCP_HOST       = os.getenv("MCP_HOST", "0.0.0.0")
 MCP_PORT       = int(os.getenv("MCP_PORT", "8080"))
 MCP_PATH       = os.getenv("MCP_PATH", "/mcp")
+MCP_PUBLIC_URL = os.getenv("MCP_PUBLIC_URL", f"http://localhost:{MCP_PORT}")
 METRICS_PORT   = int(os.getenv("METRICS_PORT", "9091"))
 AUTH_REQUIRED  = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
 
@@ -1866,10 +1872,85 @@ if __name__ == "__main__":
 
         return JSONResponse(response)
 
+    # ── OAuth Provider ──
+    public_base = MCP_PUBLIC_URL.rstrip("/")
+    issuer_url = f"{public_base}/oauth"  # /oauth suffix for Caddy .well-known routing
+    api_key_verifier = ApiKeyVerifier()
+
+    oauth_provider = PowerbrainOAuthProvider(
+        api_key_verifier=api_key_verifier,
+        login_url=f"{public_base}/authorize/login",
+        callback_url=f"{public_base}/authorize/callback",
+    )
+
+    # ── OAuth + Login Routes ──
+    from pydantic import AnyHttpUrl
+
+    oauth_metadata = {
+        "issuer": issuer_url,
+        "authorization_endpoint": f"{public_base}/authorize",
+        "token_endpoint": f"{public_base}/token",
+        "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
+        "response_types_supported": ["code"],
+        "code_challenge_methods_supported": ["S256"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "scopes_supported": ["mcp:tools"],
+        "registration_endpoint": f"{public_base}/register",
+    }
+    protected_resource_metadata = {
+        "resource": f"{public_base}/mcp",
+        "authorization_servers": [issuer_url],
+        "scopes_supported": ["mcp:tools"],
+    }
+
+    async def well_known_oauth_as(request: Request):
+        return JSONResponse(oauth_metadata)
+
+    async def well_known_oauth_pr(request: Request):
+        return JSONResponse(protected_resource_metadata)
+
+    async def login_form(request: Request):
+        session_id = request.query_params.get("session", "")
+        return HTMLResponse(render_login_page(
+            callback_url=f"{public_base}/authorize/callback",
+            login_session_id=session_id,
+        ))
+
+    async def login_callback(request: Request):
+        form = await request.form()
+        session_id = str(form.get("login_session_id", ""))
+        api_key = str(form.get("api_key", ""))
+
+        redirect_url, error = await oauth_provider.handle_login_callback(session_id, api_key)
+        if error:
+            return HTMLResponse(render_login_page(
+                callback_url=f"{public_base}/authorize/callback",
+                login_session_id=session_id,
+                error=error,
+            ), status_code=400)
+        return RedirectResponse(url=redirect_url, status_code=302)
+
+    # SDK OAuth routes (authorize, token, register)
+    auth_routes = create_auth_routes(
+        provider=oauth_provider,
+        issuer_url=AnyHttpUrl(issuer_url),
+    )
+
     app = Starlette(
         routes=[
             Route("/health", endpoint=health_check),
             Route("/metrics/json", endpoint=metrics_json),
+            # OAuth discovery (at stripped paths AND full RFC 9728 paths)
+            Route("/.well-known/oauth-authorization-server", endpoint=well_known_oauth_as),
+            Route("/.well-known/oauth-authorization-server/{rest:path}", endpoint=well_known_oauth_as),
+            Route("/.well-known/oauth-protected-resource", endpoint=well_known_oauth_pr),
+            Route("/.well-known/oauth-protected-resource/{rest:path}", endpoint=well_known_oauth_pr),
+            # Login form + callback (before auth routes to avoid /authorize prefix match)
+            Route("/authorize/login", endpoint=login_form, methods=["GET"]),
+            Route("/authorize/callback", endpoint=login_callback, methods=["POST"]),
+            # SDK auth routes
+            *auth_routes,
+            # MCP endpoint
             Route(MCP_PATH, endpoint=MCPTransport()),
         ],
         lifespan=lifespan,
@@ -1877,7 +1958,8 @@ if __name__ == "__main__":
 
     # ── Auth-Middleware (inside-out: last applied = outermost) ──
     starlette_app = app  # keep reference for lifespan bypass
-    verifier = ApiKeyVerifier()
+    # Combined verifier: API key first, then OAuth token
+    verifier = CombinedTokenVerifier(api_key_verifier, oauth_provider)
     # AuthContextMiddleware: stores authenticated user in contextvars
     app = AuthContextMiddleware(app)
     # RateLimitMiddleware: per-agent token bucket rate limiting (reads scope["user"])
@@ -1889,23 +1971,36 @@ if __name__ == "__main__":
     app = AuthenticationMiddleware(app, backend=BearerAuthBackend(verifier))
 
     # ── Lifespan Bypass ──
-    # RequireAuthMiddleware rejects ASGI lifespan events (no user in scope).
-    # Route lifespan directly to the Starlette app, HTTP through auth chain.
     auth_app = app
+    # Paths that bypass auth (no Bearer token needed)
+    AUTH_BYPASS_PATHS = {
+        "/health",
+        "/authorize/login",
+        "/authorize/callback",
+        "/.well-known/oauth-authorization-server",
+        "/.well-known/oauth-protected-resource",
+    }
 
     class LifespanBypass:
         """Routes lifespan events past auth middleware to Starlette.
-        Also bypasses auth for /health (Docker health checks, load balancers)."""
+        Also bypasses auth for health, OAuth discovery, and login routes."""
         async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
             if scope["type"] == "lifespan":
                 await starlette_app(scope, receive, send)
-            elif scope["type"] == "http" and scope.get("path") == "/health":
-                await starlette_app(scope, receive, send)
+            elif scope["type"] == "http":
+                path = scope.get("path", "")
+                if any(path == p or path.startswith(p + "/") for p in AUTH_BYPASS_PATHS):
+                    await starlette_app(scope, receive, send)
+                else:
+                    await auth_app(scope, receive, send)
             else:
                 await auth_app(scope, receive, send)
 
     app = LifespanBypass()
 
+    # Start OAuth cleanup task
+    oauth_provider.start_cleanup()
+
     mode = "enforced" if AUTH_REQUIRED else "optional"
-    log.info("MCP Streamable HTTP auf %s:%s%s (auth: %s)", MCP_HOST, MCP_PORT, MCP_PATH, mode)
+    log.info("MCP Streamable HTTP auf %s:%s%s (auth: %s, oauth: enabled)", MCP_HOST, MCP_PORT, MCP_PATH, mode)
     uvicorn.run(app, host=MCP_HOST, port=MCP_PORT)

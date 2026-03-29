@@ -9,6 +9,8 @@ COPY shared/ /app/shared/
 COPY mcp-server/*.py ./
 COPY init-db/ /app/init-db/
 
+ENV MCP_PUBLIC_URL=https://mcp.nuetzliche.it/powerbrain
+
 EXPOSE 8080
 
 CMD ["python", "server.py"]
