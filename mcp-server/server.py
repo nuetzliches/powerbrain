@@ -1800,6 +1800,7 @@ if __name__ == "__main__":
         await pg_pool.fetchval("SELECT 1")
         log.info("PostgreSQL pool ready (%s)", POSTGRES_URL.split("@")[-1])
 
+        oauth_provider.start_cleanup()
         async with session_manager.run():
             yield
 
@@ -1997,9 +1998,6 @@ if __name__ == "__main__":
                 await auth_app(scope, receive, send)
 
     app = LifespanBypass()
-
-    # Start OAuth cleanup task
-    oauth_provider.start_cleanup()
 
     mode = "enforced" if AUTH_REQUIRED else "optional"
     log.info("MCP Streamable HTTP auf %s:%s%s (auth: %s, oauth: enabled)", MCP_HOST, MCP_PORT, MCP_PATH, mode)
