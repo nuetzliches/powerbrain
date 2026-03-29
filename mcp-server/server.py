@@ -1932,9 +1932,12 @@ if __name__ == "__main__":
         return RedirectResponse(url=redirect_url, status_code=302)
 
     # SDK OAuth routes (authorize, token, register)
+    from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
     auth_routes = create_auth_routes(
         provider=oauth_provider,
         issuer_url=AnyHttpUrl(issuer_url),
+        client_registration_options=ClientRegistrationOptions(enabled=True),
+        revocation_options=RevocationOptions(enabled=True),
     )
 
     app = Starlette(
