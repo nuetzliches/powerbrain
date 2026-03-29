@@ -1982,8 +1982,9 @@ if __name__ == "__main__":
     # Paths that bypass auth (no Bearer token needed)
     AUTH_BYPASS_PATHS = {
         "/health",
-        "/authorize/login",
-        "/authorize/callback",
+        "/authorize",
+        "/token",
+        "/register",
         "/.well-known/oauth-authorization-server",
         "/.well-known/oauth-protected-resource",
     }
