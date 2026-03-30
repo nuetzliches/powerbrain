@@ -248,7 +248,7 @@ class TestTEIRerankProvider:
         await provider.rerank(http, "my query", docs, top_n=2)
 
         call_args = http.post.call_args
-        assert call_args[0][0] == "http://tei:8010/rerank"
+        assert call_args[0][0] == "http://tei:8010/v1/rerank"
         payload = call_args[1]["json"]
         assert payload["query"] == "my query"
         assert payload["texts"] == [
@@ -258,8 +258,22 @@ class TestTEIRerankProvider:
         ]
         assert payload["raw_scores"] is False
         assert payload["truncate"] is True
-        # TEI does not support top_n in request
         assert "top_n" not in payload
+        assert "model" not in payload  # no model set
+
+    async def test_sends_model_when_set(self):
+        docs = _sample_docs(2)
+        json_data = [
+            {"index": 0, "score": 0.5},
+            {"index": 1, "score": 0.9},
+        ]
+        http = _mock_http(json_data=json_data)
+        provider = TEIRerankProvider("http://ai:8010", model="nutsai-rerank-large-v2")
+
+        await provider.rerank(http, "query", docs, top_n=2)
+
+        payload = http.post.call_args[1]["json"]
+        assert payload["model"] == "nutsai-rerank-large-v2"
 
     async def test_index_mapping_and_sort(self):
         docs = _sample_docs(3)

@@ -128,10 +128,10 @@ class PowerbrainRerankProvider(_BaseRerankProvider):
 # ---------------------------------------------------------------------------
 
 class TEIRerankProvider(_BaseRerankProvider):
-    """Calls HuggingFace Text Embeddings Inference /rerank endpoint.
+    """Calls a TEI-compatible /v1/rerank endpoint (HuggingFace TEI, Infinity, vLLM).
 
-    TEI request:  {query, texts: [str], raw_scores: false, truncate: true}
-    TEI response: [{index: int, score: float}]
+    Request:  {model?, query, texts: [str], raw_scores: false, truncate: true}
+    Response: [{index: int, score: float}]
     """
 
     async def rerank(
@@ -144,15 +144,19 @@ class TEIRerankProvider(_BaseRerankProvider):
         if not documents:
             return []
 
+        payload: dict = {
+            "query": query,
+            "texts": [doc.content for doc in documents],
+            "raw_scores": False,
+            "truncate": True,
+        }
+        if self.model:
+            payload["model"] = self.model
+
         resp = await http.post(
-            f"{self.base_url}/rerank",
+            f"{self.base_url}/v1/rerank",
             headers=self.headers,
-            json={
-                "query": query,
-                "texts": [doc.content for doc in documents],
-                "raw_scores": False,
-                "truncate": True,
-            },
+            json=payload,
         )
         resp.raise_for_status()
         results = resp.json()

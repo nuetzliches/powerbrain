@@ -151,8 +151,11 @@ services:
     #           count: 1
     #           capabilities: [gpu]
 
-  # ── Reranker (Cross-Encoder) ──────────────────────────────
+  # ── Reranker (Built-in Cross-Encoder) ──────────────────────
+  # Only needed when RERANKER_BACKEND=powerbrain (default).
+  # Start explicitly: docker compose --profile local-reranker up
   reranker:
+    profiles: ["local-reranker"]
     build:
       context: .
       dockerfile: reranker/Dockerfile
@@ -160,7 +163,7 @@ services:
     ports:
       - "8082:8082"
     environment:
-      RERANKER_MODEL: cross-encoder/ms-marco-MiniLM-L-6-v2
+      RERANKER_MODEL: ${RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
       RERANKER_MAX_BATCH: "128"
       RERANKER_DEFAULT_TOP_N: "10"
       OTEL_ENABLED:    ${OTEL_ENABLED:-true}
@@ -207,10 +210,11 @@ services:
       FORGEJO_URL:     ${FORGEJO_URL:-http://forgejo.local:3000}
       FORGEJO_TOKEN_FILE: /run/secrets/forgejo_token
       VAULT_HMAC_SECRET_FILE: /run/secrets/vault_hmac_secret
-      RERANKER_URL:     http://reranker:8082
-      RERANKER_ENABLED: "true"
+      RERANKER_URL:     ${RERANKER_URL:-http://reranker:8082}
+      RERANKER_ENABLED: ${RERANKER_ENABLED:-true}
       RERANKER_BACKEND: ${RERANKER_BACKEND:-powerbrain}
       RERANKER_API_KEY: ${RERANKER_API_KEY:-}
+      RERANKER_MODEL:   ${RERANKER_MODEL:-}
       AUTH_REQUIRED:   ${AUTH_REQUIRED:-true}
       MCP_HOST:        0.0.0.0
       MCP_PORT:        "8080"
@@ -269,7 +273,7 @@ services:
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       FORGEJO_URL:   ${FORGEJO_URL:-http://forgejo.local:3000}
       FORGEJO_TOKEN_FILE: /run/secrets/forgejo_token
-      RERANKER_URL:  http://reranker:8082
+      RERANKER_URL:  ${RERANKER_URL:-http://reranker:8082}
       LLM_PROVIDER_URL: ${LLM_PROVIDER_URL:-http://ollama:11434}
       LLM_MODEL: ${LLM_MODEL:-qwen2.5:3b}
       LAYER_GENERATION_ENABLED: "${LAYER_GENERATION_ENABLED:-true}"
