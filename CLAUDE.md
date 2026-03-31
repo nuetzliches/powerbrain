@@ -177,7 +177,7 @@ Access to originals requires:
 
 Art. 17 deletion: delete vault mapping → pseudonyms become irreversible.
 
-### MCP Tools (11)
+### MCP Tools (12)
 - `search_knowledge` — Semantic search (Qdrant + reranking); supports `summarize` and `summary_detail` parameters; optional PII originals via vault token
 - `query_data` — Structured queries (PostgreSQL)
 - `get_rules` — Business rules for a context
@@ -189,6 +189,7 @@ Art. 17 deletion: delete vault mapping → pseudonyms become irreversible.
 - `graph_query` — Knowledge graph queries (nodes, relationships, paths)
 - `graph_mutate` — Knowledge graph mutations (developer/admin only)
 - `get_document` — Retrieve document by ID at specific context layer (L0/L1/L2) for progressive loading
+- `delete_documents` — Bulk-delete documents by filter (source_type, project, or all) for import workflows; deletes from Qdrant, PostgreSQL, Vault (cascade), and Knowledge Graph
 
 ### Privacy (GDPR)
 - **PII Scanner** (Microsoft Presidio) at ingestion — configurable via `ingestion/pii_config.yaml` (entity types, custom recognizers, confidence, languages)

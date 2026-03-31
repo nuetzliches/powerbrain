@@ -21,7 +21,7 @@ from typing import Any
 import httpx
 import asyncpg
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue
+from qdrant_client.models import Filter, FieldCondition, MatchValue, FilterSelector
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import Tool, TextContent
@@ -1058,6 +1058,26 @@ async def list_tools() -> list[Tool]:
                 "required": ["doc_id"]
             }
         ),
+        # ── Bulk Delete: delete_documents ──────────────────────────
+        Tool(
+            name="delete_documents",
+            description="Bulk-delete documents by filter (for import workflows). "
+                        "Deletes from Qdrant, PostgreSQL, PII Vault (cascade), and Knowledge Graph.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source_type": {"type": "string",
+                                    "description": "Filter by source_type (e.g. 'timesheet', 'git-commit')"},
+                    "project":     {"type": "string",
+                                    "description": "Filter by project ID"},
+                    "confirm":     {"type": "boolean",
+                                    "description": "Safety flag, must be true"},
+                    "delete_all":  {"type": "boolean", "default": False,
+                                    "description": "If true, delete ALL documents (ignores other filters)"},
+                },
+                "required": ["confirm"]
+            }
+        ),
     ]
 
 
@@ -1109,6 +1129,26 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     mcp_request_duration.labels(tool=name).observe(elapsed)
 
     return result
+
+
+def _build_delete_filter(source_type: str | None, project: str | None,
+                         delete_all: bool) -> tuple[Filter | None, str, list]:
+    """Build matching Qdrant filter and PG WHERE clause for delete_documents."""
+    if delete_all:
+        return None, "1=1", []
+    must: list[FieldCondition] = []
+    where, params, idx = "1=1", [], 1
+    if source_type:
+        must.append(FieldCondition(key="source_type", match=MatchValue(value=source_type)))
+        where += f" AND source_type = ${idx}"
+        params.append(source_type)
+        idx += 1
+    if project:
+        must.append(FieldCondition(key="project", match=MatchValue(value=project)))
+        where += f" AND project = ${idx}"
+        params.append(project)
+    qf = Filter(must=must) if must else None
+    return qf, where, params
 
 
 async def _dispatch(name: str, arguments: dict[str, Any],
@@ -1770,6 +1810,111 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         await log_access(agent_id, agent_role, "document", doc_id, "get_document", "allow",
                          {"layer": layer, "collection": collection})
         return [TextContent(type="text", text=json.dumps(response, indent=2, default=str))]
+
+    # ── delete_documents ────────────────────────────────────
+    elif name == "delete_documents":
+        confirm = arguments.get("confirm", False)
+        if not confirm:
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "Parameter 'confirm' must be true for delete operations"}))]
+
+        source_type = arguments.get("source_type")
+        project = arguments.get("project")
+        delete_all = arguments.get("delete_all", False)
+
+        if not delete_all and not source_type and not project:
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "At least one filter (source_type, project) is required, "
+                          "or set delete_all=true"}))]
+
+        # OPA policy check — write action, only admin/developer
+        policy = await check_opa_policy(
+            agent_id, agent_role, "documents", "internal", "write")
+        if not policy["allowed"]:
+            await log_access(agent_id, agent_role, "documents", "bulk_delete",
+                             "delete", "deny",
+                             {"source_type": source_type, "project": project})
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "Access denied by policy — delete requires write permission"}))]
+
+        qdrant_filter, pg_where, pg_params = _build_delete_filter(
+            source_type, project, delete_all)
+
+        pool = await get_pg_pool()
+        result: dict[str, Any] = {"deleted": {}, "filters": {
+            "source_type": source_type, "project": project, "delete_all": delete_all,
+        }, "errors": []}
+
+        # 1. Fetch doc_ids from PostgreSQL (needed for graph cleanup + vault count)
+        doc_rows = await pool.fetch(
+            f"SELECT id FROM documents_meta WHERE {pg_where}", *pg_params)
+        doc_ids = [str(r["id"]) for r in doc_rows]
+        result["deleted"]["documents_meta"] = len(doc_ids)
+
+        # 2. Count vault entries before CASCADE deletes them
+        vault_count = 0
+        if doc_ids:
+            vault_count = await pool.fetchval(
+                "SELECT count(*) FROM pii_vault.original_content "
+                "WHERE document_id = ANY($1::uuid[])", doc_ids) or 0
+        result["deleted"]["vault_entries"] = vault_count
+
+        # 3. Delete from Qdrant (all collections)
+        collections = ["pb_general", "pb_code", "pb_rules"]
+        qdrant_counts: dict[str, int] = {}
+        for col in collections:
+            try:
+                count_result = await qdrant.count(
+                    collection_name=col,
+                    count_filter=qdrant_filter,
+                    exact=True,
+                )
+                qdrant_counts[col] = count_result.count
+                if count_result.count > 0:
+                    await qdrant.delete(
+                        collection_name=col,
+                        points_selector=FilterSelector(filter=qdrant_filter)
+                            if qdrant_filter else FilterSelector(
+                                filter=Filter(must=[])),
+                    )
+            except Exception as e:
+                log.error(f"Qdrant delete failed for {col}: {e}")
+                qdrant_counts[col] = 0
+                result["errors"].append(f"qdrant/{col}: {str(e)}")
+        result["deleted"]["qdrant"] = qdrant_counts
+
+        # 4. Delete from PostgreSQL (CASCADE handles vault)
+        if doc_ids:
+            await pool.execute(
+                f"DELETE FROM documents_meta WHERE {pg_where}", *pg_params)
+
+        # 5. Delete Document nodes from Knowledge Graph
+        graph_deleted = 0
+        for doc_id in doc_ids:
+            try:
+                await graph.delete_node(pool, "Document", doc_id)
+                graph_deleted += 1
+            except Exception:
+                pass  # Node may not exist in graph
+        result["deleted"]["graph_nodes"] = graph_deleted
+
+        # 6. Anonymize audit log entries for deleted documents
+        if doc_ids:
+            await pool.execute(
+                "UPDATE agent_access_log "
+                "SET request_context = '{\"anonymized\": true, \"reason\": \"bulk_delete\"}'::jsonb "
+                "WHERE resource_id = ANY($1) AND contains_pii = true",
+                doc_ids)
+
+        if not result["errors"]:
+            del result["errors"]
+
+        await log_access(agent_id, agent_role, "documents", "bulk_delete",
+                         "delete", "allow",
+                         {"source_type": source_type, "project": project,
+                          "delete_all": delete_all, "count": len(doc_ids)})
+        return [TextContent(type="text",
+            text=json.dumps(result, ensure_ascii=False, indent=2))]
 
     return [TextContent(type="text", text=json.dumps({"error": f"Unbekanntes Tool: {name}"}))]
 
