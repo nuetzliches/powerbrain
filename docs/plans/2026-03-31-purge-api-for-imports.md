@@ -1,6 +1,6 @@
 # Backlog: Purge-API für Import-Workflows
 
-**Status:** Backlog
+**Status:** Done (implementiert in Commit 9895515)
 **Erstellt:** 2026-03-31
 **Kontext:** timecockpit-mcp Import-Script benötigt die Möglichkeit, vor einem Neuimport alle Daten eines bestimmten `source_type` (z.B. `timesheet`, `git-commit`) oder alle Daten komplett zu löschen.
 
