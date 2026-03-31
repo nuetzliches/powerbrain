@@ -2027,6 +2027,7 @@ if __name__ == "__main__":
         api_key_verifier=api_key_verifier,
         login_url=f"{public_base}/authorize/login",
         callback_url=f"{public_base}/authorize/callback",
+        get_pool=get_pg_pool,
     )
 
     # ── OAuth + Login Routes ──

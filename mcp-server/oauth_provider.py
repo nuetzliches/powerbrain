@@ -3,14 +3,21 @@
 Implements the MCP SDK's OAuthAuthorizationServerProvider protocol.
 Users authenticate by entering their pb_ API key in a login form.
 The API key is validated against PostgreSQL and mapped to an OAuth token.
+
+Clients and refresh tokens are persisted in PostgreSQL so that users
+don't need to re-authenticate after container restarts.
+Access tokens and auth codes remain in-memory (short-lived).
 """
 
 import asyncio
+import json
 import logging
 import secrets
 import time
 from dataclasses import dataclass, field
 from urllib.parse import urlencode
+
+import asyncpg
 
 from mcp.server.auth.provider import (
     AccessToken,
@@ -62,23 +69,28 @@ class PendingLogin:
 class PowerbrainOAuthProvider(
     OAuthAuthorizationServerProvider[PbAuthorizationCode, PbRefreshToken, PbAccessToken]
 ):
-    """OAuth provider that validates pb_ API keys and maps them to OAuth tokens."""
+    """OAuth provider that validates pb_ API keys and maps them to OAuth tokens.
+
+    Clients and refresh tokens are persisted in PostgreSQL.
+    Access tokens and auth codes are kept in-memory (short-lived).
+    """
 
     def __init__(
         self,
         api_key_verifier: TokenVerifier,
         login_url: str,
         callback_url: str,
+        get_pool: "callable",  # async () -> asyncpg.Pool
     ):
         self.api_key_verifier = api_key_verifier
         self.login_url = login_url
         self.callback_url = callback_url
+        self._get_pool = get_pool
 
-        self._clients: dict[str, OAuthClientInformationFull] = {}
+        # In-memory only (short-lived, OK to lose on restart)
         self._pending_logins: dict[str, PendingLogin] = {}
         self._auth_codes: dict[str, PbAuthorizationCode] = {}
         self._access_tokens: dict[str, PbAccessToken] = {}
-        self._refresh_tokens: dict[str, PbRefreshToken] = {}
 
         self._cleanup_task: asyncio.Task | None = None
 
@@ -90,10 +102,11 @@ class PowerbrainOAuthProvider(
     async def _cleanup_loop(self):
         while True:
             await asyncio.sleep(CLEANUP_INTERVAL)
-            self._cleanup()
+            await self._cleanup()
 
-    def _cleanup(self):
+    async def _cleanup(self):
         now = time.time()
+        # In-memory cleanup
         self._pending_logins = {
             k: v for k, v in self._pending_logins.items()
             if now - v.created_at < PENDING_LOGIN_TTL
@@ -106,18 +119,57 @@ class PowerbrainOAuthProvider(
             k: v for k, v in self._access_tokens.items()
             if v.expires_at is None or v.expires_at > now
         }
-        self._refresh_tokens = {
-            k: v for k, v in self._refresh_tokens.items()
-            if v.expires_at is None or v.expires_at > now
-        }
+        # PostgreSQL cleanup: expired refresh tokens
+        try:
+            pool = await self._get_pool()
+            deleted = await pool.fetchval(
+                "DELETE FROM oauth_refresh_tokens WHERE expires_at IS NOT NULL AND expires_at < $1 RETURNING count(*)",
+                int(now),
+            )
+            if deleted:
+                log.info("OAuth cleanup: removed %s expired refresh tokens", deleted)
+        except Exception as e:
+            log.warning("OAuth cleanup (refresh tokens) failed: %s", e)
 
-    # ── Client Registration ───────────────────────────────
+    # ── Client Registration (PostgreSQL) ─────────────────
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        return self._clients.get(client_id)
+        try:
+            pool = await self._get_pool()
+            row = await pool.fetchrow(
+                "SELECT client_info FROM oauth_clients WHERE client_id = $1",
+                client_id,
+            )
+            if row is None:
+                return None
+            return OAuthClientInformationFull.model_validate_json(row["client_info"])
+        except Exception as e:
+            log.error("Failed to load OAuth client %s: %s", client_id, e)
+            return None
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
-        self._clients[client_info.client_id] = client_info
+        try:
+            pool = await self._get_pool()
+            await pool.execute(
+                """INSERT INTO oauth_clients (client_id, client_secret, client_name,
+                        redirect_uris, grant_types, response_types,
+                        token_endpoint_auth_method, client_info)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                   ON CONFLICT (client_id) DO UPDATE SET
+                        client_info = EXCLUDED.client_info""",
+                client_info.client_id,
+                client_info.client_secret,
+                client_info.client_name or "",
+                json.dumps([str(u) for u in (client_info.redirect_uris or [])]),
+                json.dumps(client_info.grant_types or []),
+                json.dumps(client_info.response_types or []),
+                client_info.token_endpoint_auth_method or "client_secret_post",
+                client_info.model_dump_json(),
+            )
+            log.info("Registered OAuth client: %s (%s)", client_info.client_id, client_info.client_name)
+        except Exception as e:
+            log.error("Failed to register OAuth client: %s", e)
+            raise
 
     # ── Authorization ─────────────────────────────────────
 
@@ -186,7 +238,7 @@ class PowerbrainOAuthProvider(
         )
         return redirect_url, None
 
-    # ── Authorization Code ────────────────────────────────
+    # ── Authorization Code (in-memory) ────────────────────
 
     async def load_authorization_code(
         self,
@@ -215,6 +267,7 @@ class PowerbrainOAuthProvider(
         access_token = secrets.token_urlsafe(32)
         refresh_token = secrets.token_urlsafe(32)
 
+        # Access token: in-memory (short-lived)
         self._access_tokens[access_token] = PbAccessToken(
             token=access_token,
             client_id=client.client_id,
@@ -224,12 +277,13 @@ class PowerbrainOAuthProvider(
             resource=authorization_code.resource,
         )
 
-        self._refresh_tokens[refresh_token] = PbRefreshToken(
+        # Refresh token: PostgreSQL (long-lived, survives restarts)
+        await self._store_refresh_token(
             token=refresh_token,
             client_id=client.client_id,
+            api_key=authorization_code.api_key,
             scopes=authorization_code.scopes,
             expires_at=int(now + REFRESH_TOKEN_TTL),
-            api_key=authorization_code.api_key,
         )
 
         return OAuthToken(
@@ -240,22 +294,55 @@ class PowerbrainOAuthProvider(
             scope=" ".join(authorization_code.scopes) if authorization_code.scopes else None,
         )
 
-    # ── Refresh Token ─────────────────────────────────────
+    # ── Refresh Token (PostgreSQL) ────────────────────────
+
+    async def _store_refresh_token(
+        self, token: str, client_id: str, api_key: str,
+        scopes: list[str], expires_at: int,
+    ) -> None:
+        try:
+            pool = await self._get_pool()
+            await pool.execute(
+                """INSERT INTO oauth_refresh_tokens (token, client_id, api_key, scopes, expires_at)
+                   VALUES ($1, $2, $3, $4, $5)
+                   ON CONFLICT (token) DO UPDATE SET
+                        expires_at = EXCLUDED.expires_at""",
+                token, client_id, api_key,
+                json.dumps(scopes), expires_at,
+            )
+        except Exception as e:
+            log.error("Failed to store refresh token: %s", e)
+            raise
 
     async def load_refresh_token(
         self,
         client: OAuthClientInformationFull,
         refresh_token: str,
     ) -> PbRefreshToken | None:
-        token_data = self._refresh_tokens.get(refresh_token)
-        if token_data is None:
+        try:
+            pool = await self._get_pool()
+            row = await pool.fetchrow(
+                "SELECT token, client_id, api_key, scopes, expires_at FROM oauth_refresh_tokens WHERE token = $1",
+                refresh_token,
+            )
+            if row is None:
+                return None
+            if row["client_id"] != client.client_id:
+                return None
+            if row["expires_at"] is not None and row["expires_at"] < time.time():
+                await pool.execute("DELETE FROM oauth_refresh_tokens WHERE token = $1", refresh_token)
+                return None
+            scopes = json.loads(row["scopes"]) if row["scopes"] else []
+            return PbRefreshToken(
+                token=row["token"],
+                client_id=row["client_id"],
+                scopes=scopes,
+                expires_at=row["expires_at"],
+                api_key=row["api_key"],
+            )
+        except Exception as e:
+            log.error("Failed to load refresh token: %s", e)
             return None
-        if token_data.client_id != client.client_id:
-            return None
-        if token_data.expires_at is not None and token_data.expires_at < time.time():
-            del self._refresh_tokens[refresh_token]
-            return None
-        return token_data
 
     async def exchange_refresh_token(
         self,
@@ -266,6 +353,7 @@ class PowerbrainOAuthProvider(
         now = time.time()
         new_access_token = secrets.token_urlsafe(32)
 
+        # New access token: in-memory
         self._access_tokens[new_access_token] = PbAccessToken(
             token=new_access_token,
             client_id=client.client_id,
@@ -282,7 +370,7 @@ class PowerbrainOAuthProvider(
             scope=" ".join(scopes) if scopes else None,
         )
 
-    # ── Access Token Verification ─────────────────────────
+    # ── Access Token Verification (in-memory) ─────────────
 
     async def load_access_token(self, token: str) -> PbAccessToken | None:
         token_data = self._access_tokens.get(token)
@@ -298,7 +386,11 @@ class PowerbrainOAuthProvider(
     async def revoke_token(self, token: PbAccessToken | PbRefreshToken) -> None:
         self._access_tokens.pop(token.token, None)
         if isinstance(token, PbRefreshToken):
-            self._refresh_tokens.pop(token.token, None)
+            try:
+                pool = await self._get_pool()
+                await pool.execute("DELETE FROM oauth_refresh_tokens WHERE token = $1", token.token)
+            except Exception as e:
+                log.warning("Failed to revoke refresh token from DB: %s", e)
 
 
 class CombinedTokenVerifier(TokenVerifier):
