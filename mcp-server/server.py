@@ -474,7 +474,36 @@ async def check_opa_summarization_policy(
     return {"allowed": allowed, "required": required, "detail": detail}
 
 
-async def rerank_results(query: str, documents: list[dict], top_n: int) -> list[dict]:
+def _apply_heuristic_boosts(
+    results: list[RerankDocument],
+    options: dict,
+) -> list[RerankDocument]:
+    """Apply metadata-based score adjustments after cross-encoder reranking."""
+    match_project = options.get("match_project", "")
+    match_author = options.get("match_author", "")
+    match_files = set(options.get("match_files", []))
+    boost_project = float(options.get("boost_same_project", 0.0))
+    boost_author = float(options.get("boost_same_author", 0.0))
+    boost_files = float(options.get("boost_file_overlap", 0.0))
+
+    for doc in results:
+        meta = doc.metadata
+        bonus = 0.0
+        if match_project and meta.get("project") == match_project:
+            bonus += boost_project
+        if match_author and meta.get("userName") == match_author:
+            bonus += boost_author
+        if match_files and boost_files:
+            doc_files = set(meta.get("files", []))
+            if doc_files & match_files:
+                overlap_ratio = len(doc_files & match_files) / len(match_files)
+                bonus += boost_files * overlap_ratio
+        doc.rerank_score += bonus
+    return results
+
+
+async def rerank_results(query: str, documents: list[dict], top_n: int,
+                         rerank_options: dict | None = None) -> list[dict]:
     if not RERANKER_ENABLED or not documents:
         return documents[:top_n]
 
@@ -483,12 +512,18 @@ async def rerank_results(query: str, documents: list[dict], top_n: int) -> list[
         try:
             docs = [
                 RerankDocument(
-                    id=d["id"], content=d["content"],
+                    id=d["id"],
+                    content=d.get("metadata", {}).get("rerank_content") or d["content"],
                     score=d.get("score", 0.0), metadata=d.get("metadata", {}),
                 )
                 for d in documents
             ]
             results = await _rerank_provider.rerank(http, query, docs, top_n)
+            if rerank_options:
+                results = _apply_heuristic_boosts(results, rerank_options)
+                results.sort(key=lambda r: r.rerank_score, reverse=True)
+                for i, r in enumerate(results):
+                    r.rank = i + 1
             return [r.to_dict() for r in results]
         except Exception as e:
             log.warning(f"Reranker not reachable, using original order: {e}")
@@ -824,6 +859,23 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "enum": ["L0", "L1", "L2"],
                         "description": "Context layer: L0=abstract (~100 tokens), L1=overview (~1-2k tokens), L2=full chunks (default). Omit for all layers.",
+                    },
+                    "rerank_query": {
+                        "type": "string",
+                        "description": "Enriched query text used only for reranking, not for embedding. "
+                                       "If omitted, the regular 'query' is used for both.",
+                    },
+                    "rerank_options": {
+                        "type": "object",
+                        "description": "Heuristic boost config for post-rerank score adjustment.",
+                        "properties": {
+                            "boost_same_project": {"type": "number", "default": 0},
+                            "boost_same_author":  {"type": "number", "default": 0},
+                            "match_project":      {"type": "string"},
+                            "match_author":       {"type": "string"},
+                            "boost_file_overlap": {"type": "number", "default": 0},
+                            "match_files":        {"type": "array", "items": {"type": "string"}},
+                        },
                     },
                 },
                 "required": ["query"]
@@ -1189,7 +1241,10 @@ async def _dispatch(name: str, arguments: dict[str, Any],
             for hit in allowed_hits
         ]
 
-        reranked = await rerank_results(query, filtered, top_n=top_k)
+        rerank_q = arguments.get("rerank_query") or query
+        rerank_opts = arguments.get("rerank_options")
+        reranked = await rerank_results(rerank_q, filtered, top_n=top_k,
+                                        rerank_options=rerank_opts)
         mcp_search_results_count.labels(collection=collection).observe(len(reranked))
 
         pool = await get_pg_pool()
