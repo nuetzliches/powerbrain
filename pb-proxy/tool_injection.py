@@ -26,6 +26,17 @@ class ToolEntry:
     schema: dict              # OpenAI function-calling format
     server_config: McpServerConfig
 
+    @property
+    def needs_pii_scan(self) -> bool:
+        """Whether the tool's results need PII scanning before being sent to the LLM."""
+        status = self.server_config.pii_status
+        if status == "scanned":
+            return False
+        if status == "mixed":
+            scanned = self.server_config.pii_scanned_tools or []
+            return self.original_name not in scanned
+        return True  # "unscanned" or default
+
 
 def _mcp_headers(
     server: McpServerConfig,

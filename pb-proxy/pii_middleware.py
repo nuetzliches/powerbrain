@@ -69,6 +69,43 @@ async def pseudonymize_messages(
     return result_messages, reverse_map
 
 
+async def pseudonymize_tool_result(
+    text: str,
+    session_salt: str,
+    http_client: httpx.AsyncClient,
+    reverse_map: dict[str, str],
+) -> str:
+    """
+    Pseudonymisiert PII in einem Tool-Result-String.
+
+    Ruft den Ingestion-Service /pseudonymize auf und erweitert die reverse_map
+    um neue Pseudonyme. Gibt den pseudonymisierten Text zurück.
+    Bei Fehler wird der Originaltext zurückgegeben (fail-open für Tool-Results,
+    da ein Abbruch die gesamte Konversation zerstören würde).
+    """
+    if not text or not text.strip():
+        return text
+
+    try:
+        resp = await http_client.post(
+            f"{config.INGESTION_URL}/pseudonymize",
+            json={"text": text, "salt": session_salt},
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        log.warning("PII pseudonymization of tool result failed: %s", e)
+        return text  # fail-open: return original to avoid breaking the loop
+
+    if data.get("contains_pii"):
+        for original, pseudo in data.get("mapping", {}).items():
+            reverse_map[pseudo] = original
+        return data["text"]
+
+    return text
+
+
 def depseudonymize_text(text: str, reverse_map: dict[str, str]) -> str:
     """Ersetzt alle Pseudonyme im Text durch die Originale."""
     if not reverse_map:

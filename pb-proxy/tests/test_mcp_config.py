@@ -141,3 +141,108 @@ servers:
         with pytest.raises(ValueError, match="Duplicate server name"):
             load_mcp_servers(f.name)
     os.unlink(f.name)
+
+
+# ── PII Contract Tests ─────────────────────────────────────
+
+
+def test_pii_status_loaded_from_yaml():
+    """pii_status and pii_scanned_tools are loaded from YAML config."""
+    from mcp_config import load_mcp_servers
+
+    yaml_content = """
+servers:
+  - name: powerbrain
+    url: http://mcp:8080/mcp
+    pii_status: scanned
+  - name: timecockpit
+    url: http://tc:3000/mcp
+    prefix: tc
+    pii_status: mixed
+    pii_scanned_tools:
+      - tc_find_similar_entries
+      - tc_analyze_patterns
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(yaml_content)
+        f.flush()
+        servers = load_mcp_servers(f.name)
+
+    os.unlink(f.name)
+
+    assert servers[0].pii_status == "scanned"
+    assert servers[0].pii_scanned_tools is None
+
+    assert servers[1].pii_status == "mixed"
+    assert servers[1].pii_scanned_tools == ["tc_find_similar_entries", "tc_analyze_patterns"]
+
+
+def test_pii_status_defaults_to_unscanned():
+    """Missing pii_status defaults to 'unscanned' (fail-safe)."""
+    from mcp_config import load_mcp_servers
+
+    yaml_content = """
+servers:
+  - name: basic
+    url: http://basic:8080/mcp
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(yaml_content)
+        f.flush()
+        servers = load_mcp_servers(f.name)
+
+    os.unlink(f.name)
+
+    assert servers[0].pii_status == "unscanned"
+    assert servers[0].pii_scanned_tools is None
+
+
+def test_invalid_pii_status_raises():
+    """Invalid pii_status value raises ValueError."""
+    from mcp_config import load_mcp_servers
+
+    yaml_content = """
+servers:
+  - name: bad
+    url: http://bad:8080/mcp
+    pii_status: invalid_value
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(yaml_content)
+        f.flush()
+        with pytest.raises(ValueError, match="pii_status"):
+            load_mcp_servers(f.name)
+    os.unlink(f.name)
+
+
+def test_tool_entry_needs_pii_scan():
+    """ToolEntry.needs_pii_scan reflects server's pii_status contract."""
+    from mcp_config import McpServerConfig
+    from tool_injection import ToolEntry
+
+    # scanned server → no scan needed
+    scanned_config = McpServerConfig(name="pb", url="http://pb:8080/mcp", pii_status="scanned")
+    entry = ToolEntry(server_name="pb", original_name="search_knowledge", schema={}, server_config=scanned_config)
+    assert entry.needs_pii_scan is False
+
+    # unscanned server → scan needed
+    unscanned_config = McpServerConfig(name="ext", url="http://ext:8080/mcp", pii_status="unscanned")
+    entry = ToolEntry(server_name="ext", original_name="list_data", schema={}, server_config=unscanned_config)
+    assert entry.needs_pii_scan is True
+
+    # mixed server, tool in scanned list → no scan
+    mixed_config = McpServerConfig(
+        name="tc", url="http://tc:3000/mcp", pii_status="mixed",
+        pii_scanned_tools=["tc_find_similar_entries", "tc_analyze_patterns"],
+    )
+    entry = ToolEntry(server_name="tc", original_name="tc_find_similar_entries", schema={}, server_config=mixed_config)
+    assert entry.needs_pii_scan is False
+
+    # mixed server, tool NOT in scanned list → scan needed
+    entry = ToolEntry(server_name="tc", original_name="tc_list_timesheets", schema={}, server_config=mixed_config)
+    assert entry.needs_pii_scan is True
+
+    # mixed server, empty scanned list → all need scan
+    mixed_empty = McpServerConfig(name="tc2", url="http://tc:3000/mcp", pii_status="mixed")
+    entry = ToolEntry(server_name="tc2", original_name="any_tool", schema={}, server_config=mixed_empty)
+    assert entry.needs_pii_scan is True

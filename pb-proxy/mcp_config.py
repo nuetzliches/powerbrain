@@ -14,6 +14,7 @@ log = logging.getLogger("pb-proxy.mcp-config")
 
 
 _VALID_AUTH_MODES = {"bearer", "static", "none"}
+_VALID_PII_STATUS = {"scanned", "unscanned", "mixed"}
 
 
 @dataclass
@@ -27,6 +28,8 @@ class McpServerConfig:
     required: bool = False          # fail-fast if unreachable
     tool_whitelist: list[str] | None = None  # None = all tools
     forward_headers: list[str] | None = None  # headers to forward from client request
+    pii_status: str = "unscanned"   # "scanned", "unscanned", "mixed"
+    pii_scanned_tools: list[str] | None = None  # tool names (unprefixed) that return PII-scanned data; only used when pii_status="mixed"
 
     def __post_init__(self) -> None:
         if self.prefix is None:
@@ -78,6 +81,12 @@ def load_mcp_servers(config_path: str) -> list[McpServerConfig]:
             raise ValueError(
                 f"Server '{entry['name']}': auth must be one of {_VALID_AUTH_MODES}, got '{auth}'"
             )
+        pii_status = entry.get("pii_status", "unscanned")
+        if pii_status not in _VALID_PII_STATUS:
+            raise ValueError(
+                f"Server '{entry['name']}': pii_status must be one of "
+                f"{_VALID_PII_STATUS}, got '{pii_status}'"
+            )
         servers.append(McpServerConfig(
             name=entry["name"],
             url=url,
@@ -87,6 +96,8 @@ def load_mcp_servers(config_path: str) -> list[McpServerConfig]:
             required=entry.get("required", False),
             tool_whitelist=entry.get("tool_whitelist"),
             forward_headers=entry.get("forward_headers"),
+            pii_status=pii_status,
+            pii_scanned_tools=entry.get("pii_scanned_tools"),
         ))
 
     # Validate: no duplicate names or prefixes

@@ -497,6 +497,7 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
         pii_enabled = policy.get("pii_scan_enabled", config.PII_SCAN_ENABLED)
         pii_forced = policy.get("pii_scan_forced", config.PII_SCAN_FORCED)
         pii_mode = "forced" if pii_forced else ("enabled" if pii_enabled else "disabled")
+        session_salt = generate_session_salt() if pii_enabled else ""
 
         if pii_enabled:
             t0_pii = time.perf_counter()
@@ -516,7 +517,6 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
                 raise HTTPException(status_code=400, detail=str(e))
 
             # Pseudonymize PII in messages
-            session_salt = generate_session_salt()
             try:
                 pseudonymized_messages, pii_reverse_map = await pseudonymize_messages(
                     request.messages, session_salt, pii_http_client
@@ -629,6 +629,8 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
                 acompletion=acompletion,
                 max_iterations=max_iterations,
                 pii_reverse_map=pii_reverse_map,
+                pii_http_client=pii_http_client if pii_enabled else None,
+                pii_session_salt=session_salt if pii_enabled else None,
                 user_token=user_api_key,
                 client_headers={
                     k: v for k, v in raw_request.headers.items()
@@ -859,9 +861,9 @@ async def messages(request: MessagesRequest, raw_request: Request):
         pii_reverse_map: dict[str, str] = {}
         pii_enabled = policy.get("pii_scan_enabled", config.PII_SCAN_ENABLED)
         pii_forced = policy.get("pii_scan_forced", config.PII_SCAN_FORCED)
+        session_salt = generate_session_salt() if pii_enabled else ""
 
         if pii_enabled:
-            session_salt = generate_session_salt()
             try:
                 pseudonymized_messages, pii_reverse_map = await pseudonymize_messages(
                     openai_messages, session_salt, pii_http_client
@@ -943,6 +945,8 @@ async def messages(request: MessagesRequest, raw_request: Request):
                 acompletion=acompletion,
                 max_iterations=max_iterations,
                 pii_reverse_map=pii_reverse_map,
+                pii_http_client=pii_http_client if pii_enabled else None,
+                pii_session_salt=session_salt if pii_enabled else None,
                 user_token=user_api_key,
                 client_headers={
                     k: v for k, v in raw_request.headers.items()

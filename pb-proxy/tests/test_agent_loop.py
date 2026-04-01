@@ -120,7 +120,7 @@ async def test_tool_call_is_executed(mock_tool_injector):
     assert result.iterations == 2
     assert result.tool_calls_executed == 1
     mock_tool_injector.call_tool.assert_called_once_with(
-        _SEARCH_ENTRY, {"query": "test"}, user_token=None,
+        _SEARCH_ENTRY, {"query": "test"}, user_token=None, client_headers=None,
     )
 
 
@@ -253,7 +253,7 @@ async def test_agent_loop_routes_to_correct_server():
 
     # Verify tool was called with entry and user_token
     injector.call_tool.assert_called_once_with(
-        pb_entry, {"query": "test"}, user_token="pb_test_token_123",
+        pb_entry, {"query": "test"}, user_token="pb_test_token_123", client_headers=None,
     )
     assert result.tool_calls_executed == 1
     assert result.tools_used == ["search_knowledge"]

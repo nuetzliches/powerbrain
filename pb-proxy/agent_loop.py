@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from tool_injection import ToolInjector
-from pii_middleware import depseudonymize_tool_arguments
+from pii_middleware import depseudonymize_tool_arguments, pseudonymize_tool_result
 import config
 
 # Try to import telemetry - fallback if not available (for tests)
@@ -57,6 +57,8 @@ class AgentLoop:
         max_iterations: int = 10,
         tool_call_timeout: int | None = None,
         pii_reverse_map: dict[str, str] | None = None,
+        pii_http_client: Any | None = None,
+        pii_session_salt: str | None = None,
         user_token: str | None = None,
         client_headers: dict[str, str] | None = None,
     ) -> None:
@@ -65,6 +67,8 @@ class AgentLoop:
         self._max_iterations = max_iterations
         self._tool_call_timeout = tool_call_timeout or config.TOOL_CALL_TIMEOUT
         self._pii_reverse_map = pii_reverse_map or {}
+        self._pii_http_client = pii_http_client
+        self._pii_session_salt = pii_session_salt
         self._user_token = user_token
         self._client_headers = client_headers
 
@@ -175,6 +179,19 @@ class AgentLoop:
                                  f"Available tools: {sorted(self._injector.tool_names)}"
                     })
                     log.warning("Unknown tool requested: %s", tool_name)
+
+                # Pseudonymize tool result if the tool's contract requires it
+                if (entry and entry.needs_pii_scan
+                        and self._pii_http_client and self._pii_session_salt):
+                    try:
+                        tool_result = await pseudonymize_tool_result(
+                            tool_result,
+                            self._pii_session_salt,
+                            self._pii_http_client,
+                            self._pii_reverse_map,
+                        )
+                    except Exception as e:
+                        log.warning("PII scan of tool result failed (continuing): %s", e)
 
                 working_messages.append({
                     "role": "tool",
