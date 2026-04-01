@@ -40,6 +40,30 @@ MCP-Tool zum Lesen/Schreiben von Policy-Daten via OPA Data API.
 
 ---
 
+## Backlog — PII & Datenschutz
+
+### B-30: graph_query liefert ungescannte Klarnamen
+**Priorität:** Mittel
+**Aufwand:** ~0.5–1 Tag
+
+`graph_query` liefert Knowledge-Graph-Knoten aus Apache AGE, die beim Import mit Klarnamen angelegt wurden (User-Nodes mit `firstname`, `lastname`, `email`). Diese Daten wurden nicht durch die PII-Ingestion-Pipeline pseudonymisiert. Powerbrain ist als `pii_status: scanned` deklariert, was für `graph_query` streng genommen nicht zutrifft.
+
+**Optionen:**
+- [ ] A: Powerbrain auf `pii_status: mixed` umstellen und `graph_query` als unscanned deklarieren
+- [ ] B: Graph-Knoten-Properties beim Import pseudonymisieren (analog zu Qdrant Dual Storage)
+- [ ] C: `graph_query` Results im MCP-Server pseudonymisieren bevor sie zurückgegeben werden
+
+### B-31: Ingestion pseudonymisiert Metadaten nicht
+**Priorität:** Mittel
+**Aufwand:** ~1 Tag
+
+Die Ingestion-Pipeline scannt und pseudonymisiert den `source`-Text (der embedded wird), aber das `metadata`-Objekt bleibt unverändert. Import-Scripts schreiben dort Klarnamen (`userName`, `customerName`, `authorEmail`). Diese Metadaten landen ungescannt in Qdrant-Payload und PostgreSQL und werden bei `search_knowledge`-Results mitgeliefert.
+
+- [ ] PII-Scan auf konfigurierbare Metadaten-Felder ausweiten
+- [ ] Oder: Metadaten-Felder mit PII bei der Ausgabe filtern (OPA `fields_to_redact`)
+
+---
+
 ## Backlog — Technische Schulden
 
 ### B-20: PipelineStep-Mock in proxy.py aufräumen
