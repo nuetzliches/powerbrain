@@ -40,6 +40,27 @@ MCP-Tool zum Lesen/Schreiben von Policy-Daten via OPA Data API.
 
 ---
 
+## Backlog — Reranking
+
+### B-13: boost_corrections — Korrektur-Dokumente im Reranking bevorzugen
+**Priorität:** Niedrig
+**Aufwand:** ~0.5 Tag
+
+timecockpit-mcp speichert benutzerkorrigierte Zeiteintrags-Beschreibungen als Dokumente mit
+`metadata.isCorrection: true` in der KB (source_type `timesheet`). Diese repräsentieren
+validierte, qualitativ hochwertige Texte und sollten bei Ähnlichkeitssuchen bevorzugt werden.
+
+Neuer Reranking-Parameter `boost_corrections` (analog zu `boost_same_author`):
+- Heuristic Boost auf Dokumente mit `metadata.isCorrection == true`
+- Empfohlener Default-Boost: 0.1–0.2
+- Konfigurierbar über `rerank_options` im `search_knowledge`-Aufruf
+
+- [ ] `boost_corrections` Parameter in Reranking-Pipeline implementieren
+- [ ] Metadata-Field `isCorrection` in Scoring berücksichtigen
+- [ ] Tests: Korrektur-Dokument wird höher gerankt als identischer Text ohne Flag
+
+---
+
 ## Backlog — PII & Datenschutz
 
 ### B-30: graph_query liefert ungescannte Klarnamen
