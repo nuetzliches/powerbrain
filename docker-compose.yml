@@ -125,8 +125,12 @@ services:
       timeout: 5s
       retries: 3
 
-  # ── Ollama (Embeddings) ───────────────────────────────────
+  # ── Ollama (Embeddings + LLM, lokal) ─────────────────────
+  # Nur nötig wenn kein externer Provider konfiguriert ist.
+  # Aktivieren: docker compose --profile local-llm up
+  # Externe Provider: EMBEDDING_PROVIDER_URL + LLM_PROVIDER_URL in .env setzen.
   ollama:
+    profiles: ["local-llm"]
     image: ollama/ollama:latest
     container_name: pb-ollama
     ports:
@@ -378,8 +382,6 @@ services:
       opa:
         condition: service_healthy
       ingestion:
-        condition: service_started
-      ollama:
         condition: service_started
     networks:
       - pb-net
