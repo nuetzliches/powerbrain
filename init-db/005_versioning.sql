@@ -1,9 +1,9 @@
 -- ============================================================
---  Baustein 4: Wissens-Versionierung
---  Snapshot-Metadaten + Temporal History (SCD Type 2)
+--  Building block 4: knowledge versioning
+--  Snapshot metadata + temporal history (SCD Type 2)
 -- ============================================================
 
--- Snapshot-Metadaten (Qdrant + PG + OPA Policy Commit)
+-- Snapshot metadata (Qdrant + PG + OPA policy commit)
 CREATE TABLE knowledge_snapshots (
     id              SERIAL PRIMARY KEY,
     snapshot_name   VARCHAR(255) NOT NULL,
@@ -11,7 +11,7 @@ CREATE TABLE knowledge_snapshots (
     created_by      VARCHAR(100),
     description     TEXT,
     components      JSONB NOT NULL,
-    -- Beispiel:
+    -- Example:
     -- {"qdrant": {"collections": {"pb_general": "snap-id-abc"},
     --             "snapshot_urls": [...]},
     --  "postgres": {"tables": ["datasets","dataset_rows"], "row_counts": {...}},
@@ -23,21 +23,21 @@ CREATE TABLE knowledge_snapshots (
 CREATE INDEX idx_snapshots_name ON knowledge_snapshots(snapshot_name);
 CREATE INDEX idx_snapshots_time ON knowledge_snapshots(created_at);
 
--- Temporal History für Datasets (SCD Type 2)
+-- Temporal history for datasets (SCD Type 2)
 CREATE TABLE datasets_history (
     history_id      BIGSERIAL PRIMARY KEY,
     dataset_id      UUID NOT NULL,
     valid_from      TIMESTAMPTZ NOT NULL DEFAULT now(),
     valid_to        TIMESTAMPTZ DEFAULT 'infinity',
     operation       VARCHAR(10) NOT NULL, -- INSERT, UPDATE, DELETE
-    data            JSONB NOT NULL,       -- Kompletter Row-Snapshot
+    data            JSONB NOT NULL,       -- Full row snapshot
     changed_by      VARCHAR(100)
 );
 
 CREATE INDEX idx_datasets_hist_id   ON datasets_history(dataset_id);
 CREATE INDEX idx_datasets_hist_time ON datasets_history(valid_from, valid_to);
 
--- Trigger: Automatisch History schreiben bei Änderungen an datasets
+-- Trigger: automatically write history on changes to datasets
 CREATE OR REPLACE FUNCTION track_dataset_changes()
 RETURNS TRIGGER AS $$
 BEGIN

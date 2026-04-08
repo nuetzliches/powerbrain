@@ -1,29 +1,29 @@
 -- ============================================================
---  Wissensdatenbank – PostgreSQL Schema Initialisierung
+--  Knowledge base – PostgreSQL schema initialization
 -- ============================================================
 
--- Klassifizierungsstufen
+-- Classification levels
 CREATE TABLE classifications (
     id          SERIAL PRIMARY KEY,
     name        VARCHAR(50) UNIQUE NOT NULL,
     level       INTEGER NOT NULL,           -- 0=public, 1=internal, 2=confidential, 3=restricted
     description TEXT,
-    access_policy VARCHAR(100)              -- Referenz auf OPA-Policy
+    access_policy VARCHAR(100)              -- Reference to OPA policy
 );
 
 INSERT INTO classifications (name, level, description, access_policy) VALUES
-('public',       0, 'Frei zugänglich für alle Agenten', 'pb.access.public'),
-('internal',     1, 'Nur für interne Agenten',          'pb.access.internal'),
-('confidential', 2, 'Eingeschränkter Zugriff',          'pb.access.confidential'),
-('restricted',   3, 'Streng kontrolliert',               'pb.access.restricted');
+('public',       0, 'Freely accessible to all agents',  'pb.access.public'),
+('internal',     1, 'Internal agents only',             'pb.access.internal'),
+('confidential', 2, 'Restricted access',                'pb.access.confidential'),
+('restricted',   3, 'Strictly controlled',              'pb.access.restricted');
 
--- Datensätze (importierte CSV, JSON etc.)
+-- Datasets (imported CSV, JSON etc.)
 CREATE TABLE datasets (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name             VARCHAR(255) NOT NULL,
     description      TEXT,
-    schema_def       JSONB,                  -- JSON-Schema des Datensatzes
-    source           VARCHAR(500),           -- Herkunft (Dateipfad, URL, etc.)
+    schema_def       JSONB,                  -- JSON Schema of the dataset
+    source           VARCHAR(500),           -- Origin (file path, URL, etc.)
     source_type      VARCHAR(50),            -- csv, json, sql_dump, git_repo
     classification   VARCHAR(50) REFERENCES classifications(name) DEFAULT 'internal',
     project          VARCHAR(100),
@@ -34,7 +34,7 @@ CREATE TABLE datasets (
 CREATE INDEX idx_datasets_project ON datasets(project);
 CREATE INDEX idx_datasets_classification ON datasets(classification);
 
--- Einzelne Zeilen eines Datensatzes
+-- Individual rows of a dataset
 CREATE TABLE dataset_rows (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     dataset_id  UUID REFERENCES datasets(id) ON DELETE CASCADE,
@@ -45,7 +45,7 @@ CREATE TABLE dataset_rows (
 CREATE INDEX idx_dataset_rows_dataset ON dataset_rows(dataset_id);
 CREATE INDEX idx_dataset_rows_data ON dataset_rows USING GIN(data);
 
--- Dokument-Metadaten (Referenz zu Qdrant-Vektoren)
+-- Document metadata (reference to Qdrant vectors)
 CREATE TABLE documents_meta (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title               VARCHAR(500) NOT NULL,
@@ -55,7 +55,7 @@ CREATE TABLE documents_meta (
     chunk_count         INTEGER DEFAULT 0,
     classification      VARCHAR(50) REFERENCES classifications(name) DEFAULT 'internal',
     project             VARCHAR(100),
-    metadata            JSONB,                -- Zusätzliche Metadaten
+    metadata            JSONB,                -- Additional metadata
     created_at          TIMESTAMPTZ DEFAULT now(),
     updated_at          TIMESTAMPTZ DEFAULT now()
 );
@@ -63,7 +63,7 @@ CREATE TABLE documents_meta (
 CREATE INDEX idx_documents_meta_project ON documents_meta(project);
 CREATE INDEX idx_documents_meta_classification ON documents_meta(classification);
 
--- Audit-Log für Agenten-Zugriffe
+-- Audit log for agent access
 CREATE TABLE agent_access_log (
     id              BIGSERIAL PRIMARY KEY,
     agent_id        VARCHAR(100) NOT NULL,
@@ -81,7 +81,7 @@ CREATE INDEX idx_audit_agent ON agent_access_log(agent_id);
 CREATE INDEX idx_audit_time ON agent_access_log(created_at);
 CREATE INDEX idx_audit_result ON agent_access_log(policy_result);
 
--- Projektverwaltung
+-- Project management
 CREATE TABLE projects (
     id          VARCHAR(100) PRIMARY KEY,
     name        VARCHAR(255) NOT NULL,

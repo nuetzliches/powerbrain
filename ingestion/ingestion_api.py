@@ -1,16 +1,16 @@
 """
-Ingestion API – FastAPI-Wrapper
+Ingestion API – FastAPI Wrapper
 ================================
-HTTP-Schnittstelle für die Ingestion-Pipeline.
-Wird vom MCP-Server über das Docker-Netzwerk aufgerufen.
+HTTP interface for the ingestion pipeline.
+Called by the MCP server via the Docker network.
 
 Endpoints:
-  POST /scan              — Text auf PII scannen (ohne Ingestion)
-  POST /pseudonymize      — Text pseudonymisieren ohne Speicherung (Chat-Pfad)
-  POST /ingest            — Text einspeisen (full privacy pipeline)
-  POST /ingest/chunks     — Vorverarbeitete Chunks einspeisen (Adapter, ingest_text_chunks pipeline)
-  POST /snapshots/create  — Wissens-Snapshot erstellen
-  GET  /health            — Healthcheck
+  POST /scan              — Scan text for PII (without ingestion)
+  POST /pseudonymize      — Pseudonymize text without storage (chat path)
+  POST /ingest            — Ingest text (full privacy pipeline)
+  POST /ingest/chunks     — Ingest pre-processed chunks (adapter, ingest_text_chunks pipeline)
+  POST /snapshots/create  — Create a knowledge snapshot
+  GET  /health            — Health check
 """
 
 import os
@@ -36,7 +36,7 @@ from prometheus_client import Counter, Histogram, make_asgi_app as prom_make_asg
 from pii_scanner import get_scanner
 from snapshot_service import create_snapshot
 
-# ── Konfiguration ────────────────────────────────────────────
+# ── Configuration ────────────────────────────────────────────
 QDRANT_URL   = os.getenv("QDRANT_URL",   "http://qdrant:6333")
 OPA_URL      = os.getenv("OPA_URL",       "http://opa:8181")
 RERANKER_URL = os.getenv("RERANKER_URL",  "http://reranker:8082")
@@ -183,9 +183,9 @@ async def startup():
     http_client = httpx.AsyncClient(timeout=60.0)
     try:
         pg_pool = await asyncpg.create_pool(POSTGRES_URL, min_size=PG_POOL_MIN, max_size=PG_POOL_MAX)
-        log.info("PostgreSQL-Pool initialisiert")
+        log.info("PostgreSQL pool initialized")
     except Exception as e:
-        log.error(f"PostgreSQL-Verbindung fehlgeschlagen: {e}")
+        log.error(f"PostgreSQL connection failed: {e}")
         pg_pool = None
 
 
@@ -197,7 +197,7 @@ async def shutdown():
         await http_client.aclose()
 
 
-# ── Request/Response-Modelle ────────────────────────────────
+# ── Request/Response Models ─────────────────────────────────
 
 class IngestRequest(BaseModel):
     source: str
@@ -209,33 +209,33 @@ class IngestRequest(BaseModel):
 
 
 class SnapshotRequest(BaseModel):
-    name: str = Field(description="Name des Snapshots")
-    description: str = Field(default="", description="Beschreibung")
-    created_by: str = Field(default="system", description="Erstellt von")
+    name: str = Field(description="Name of the snapshot")
+    description: str = Field(default="", description="Description")
+    created_by: str = Field(default="system", description="Created by")
 
 
 class ScanRequest(BaseModel):
-    text: str = Field(min_length=1, description="Text der auf PII gescannt werden soll")
-    language: str = Field(default="de", description="Sprache des Textes (de, en)")
+    text: str = Field(min_length=1, description="Text to scan for PII")
+    language: str = Field(default="de", description="Language of the text (de, en)")
 
 
 class ScanResponse(BaseModel):
-    contains_pii: bool = Field(description="Ob PII erkannt wurde")
-    masked_text: str = Field(description="Text mit maskierten PII-Entitäten")
-    entity_types: list[str] = Field(description="Liste erkannter PII-Typen")
+    contains_pii: bool = Field(description="Whether PII was detected")
+    masked_text: str = Field(description="Text with masked PII entities")
+    entity_types: list[str] = Field(description="List of detected PII types")
 
 
 class PseudonymizeRequest(BaseModel):
-    text: str = Field(min_length=1, description="Text der pseudonymisiert werden soll")
-    salt: str = Field(min_length=1, description="Salt für deterministische Pseudonyme")
-    language: str = Field(default="de", description="Sprache des Textes (de, en)")
+    text: str = Field(min_length=1, description="Text to pseudonymize")
+    salt: str = Field(min_length=1, description="Salt for deterministic pseudonyms")
+    language: str = Field(default="de", description="Language of the text (de, en)")
 
 
 class PseudonymizeResponse(BaseModel):
-    text: str = Field(description="Pseudonymisierter Text")
+    text: str = Field(description="Pseudonymized text")
     mapping: dict[str, str] = Field(description="Mapping original → pseudonym")
-    contains_pii: bool = Field(description="Ob PII erkannt wurde")
-    entity_types: list[str] = Field(description="Liste erkannter PII-Typen")
+    contains_pii: bool = Field(description="Whether PII was detected")
+    entity_types: list[str] = Field(description="List of detected PII types")
 
 
 class ChunkIngestRequest(BaseModel):
@@ -249,10 +249,10 @@ class ChunkIngestRequest(BaseModel):
     source_type: str = "text"
 
 
-# ── Hilfsfunktionen ─────────────────────────────────────────
+# ── Helper Functions ────────────────────────────────────────
 
 async def get_embedding(text: str) -> list[float]:
-    """Erzeugt Embedding über den konfigurierten Provider (OpenAI-compat), mit Cache."""
+    """Generates embedding via the configured provider (OpenAI-compat), with cache."""
     cached = embedding_cache.get(text, EMBEDDING_MODEL)
     if cached is not None:
         return cached
@@ -262,7 +262,7 @@ async def get_embedding(text: str) -> list[float]:
 
 
 def chunk_text(text: str, max_chars: int = 1000, overlap: int = 200) -> list[str]:
-    """Einfaches Chunking mit Overlap für lange Texte."""
+    """Simple chunking with overlap for long texts."""
     if len(text) <= max_chars:
         return [text]
     chunks = []
@@ -275,7 +275,7 @@ def chunk_text(text: str, max_chars: int = 1000, overlap: int = 200) -> list[str
 
 
 async def get_or_create_project_salt(project: str | None) -> str:
-    """Holt oder erstellt einen Salt für das Projekt aus pii_vault.project_salts."""
+    """Gets or creates a salt for the project from pii_vault.project_salts."""
     if not pg_pool or not project:
         return secrets.token_hex(16)
 
@@ -338,7 +338,7 @@ async def check_opa_quality_gate(
 async def check_opa_privacy(
     classification: str, contains_pii: bool, legal_basis: str | None = None
 ) -> dict:
-    """Fragt OPA nach pii_action und dual_storage_enabled.
+    """Queries OPA for pii_action and dual_storage_enabled.
 
     OPA endpoint: /v1/data/pb/privacy/pii_action, /v1/data/pb/privacy/dual_storage_enabled
     """
@@ -373,7 +373,7 @@ async def store_in_vault(
     retention_days: int,
     data_category: str | None,
 ) -> str:
-    """Speichert Originaltext + Mapping im pii_vault. Gibt vault_ref UUID zurück."""
+    """Stores original text + mapping in pii_vault. Returns vault_ref UUID."""
     if not pg_pool:
         raise RuntimeError("PostgreSQL unavailable for vault storage")
 
@@ -382,7 +382,7 @@ async def store_in_vault(
 
     async with pg_pool.acquire() as conn:
         async with conn.transaction():
-            # Original speichern
+            # Store original
             await conn.execute("""
                 INSERT INTO pii_vault.original_content
                     (id, document_id, chunk_index, original_text,
@@ -391,7 +391,7 @@ async def store_in_vault(
             """, vault_id, doc_id, chunk_index, original_text,
                 json.dumps(pii_entities), expires_at, data_category)
 
-            # Mapping speichern (ein Eintrag pro Entity)
+            # Store mapping (one entry per entity)
             for original, pseudonym in mapping.items():
                 entity_type = "UNKNOWN"
                 for e in pii_entities:
@@ -415,7 +415,7 @@ async def log_pii_scan(
     classification: str,
     dataset_id: str | None = None,
 ):
-    """Schreibt einen Eintrag in pii_scan_log."""
+    """Writes an entry to pii_scan_log."""
     if not pg_pool:
         return
     try:
@@ -515,14 +515,14 @@ async def ingest_text_chunks(
     metadata: dict[str, Any],
     source_type: str = "text",
 ) -> dict:
-    """Vektorisiert Chunks und speichert sie in Qdrant + PostgreSQL.
+    """Vectorizes chunks and stores them in Qdrant + PostgreSQL.
 
     Pipeline:
-    1. PII-Scan jedes Chunks
-    2. OPA-Policy: pii_action + dual_storage_enabled (einmal pro Dokument)
-    3. Je nach Action: mask, pseudonymize+vault, oder block
+    1. PII scan of each chunk
+    2. OPA policy: pii_action + dual_storage_enabled (once per document)
+    3. Depending on action: mask, pseudonymize+vault, or block
     4. Embed + Qdrant upsert
-    5. PostgreSQL Metadaten
+    5. PostgreSQL metadata
     """
     scanner = get_scanner()
     points = []
@@ -532,7 +532,7 @@ async def ingest_text_chunks(
     processed_texts: list[str] = []
     chunk_metadata: list[dict] = []
 
-    # Vorab documents_meta anlegen (damit Vault-FK-Constraints erfüllt sind)
+    # Pre-create documents_meta (so that vault FK constraints are satisfied)
     if pg_pool:
         try:
             await pg_pool.execute("""
@@ -546,14 +546,14 @@ async def ingest_text_chunks(
                 source,
                 collection,
                 classification,
-                0,  # chunk_count wird später aktualisiert
-                False,  # contains_pii wird später aktualisiert
+                0,  # chunk_count updated later
+                False,  # contains_pii updated later
                 json.dumps(metadata),
             )
         except Exception as e:
-            log.error(f"PG documents_meta Insert fehlgeschlagen: {e}")
+            log.error(f"PG documents_meta insert failed: {e}")
 
-    # OPA-Policy einmal pro Dokument abfragen (Klassifizierung ist gleich für alle Chunks)
+    # Query OPA policy once per document (classification is the same for all chunks)
     opa_result: dict | None = None
     total_pii_entities = 0
 
@@ -571,7 +571,7 @@ async def ingest_text_chunks(
                 for _ in range(int(count)):
                     pb_ingestion_pii_entities.labels(entity_type=entity_type, action="found").inc() if pb_ingestion_pii_entities else None
 
-            # 2. OPA Policy: Was tun mit PII? (nur beim ersten Fund abfragen)
+            # 2. OPA Policy: What to do with PII? (only query on first detection)
             if opa_result is None:
                 opa_result = await check_opa_privacy(
                     classification, True, metadata.get("legal_basis")
@@ -582,8 +582,8 @@ async def ingest_text_chunks(
 
             if pii_action == "block":
                 log.warning(
-                    f"PII in Chunk {i} erkannt, Klassifizierung '{classification}'"
-                    f" → blockiert durch OPA-Policy"
+                    f"PII detected in chunk {i}, classification '{classification}'"
+                    f" → blocked by OPA policy"
                 )
                 await log_pii_scan(
                     source, scan_result.entity_counts, "block", classification
@@ -596,15 +596,15 @@ async def ingest_text_chunks(
                 }
 
             elif pii_action in ("pseudonymize", "encrypt_and_store") and dual_storage:
-                # 3a. Dual Storage: pseudonymisieren + Original im Vault
+                # 3a. Dual Storage: pseudonymize + store original in vault
                 log.info(
-                    f"PII in Chunk {i}: {scan_result.entity_counts}"
-                    f" → pseudonymisiere (dual storage, action={pii_action})"
+                    f"PII in chunk {i}: {scan_result.entity_counts}"
+                    f" → pseudonymizing (dual storage, action={pii_action})"
                 )
                 salt = await get_or_create_project_salt(project)
                 pseudo_text, mapping = scanner.pseudonymize_text(chunk, salt)
 
-                # Vault: Original + Mapping speichern
+                # Vault: Store original + mapping
                 pii_entities = [
                     {
                         "type": loc["type"],
@@ -630,14 +630,14 @@ async def ingest_text_chunks(
                 )
 
             else:
-                # 3b. Fallback: maskieren (public oder dual_storage=false)
+                # 3b. Fallback: mask (public or dual_storage=false)
                 if pii_action not in ("mask", "pseudonymize"):
                     log.warning(
                         f"PII action '{pii_action}' not fully implemented, "
                         f"falling back to mask"
                     )
                 log.warning(
-                    f"PII in Chunk {i}: {scan_result.entity_counts} → maskiere"
+                    f"PII in chunk {i}: {scan_result.entity_counts} → masking"
                 )
                 chunk = scanner.mask_text(chunk)
                 await log_pii_scan(
@@ -782,7 +782,7 @@ async def ingest_text_chunks(
     # 5. In Qdrant upserten (L2 chunks)
     if points:
         await qdrant.upsert(collection_name=collection, points=points)
-        log.info(f"{len(points)} L2 Punkte in '{collection}' eingefügt")
+        log.info(f"{len(points)} L2 points inserted into '{collection}'")
         # Track chunks ingested
         pb_ingestion_chunks.labels(collection=collection).inc(len(points)) if pb_ingestion_chunks else None
 
@@ -855,7 +855,7 @@ async def ingest_text_chunks(
                 log.warning(f"L1 upsert failed (graceful degradation): {e}")
                 l1_point_id = None
 
-    # 7. documents_meta aktualisieren mit finalen Werten
+    # 7. Update documents_meta with final values
     if pg_pool:
         try:
             await pg_pool.execute("""
@@ -879,7 +879,7 @@ async def ingest_text_chunks(
                 uuid.UUID(l1_point_id) if l1_point_id else None,
             )
         except Exception as e:
-            log.error(f"PG documents_meta Update fehlgeschlagen: {e}")
+            log.error(f"PG documents_meta update failed: {e}")
 
     return {
         "status": "ok",
@@ -896,10 +896,10 @@ async def ingest_text_chunks(
 
 @app.post("/scan")
 async def scan(req: ScanRequest) -> ScanResponse:
-    """Scannt Text auf PII ohne Ingestion.
+    """Scans text for PII without ingestion.
 
-    Wird vom MCP-Server aufgerufen, bevor Audit-Log-Einträge
-    mit Query-Text geschrieben werden.
+    Called by the MCP server before audit log entries
+    with query text are written.
     """
     t0 = time.perf_counter()
     try:
@@ -933,10 +933,10 @@ async def scan(req: ScanRequest) -> ScanResponse:
 
 @app.post("/pseudonymize")
 async def pseudonymize(req: PseudonymizeRequest) -> PseudonymizeResponse:
-    """Pseudonymisiert PII im Text ohne Speicherung.
+    """Pseudonymizes PII in text without storage.
 
-    Wird vom pb-proxy aufgerufen, bevor Chat-Nachrichten
-    an den LLM-Provider gesendet werden.
+    Called by pb-proxy before chat messages
+    are sent to the LLM provider.
     """
     scanner = get_scanner()
     scan_result = scanner.scan_text(req.text, language=req.language)
@@ -1040,7 +1040,7 @@ async def ingest_chunks(req: ChunkIngestRequest):
 
 @app.post("/snapshots/create")
 async def snapshot_create(req: SnapshotRequest):
-    """Erstellt einen Wissens-Snapshot (Qdrant + PG + OPA)."""
+    """Creates a knowledge snapshot (Qdrant + PG + OPA)."""
     try:
         result = await create_snapshot(
             name=req.name,
@@ -1049,5 +1049,5 @@ async def snapshot_create(req: SnapshotRequest):
         )
         return result
     except Exception as e:
-        log.error(f"Snapshot-Erstellung fehlgeschlagen: {e}")
+        log.error(f"Snapshot creation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

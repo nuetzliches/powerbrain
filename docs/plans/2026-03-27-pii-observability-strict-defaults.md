@@ -3,33 +3,33 @@
 **Status**: Done
 **Priority**: High
 **Created**: 2026-03-27
-**Context**: Demo-Testing ergab, dass PII-Scan-Status in Logs nicht unterscheidbar ist
+**Context**: Demo testing revealed that the PII scan status is not distinguishable in logs
 
 ## Problem
 
-Bei der Demo-UI-Evaluierung wurde festgestellt, dass man im Log und in der Telemetry nicht zuverlässig unterscheiden kann, ob eine Chat-Nachricht:
+During the demo UI evaluation it was discovered that one cannot reliably distinguish in the logs and telemetry whether a chat message was:
 
-1. **PII-gescannt und sauber** war (keine Entities gefunden)
-2. **PII-gescannt und pseudonymisiert** wurde (Entities ersetzt)
-3. **PII-Scan fehlgeschlagen**, aber Request trotzdem fortgesetzt wurde (fail open)
-4. **PII-Scan deaktiviert** per Policy
+1. **PII-scanned and clean** (no entities found)
+2. **PII-scanned and pseudonymized** (entities replaced)
+3. **PII scan failed**, but request continued anyway (fail open)
+4. **PII scan disabled** by policy
 
-### Aktueller Zustand
+### Current State
 
-- `pii_pseudonymize` Telemetry-Step existiert (nach upstream-Rebuild), zeigt `status: ok`
-- Aber: kein Unterschied zwischen "clean" und "pseudonymized" im Telemetry
-- `PII_SCAN_FORCED` ist Default `false` → fail open bei Scanner-Ausfall
-- OPA-Policy `pb/proxy` hat `pii_scan_forced` nur als opt-in Flag, nicht als Default
+- `pii_pseudonymize` telemetry step exists (after upstream rebuild), shows `status: ok`
+- But: no difference between "clean" and "pseudonymized" in telemetry
+- `PII_SCAN_FORCED` defaults to `false` → fail open on scanner outage
+- OPA policy `pb/proxy` has `pii_scan_forced` only as an opt-in flag, not as a default
 
-### Sicherheitsrisiko
+### Security Risk
 
-Bei strengen Default-Policies sollte ein Request **blockiert** werden (503), wenn der PII-Scanner nicht erreichbar ist. Aktuell wird der Request ohne PII-Schutz an den LLM-Provider weitergeleitet.
+With strict default policies, a request should be **blocked** (503) if the PII scanner is unreachable. Currently the request is forwarded to the LLM provider without PII protection.
 
-## Anforderungen
+## Requirements
 
-### 1. PII-Telemetry-Step erweitern
+### 1. Extend the PII telemetry step
 
-`pii_pseudonymize` Step Metadata erweitern:
+Extend `pii_pseudonymize` step metadata:
 
 ```json
 {
@@ -47,15 +47,15 @@ Bei strengen Default-Policies sollte ein Request **blockiert** werden (503), wen
 }
 ```
 
-Mögliche Status-Werte:
-- `ok` — Scan erfolgreich, ggf. mit Entities
-- `skipped` — Scan per Policy deaktiviert
-- `fail_open` — Scan fehlgeschlagen, Request fortgesetzt
-- `fail_closed` — Scan fehlgeschlagen, Request blockiert (503)
+Possible status values:
+- `ok` — scan successful, possibly with entities
+- `skipped` — scan disabled by policy
+- `fail_open` — scan failed, request continued
+- `fail_closed` — scan failed, request blocked (503)
 
-### 2. Logging verbessern
+### 2. Improve logging
 
-Nach jedem PII-Scan eine explizite Log-Zeile:
+After each PII scan, an explicit log line:
 
 ```
 INFO [pb-proxy] PII scan: status=ok, mode=forced, entities_found=0
@@ -65,14 +65,14 @@ ERROR [pb-proxy] PII scan: status=fail_closed, mode=forced, error="ingestion ser
 INFO [pb-proxy] PII scan: status=skipped, mode=disabled (admin opt-out)
 ```
 
-### 3. Default verschärfen: `pii_scan_forced` → true
+### 3. Tighten default: `pii_scan_forced` → true
 
-**Option A**: Env-Var Default ändern in `config.py`:
+**Option A**: Change env var default in `config.py`:
 ```python
 PII_SCAN_FORCED = os.getenv("PII_SCAN_FORCED", "true").lower() == "true"
 ```
 
-**Option B**: OPA-Policy Default ändern:
+**Option B**: Change OPA policy default:
 ```rego
 default pii_scan_forced := true
 
@@ -82,18 +82,18 @@ pii_scan_forced := false if {
 }
 ```
 
-Empfehlung: **Option A + B kombiniert** — Config-Default strict, OPA kann übersteuern.
+Recommendation: **Option A + B combined** — config default strict, OPA can override.
 
-## Betroffene Dateien
+## Affected Files
 
-- `pb-proxy/proxy.py` — PII-Scan Block (~Zeile 463-516)
-- `pb-proxy/config.py` — `PII_SCAN_FORCED` Default
-- OPA-Policy `pb/proxy` — `pii_scan_forced` Rule
+- `pb-proxy/proxy.py` — PII scan block (~lines 463-516)
+- `pb-proxy/config.py` — `PII_SCAN_FORCED` default
+- OPA policy `pb/proxy` — `pii_scan_forced` rule
 
-## Testplan
+## Test Plan
 
-1. Chat mit PII-Content (Name + E-Mail) → Telemetry zeigt `entities_found: 2, status: ok`
-2. Chat ohne PII → Telemetry zeigt `entities_found: 0, status: ok`
-3. Ingestion-Service stoppen, Chat senden → 503 (fail closed)
-4. Admin-Rolle mit opt-out → Telemetry zeigt `status: skipped`
-5. `PII_SCAN_FORCED=false` → Warning-Log bei Scanner-Ausfall, Request geht durch
+1. Chat with PII content (name + email) → telemetry shows `entities_found: 2, status: ok`
+2. Chat without PII → telemetry shows `entities_found: 0, status: ok`
+3. Stop ingestion service, send chat → 503 (fail closed)
+4. Admin role with opt-out → telemetry shows `status: skipped`
+5. `PII_SCAN_FORCED=false` → warning log on scanner outage, request passes through

@@ -1,19 +1,19 @@
 """
-PII-Scanner für die Ingestion Pipeline
+PII Scanner for the Ingestion Pipeline
 ========================================
-Erkennt personenbezogene Daten in eingehenden Dokumenten und Datensätzen.
-Verwendet Microsoft Presidio (Open Source) für die NER-basierte Erkennung
-und ergänzt regex-basierte Muster für DE-spezifische Formate.
+Detects personally identifiable information in incoming documents and datasets.
+Uses Microsoft Presidio (open source) for NER-based detection
+and adds regex-based patterns for DE-specific formats.
 
-Konfiguration über pii_config.yaml (Pfad via PII_CONFIG_PATH env var).
+Configuration via pii_config.yaml (path via PII_CONFIG_PATH env var).
 
-Abhängigkeiten (requirements.txt):
+Dependencies (requirements.txt):
   presidio-analyzer
   presidio-anonymizer
   spacy
   pydantic
   pyyaml
-  # Nach Installation: python -m spacy download de_core_news_md
+  # After installation: python -m spacy download de_core_news_md
 """
 
 import os
@@ -108,11 +108,11 @@ def load_config(path: str | Path | None = None) -> PIIScannerConfig:
         return PIIScannerConfig()
 
 
-# ── Scan-Ergebnis ──────────────────────────────────────────
+# ── Scan Result ────────────────────────────────────────────
 
 @dataclass
 class PIIScanResult:
-    """Ergebnis eines PII-Scans."""
+    """Result of a PII scan."""
     contains_pii: bool = False
     entity_counts: dict[str, int] = field(default_factory=dict)
     entity_locations: list[dict[str, Any]] = field(default_factory=list)
@@ -125,24 +125,24 @@ class PIIScanResult:
 
 class PIIScanner:
     """
-    Scannt Text und strukturierte Daten auf personenbezogene Informationen.
-    
-    Verwendung:
+    Scans text and structured data for personally identifiable information.
+
+    Usage:
         scanner = PIIScanner()
-        
-        # Freitext scannen
-        result = scanner.scan_text("Kontakt: Max Mustermann, max@firma.de")
-        
-        # Strukturierte Daten (z.B. CSV-Zeile als Dict)
+
+        # Scan free text
+        result = scanner.scan_text("Contact: Max Mustermann, max@firma.de")
+
+        # Structured data (e.g. CSV row as dict)
         result = scanner.scan_record({"name": "Max Mustermann", "email": "max@firma.de"})
-        
-        # Text maskieren
-        masked = scanner.mask_text("Rufen Sie 0171-1234567 an")
-        # → "Rufen Sie <PHONE_NUMBER> an"
-        
-        # Text pseudonymisieren (reversibel mit Salt)
-        pseudo, mapping = scanner.pseudonymize_text("Max Mustermann bestellt", salt="project-key")
-        # → pseudo = "a3f8c1d2 bestellt", mapping = {"Max Mustermann": "a3f8c1d2"}
+
+        # Mask text
+        masked = scanner.mask_text("Call 0171-1234567")
+        # → "Call <PHONE_NUMBER>"
+
+        # Pseudonymize text (reversible with salt)
+        pseudo, mapping = scanner.pseudonymize_text("Max Mustermann ordered", salt="project-key")
+        # → pseudo = "a3f8c1d2 ordered", mapping = {"Max Mustermann": "a3f8c1d2"}
     """
 
     def __init__(
@@ -201,7 +201,7 @@ class PIIScanner:
             self.analyzer.registry.add_recognizer(recognizer)
 
     def scan_text(self, text: str, language: str = "de") -> PIIScanResult:
-        """Scannt Freitext auf PII."""
+        """Scans free text for PII."""
         if not text or not text.strip():
             return PIIScanResult()
 
@@ -235,7 +235,7 @@ class PIIScanner:
         )
 
     def scan_record(self, record: dict[str, Any], language: str = "de") -> PIIScanResult:
-        """Scannt eine strukturierte Datenzeile (z.B. CSV-Row) Feld für Feld."""
+        """Scans a structured data row (e.g. CSV row) field by field."""
         combined_result = PIIScanResult()
         pii_fields = []
 
@@ -257,7 +257,7 @@ class PIIScanner:
         return combined_result
 
     def mask_text(self, text: str, language: str = "de") -> str:
-        """Ersetzt PII durch Platzhalter: 'Max Mustermann' → '<PERSON>'."""
+        """Replaces PII with placeholders: 'Max Mustermann' → '<PERSON>'."""
         results = self.analyzer.analyze(
             text=text,
             language=language,
@@ -275,11 +275,11 @@ class PIIScanner:
         self, text: str, salt: str, language: str = "de"
     ) -> tuple[str, dict[str, str]]:
         """
-        Ersetzt PII durch deterministische Pseudonyme.
-        Gleicher Input + Salt → gleiches Pseudonym (für Verknüpfbarkeit).
+        Replaces PII with deterministic pseudonyms.
+        Same input + salt → same pseudonym (for linkability).
 
         Returns:
-            Tuple aus (pseudonymisierter Text, Mapping {original → pseudonym})
+            Tuple of (pseudonymized text, mapping {original → pseudonym})
         """
         results = self.analyzer.analyze(
             text=text,
@@ -292,16 +292,16 @@ class PIIScanner:
             h = hashlib.sha256(f"{salt}:{entity_text}".encode()).hexdigest()[:8]
             return f"[{entity_type}:{h}]"
 
-        # Baue individuelle Pseudonyme pro Ergebnis (nicht pro Entity-Typ),
-        # damit mehrere Entities gleichen Typs unterschiedliche Pseudonyme bekommen.
+        # Build individual pseudonyms per result (not per entity type),
+        # so that multiple entities of the same type get different pseudonyms.
         mapping: dict[str, str] = {}
         for r in results:
             original = text[r.start:r.end]
             pseudo = make_pseudonym(original, r.entity_type)
             mapping[original] = pseudo
 
-        # Manuell ersetzen statt Presidio's anonymizer (der per-Typ-Operatoren braucht).
-        # Sortiere nach Position absteigend, damit Offsets stabil bleiben.
+        # Manual replacement instead of Presidio's anonymizer (which requires per-type operators).
+        # Sort by position descending for stable offsets.
         pseudonymized = text
         for r in sorted(results, key=lambda x: x.start, reverse=True):
             original = pseudonymized[r.start:r.end]
@@ -311,7 +311,7 @@ class PIIScanner:
         return pseudonymized, mapping
 
     def mask_record(self, record: dict[str, Any], language: str = "de") -> dict[str, Any]:
-        """Maskiert PII in allen String-Feldern eines Records."""
+        """Masks PII in all string fields of a record."""
         masked = {}
         for key, value in record.items():
             if isinstance(value, str) and value.strip():
@@ -324,8 +324,8 @@ class PIIScanner:
         self, record: dict[str, Any], salt: str, language: str = "de"
     ) -> tuple[dict[str, Any], dict[str, str]]:
         """
-        Pseudonymisiert PII in einem Record.
-        Gibt (pseudonymisierter Record, Mapping original→pseudonym) zurück.
+        Pseudonymizes PII in a record.
+        Returns (pseudonymized record, mapping original→pseudonym).
         """
         pseudonymized = {}
         mapping: dict[str, str] = {}
@@ -352,7 +352,7 @@ class PIIScanner:
 _default_scanner: PIIScanner | None = None
 
 def get_scanner() -> PIIScanner:
-    """Gibt eine Singleton-Instanz des Scanners zurück."""
+    """Returns a singleton instance of the scanner."""
     global _default_scanner
     if _default_scanner is None:
         config = load_config()

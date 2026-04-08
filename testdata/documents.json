@@ -187,7 +187,7 @@
     "source": "governance-wiki",
     "project": "novatech-compliance",
     "type": "rule",
-    "content": "Aufbewahrungsfristen NovaTech GmbH (DSGVO + HGB). Bewerbungsunterlagen: 6 Monate nach Absage (AGG-Frist). Personalakten: 3 Jahre nach Austritt (Verjährungsfrist). Rechnungen und Buchhaltung: 10 Jahre (§257 HGB). Verträge: 6 Jahre nach Vertragsende (§257 HGB). Kundendaten: 30 Tage nach Vertragsende (AVV). Log-Daten (Audit): 1 Jahr, dann Anonymisierung. Wissensdatenbank: kein automatisches Löschen, jährliches Review. Löschprozess: automatisiert via Cronjob (retention_cleanup.py), Protokollierung in audit_log."
+    "content": "Aufbewahrungsfristen NovaTech GmbH (DSGVO + HGB). Bewerbungsunterlagen: 6 Monate nach Absage (AGG-Frist). Personalakten: 3 Jahre nach Austritt (Verjährungsfrist). Rechnungen und Buchhaltung: 10 Jahre (§257 HGB). Verträge: 6 Jahre nach Vertragsende (§257 HGB). Kundendaten: 30 Tage nach Vertragsende (AVV). Log-Daten (Audit): 1 Jahr, dann Anonymisierung. knowledge base: kein automatisches Löschen, jährliches Review. Löschprozess: automatisiert via Cronjob (retention_cleanup.py), Protokollierung in audit_log."
   },
   {
     "id": "novatech-change-management",

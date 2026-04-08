@@ -1,4 +1,4 @@
-"""Tests für die PII-Middleware des Proxy."""
+"""Tests for the proxy PII middleware."""
 import pytest
 import re
 import sys

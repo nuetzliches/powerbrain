@@ -2,16 +2,16 @@
 
 **Date:** 2026-03-21
 **Status:** Approved
-**Scope:** PII-Hygiene + Zugriffskontrolle + Retention für `agent_access_log`
+**Scope:** PII hygiene + access control + retention for `agent_access_log`
 
 ## Problem
 
 The `search_knowledge` tool stores raw query text in `agent_access_log.request_context`.
 If an agent searches for "Vertrag von Max Mustermann", that name is persisted verbatim.
-This creates three DSGVO issues:
+This creates three GDPR issues:
 
-1. **Art. 5(1)(c) Datenminimierung** — Full query text is stored when a masked version would suffice for audit purposes
-2. **Art. 17 Recht auf Löschung** — No mechanism to find/anonymize PII in audit log query text
+1. **Art. 5(1)(c) Data Minimization** — Full query text is stored when a masked version would suffice for audit purposes
+2. **Art. 17 Right to Erasure** — No mechanism to find/anonymize PII in audit log query text
 3. **Broken anonymization** — `retention_cleanup.py` checks `contains_pii = true`, but `log_access()` never sets this column
 
 Additional gaps:

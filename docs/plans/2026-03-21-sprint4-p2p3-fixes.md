@@ -451,11 +451,11 @@ git commit -m "docs: mark P2-2, P3-1 as resolved, update sprint status"
 
 ## Summary
 
-| Task | Issue | Aufwand | Abhängigkeiten |
-|------|-------|---------|----------------|
-| 1 | P2-4 docs update | 2 min | keine |
-| 2 | P2-2 OPA filter in eval | 15 min | keine |
-| 3 | P3-1 retry/backoff | 20 min | keine |
+| Task | Issue | Effort | Dependencies |
+|------|-------|--------|--------------|
+| 1 | P2-4 docs update | 2 min | none |
+| 2 | P2-2 OPA filter in eval | 15 min | none |
+| 3 | P3-1 retry/backoff | 20 min | none |
 | 4 | Docker rebuild + verify | 5 min | Task 2, 3 |
 
 All three implementation tasks are independent and can be executed in parallel

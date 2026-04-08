@@ -1,17 +1,16 @@
 """
-Snapshot-Service (Baustein 4: Wissens-Versionierung)
+Snapshot Service (Knowledge Versioning)
 ======================================================
-Erstellt und verwaltet Snapshots der Wissensdatenbank:
-  - Qdrant: native Snapshot-API für alle Collections
-  - PostgreSQL: Row-Counts + Metadaten
-  - OPA: aktueller Policy Commit-Hash aus Forgejo
+Creates and manages snapshots of the knowledge base:
+  - Qdrant: native snapshot API for all collections
+  - PostgreSQL: row counts + metadata
+  - OPA: current policy commit hash from Forgejo
 
-Kann als Modul (vom Ingestion-API aufgerufen) oder direkt per CLI
-verwendet werden:
+Can be used as a module (called by the ingestion API) or directly via CLI:
 
-  python snapshot_service.py --auto          # täglicher Snapshot + Cleanup
-  python snapshot_service.py --list          # Snapshots auflisten
-  python snapshot_service.py --name my-snap  # benannten Snapshot erstellen
+  python snapshot_service.py --auto          # daily snapshot + cleanup
+  python snapshot_service.py --list          # list snapshots
+  python snapshot_service.py --name my-snap  # create a named snapshot
 """
 
 import os
@@ -29,7 +28,7 @@ from shared.config import read_secret, build_postgres_url
 
 log = logging.getLogger("pb-snapshot")
 
-# ── Konfiguration ────────────────────────────────────────────
+# ── Configuration ────────────────────────────────────────────
 QDRANT_URL   = os.getenv("QDRANT_URL",   "http://qdrant:6333")
 POSTGRES_URL = build_postgres_url()
 FORGEJO_URL  = os.getenv("FORGEJO_URL",  "http://forgejo.local:3000")
@@ -40,77 +39,77 @@ PG_SNAPSHOT_TABLES = ["datasets", "dataset_rows", "documents_meta"]
 KEEP_LAST_N        = int(os.getenv("SNAPSHOT_KEEP_LAST_N", "10"))
 
 
-# ── Qdrant-Snapshots ─────────────────────────────────────────
+# ── Qdrant Snapshots ──────────────────────────────────────────
 
 async def create_qdrant_snapshots(client: httpx.AsyncClient) -> dict:
-    """Erstellt Qdrant-Snapshots für alle Collections. Gibt {collection: snapshot_name} zurück."""
+    """Creates Qdrant snapshots for all collections. Returns {collection: snapshot_name}."""
     snapshots = {}
     for collection in QDRANT_COLLECTIONS:
         try:
             resp = await client.post(f"{QDRANT_URL}/collections/{collection}/snapshots")
             if resp.status_code == 404:
-                log.warning(f"Collection '{collection}' nicht gefunden, überspringe")
+                log.warning(f"Collection '{collection}' not found, skipping")
                 continue
             resp.raise_for_status()
             snap_name = resp.json()["result"]["name"]
             snapshots[collection] = snap_name
-            log.info(f"Qdrant-Snapshot erstellt: {collection} → {snap_name}")
+            log.info(f"Qdrant snapshot created: {collection} → {snap_name}")
         except Exception as e:
-            log.error(f"Qdrant-Snapshot für '{collection}' fehlgeschlagen: {e}")
+            log.error(f"Qdrant snapshot for '{collection}' failed: {e}")
     return snapshots
 
 
 async def list_qdrant_snapshots(client: httpx.AsyncClient, collection: str) -> list[dict]:
-    """Listet vorhandene Qdrant-Snapshots für eine Collection."""
+    """Lists existing Qdrant snapshots for a collection."""
     try:
         resp = await client.get(f"{QDRANT_URL}/collections/{collection}/snapshots")
         resp.raise_for_status()
         return resp.json().get("result", [])
     except Exception as e:
-        log.error(f"Qdrant-Snapshots auflisten für '{collection}' fehlgeschlagen: {e}")
+        log.error(f"Listing Qdrant snapshots for '{collection}' failed: {e}")
         return []
 
 
 async def delete_qdrant_snapshot(client: httpx.AsyncClient, collection: str, snapshot_name: str):
-    """Löscht einen Qdrant-Snapshot."""
+    """Deletes a Qdrant snapshot."""
     try:
         resp = await client.delete(
             f"{QDRANT_URL}/collections/{collection}/snapshots/{snapshot_name}"
         )
         resp.raise_for_status()
-        log.info(f"Qdrant-Snapshot gelöscht: {collection}/{snapshot_name}")
+        log.info(f"Qdrant snapshot deleted: {collection}/{snapshot_name}")
     except Exception as e:
-        log.error(f"Qdrant-Snapshot löschen fehlgeschlagen: {e}")
+        log.error(f"Qdrant snapshot deletion failed: {e}")
 
 
 async def restore_qdrant_snapshot(client: httpx.AsyncClient, collection: str, snapshot_name: str):
-    """Stellt eine Qdrant-Collection aus einem Snapshot wieder her."""
+    """Restores a Qdrant collection from a snapshot."""
     resp = await client.put(
         f"{QDRANT_URL}/collections/{collection}/snapshots/recover",
         json={"location": f"file:///qdrant/snapshots/{collection}/{snapshot_name}"}
     )
     resp.raise_for_status()
-    log.info(f"Qdrant-Collection '{collection}' aus Snapshot '{snapshot_name}' wiederhergestellt")
+    log.info(f"Qdrant collection '{collection}' restored from snapshot '{snapshot_name}'")
 
 
 # ── PostgreSQL Row-Counts ─────────────────────────────────────
 
 async def get_pg_row_counts(pool: asyncpg.Pool) -> dict:
-    """Gibt aktuelle Row-Counts der relevanten Tabellen zurück."""
+    """Returns current row counts of the relevant tables."""
     counts = {}
     for table in PG_SNAPSHOT_TABLES:
         try:
             row = await pool.fetchrow(f"SELECT COUNT(*) AS cnt FROM {table}")
             counts[table] = row["cnt"] if row else 0
         except Exception:
-            counts[table] = -1  # Tabelle existiert (noch) nicht
+            counts[table] = -1  # Table does not (yet) exist
     return counts
 
 
 # ── OPA Policy Commit ─────────────────────────────────────────
 
 async def get_policy_commit(client: httpx.AsyncClient) -> str | None:
-    """Holt den aktuellen Commit-Hash des Policy-Repos aus Forgejo."""
+    """Gets the current commit hash of the policy repo from Forgejo."""
     if not FORGEJO_TOKEN:
         return None
     try:
@@ -122,21 +121,21 @@ async def get_policy_commit(client: httpx.AsyncClient) -> str | None:
         resp.raise_for_status()
         return resp.json()["commit"]["id"]
     except Exception as e:
-        log.warning(f"Policy-Commit nicht abrufbar: {e}")
+        log.warning(f"Policy commit not retrievable: {e}")
         return None
 
 
-# ── Snapshot erstellen ────────────────────────────────────────
+# ── Create Snapshot ───────────────────────────────────────────
 
 async def create_snapshot(name: str, description: str = "",
                           created_by: str = "system") -> dict:
     """
-    Erstellt einen vollständigen Wissens-Snapshot:
-    1. Qdrant-Snapshots für alle Collections
-    2. PostgreSQL Row-Counts + Zeitstempel
-    3. OPA Policy Commit-Hash
+    Creates a complete knowledge snapshot:
+    1. Qdrant snapshots for all collections
+    2. PostgreSQL row counts + timestamp
+    3. OPA policy commit hash
 
-    Speichert Metadaten in `knowledge_snapshots`.
+    Stores metadata in `knowledge_snapshots`.
     """
     async with httpx.AsyncClient(timeout=60.0) as client:
         pool = await asyncpg.create_pool(POSTGRES_URL, min_size=1, max_size=3)
@@ -174,14 +173,14 @@ async def create_snapshot(name: str, description: str = "",
                 "created_at": row["created_at"].isoformat(),
                 "components": components,
             }
-            log.info(f"Snapshot '{name}' erstellt (ID={row['id']})")
+            log.info(f"Snapshot '{name}' created (ID={row['id']})")
             return result
 
         finally:
             await pool.close()
 
 
-# ── Snapshots auflisten ───────────────────────────────────────
+# ── List Snapshots ────────────────────────────────────────────
 
 async def list_snapshots(limit: int = 10) -> list[dict]:
     pool = await asyncpg.create_pool(POSTGRES_URL, min_size=1, max_size=3)
@@ -210,14 +209,14 @@ async def list_snapshots(limit: int = 10) -> list[dict]:
         await pool.close()
 
 
-# ── Alte Snapshots aufräumen ──────────────────────────────────
+# ── Clean Up Old Snapshots ────────────────────────────────────
 
 async def cleanup_old_snapshots(keep_last_n: int = KEEP_LAST_N):
-    """Löscht Qdrant-Snapshots und PG-Einträge die älter als keep_last_n sind."""
+    """Deletes Qdrant snapshots and PG entries older than keep_last_n."""
     pool = await asyncpg.create_pool(POSTGRES_URL, min_size=1, max_size=3)
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            # Snapshots zum Löschen ermitteln
+            # Determine snapshots to delete
             old_rows = await pool.fetch("""
                 SELECT id, snapshot_name, components FROM knowledge_snapshots
                 WHERE id NOT IN (
@@ -231,17 +230,17 @@ async def cleanup_old_snapshots(keep_last_n: int = KEEP_LAST_N):
                 components = row["components"] or {}
                 qdrant_snaps = components.get("qdrant", {}).get("collections", {})
 
-                # Qdrant-Snapshots löschen
+                # Delete Qdrant snapshots
                 for collection, snap_name in qdrant_snaps.items():
                     await delete_qdrant_snapshot(client, collection, snap_name)
 
-                # PG-Eintrag löschen
+                # Delete PG entry
                 await pool.execute(
                     "DELETE FROM knowledge_snapshots WHERE id = $1", row["id"]
                 )
-                log.info(f"Alter Snapshot gelöscht: '{row['snapshot_name']}' (ID={row['id']})")
+                log.info(f"Old snapshot deleted: '{row['snapshot_name']}' (ID={row['id']})")
 
-            log.info(f"Cleanup abgeschlossen: {len(old_rows)} alte Snapshot(s) entfernt")
+            log.info(f"Cleanup completed: {len(old_rows)} old snapshot(s) removed")
         finally:
             await pool.close()
 
@@ -249,10 +248,10 @@ async def cleanup_old_snapshots(keep_last_n: int = KEEP_LAST_N):
 # ── CLI ───────────────────────────────────────────────────────
 
 async def _auto():
-    """Täglicher automatischer Snapshot mit Cleanup."""
+    """Daily automatic snapshot with cleanup."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     name  = f"daily-{today}"
-    result = await create_snapshot(name, description="Automatischer Tages-Snapshot")
+    result = await create_snapshot(name, description="Automatic daily snapshot")
     print(json.dumps(result, indent=2))
     await cleanup_old_snapshots()
 

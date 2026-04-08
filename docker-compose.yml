@@ -1,10 +1,10 @@
 version: "3.9"
 
 # ============================================================
-#  Self-Hosted Wissensdatenbank – Docker Compose
-#  Komponenten: Qdrant, PostgreSQL, OPA, Ollama, MCP-Server,
-#               Ingestion, Reranker, Prometheus, Grafana,
-#               Grafana Tempo (Tracing), postgres-exporter
+#  Self-hosted knowledge base – Docker Compose
+#  Components: Qdrant, PostgreSQL, OPA, Ollama, MCP server,
+#              Ingestion, Reranker, Prometheus, Grafana,
+#              Grafana Tempo (Tracing), postgres-exporter
 # ============================================================
 
 networks:
@@ -39,7 +39,7 @@ secrets:
 
 services:
 
-  # ── Qdrant (Vektordatenbank) ──────────────────────────────
+  # ── Qdrant (vector database) ──────────────────────────────
   qdrant:
     image: qdrant/qdrant:latest
     container_name: pb-qdrant
@@ -83,7 +83,7 @@ services:
       timeout: 5s
       retries: 3
 
-  # ── postgres-exporter (Prometheus Metriken für PG) ────────
+  # ── postgres-exporter (Prometheus metrics for PG) ─────────
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:latest
     container_name: pb-postgres-exporter
@@ -110,7 +110,7 @@ services:
       - "--addr=0.0.0.0:8181"
       - "--set=decision_logs.console=true"
       - "/policies"
-      # Bundle-Polling nach Setup aktivieren:
+      # Enable bundle polling after setup:
       # - "--set=services.forgejo.url=${FORGEJO_URL:-http://forgejo.local:3000}"
       # - "--set=services.forgejo.credentials.bearer.token=${FORGEJO_TOKEN}"
       # - "--set=bundles.pb.service=forgejo"
@@ -125,10 +125,10 @@ services:
       timeout: 5s
       retries: 3
 
-  # ── Ollama (Embeddings + LLM, lokal) ─────────────────────
-  # Nur nötig wenn kein externer Provider konfiguriert ist.
-  # Aktivieren: docker compose --profile local-llm up
-  # Externe Provider: EMBEDDING_PROVIDER_URL + LLM_PROVIDER_URL in .env setzen.
+  # ── Ollama (embeddings + LLM, local) ──────────────────────
+  # Only needed when no external provider is configured.
+  # Enable: docker compose --profile local-llm up
+  # External providers: set EMBEDDING_PROVIDER_URL + LLM_PROVIDER_URL in .env.
   ollama:
     profiles: ["local-llm"]
     image: ollama/ollama:latest
@@ -146,7 +146,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    # GPU-Support (deaktiviert – NVIDIA Container Toolkit nicht verfügbar)
+    # GPU support (disabled – NVIDIA Container Toolkit not available)
     # deploy:
     #   resources:
     #     reservations:
@@ -183,7 +183,7 @@ services:
       retries: 5
       start_period: 30s
 
-  # ── MCP-Server (Agenten-Schnittstelle) ────────────────────
+  # ── MCP server (agent interface) ──────────────────────────
   mcp-server:
     build:
       context: .
@@ -386,13 +386,13 @@ services:
       - ./monitoring/tempo.yml:/etc/tempo/tempo.yml:ro
       - tempo_data:/var/tempo
     ports:
-      - "4317:4317"   # OTLP gRPC (von Services genutzt)
-      - "3200:3200"   # Tempo HTTP API (Grafana Query)
+      - "4317:4317"   # OTLP gRPC (used by services)
+      - "3200:3200"   # Tempo HTTP API (Grafana query)
     networks:
       - pb-net
     restart: unless-stopped
 
-  # ── Testdata Seed (nur mit --profile seed) ────────────────
+  # ── Testdata seed (only with --profile seed) ─────────────
   seed:
     profiles: ["seed"]
     build:

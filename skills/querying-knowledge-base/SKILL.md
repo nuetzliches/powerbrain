@@ -7,24 +7,24 @@ description: Use when searching company knowledge, querying internal documentati
 
 ## Overview
 
-Query the Powerbrain Wissensdatenbank (knowledge base) via its MCP server. The server exposes 14 tools for semantic search, structured queries, policy checks, graph queries, and data ingestion. All requests use **JSON-RPC 2.0 over HTTP POST** (MCP Streamable HTTP transport).
+Query the Powerbrain knowledge base via its MCP server. The server exposes a set of tools for semantic search, structured queries, policy checks, graph queries, and data ingestion. All requests use **JSON-RPC 2.0 over HTTP POST** (MCP Streamable HTTP transport).
 
 ## Server
 
 - **URL**: `http://localhost:8080/mcp`
 - **Transport**: MCP Streamable HTTP (JSON-RPC 2.0 over HTTP POST)
 
-## Zugriffswege
+## Access Methods
 
-### Option A: Nativer MCP-Server (empfohlen)
+### Option A: Native MCP server (recommended)
 
-Wenn dein Agent MCP nativ unterstützt (Claude Code, OpenCode, Cursor, etc.), registriere den Server in deiner Agent-Konfiguration:
+If your agent supports MCP natively (Claude Code, OpenCode, Cursor, etc.), register the server in your agent configuration:
 
-**Claude Code** (`~/.claude/mcp_servers.json` oder Projekt-`.mcp.json`):
+**Claude Code** (`~/.claude/mcp_servers.json` or project-level `.mcp.json`):
 ```json
 {
   "mcpServers": {
-    "wissensdatenbank": {
+    "powerbrain": {
       "type": "http",
       "url": "http://localhost:8080/mcp"
     }
@@ -36,7 +36,7 @@ Wenn dein Agent MCP nativ unterstützt (Claude Code, OpenCode, Cursor, etc.), re
 ```json
 {
   "mcpServers": {
-    "wissensdatenbank": {
+    "powerbrain": {
       "type": "http",
       "url": "http://localhost:8080/mcp"
     }
@@ -44,15 +44,15 @@ Wenn dein Agent MCP nativ unterstützt (Claude Code, OpenCode, Cursor, etc.), re
 }
 ```
 
-Danach stehen alle KB-Tools direkt als MCP-Tools zur Verfügung — kein curl nötig. Der Agent kann `search_knowledge`, `graph_query` etc. wie jedes andere Tool aufrufen.
+After registration, all Powerbrain tools are available directly as MCP tools — no curl required. The agent can call `search_knowledge`, `graph_query`, etc. like any other tool.
 
-### Option B: HTTP/curl (ohne native MCP-Integration)
+### Option B: HTTP/curl (without native MCP integration)
 
-Falls der Agent keinen nativen MCP-Zugang hat, können alle Tools per HTTP POST aufgerufen werden.
+If the agent has no native MCP support, all tools can be called via HTTP POST.
 
 **Headers**: `Content-Type: application/json`, `Accept: application/json, text/event-stream`
 
-#### 1. Initialize (einmal pro logischer Session)
+#### 1. Initialize (once per logical session)
 
 ```bash
 curl -s http://localhost:8080/mcp -H 'Content-Type: application/json' \
@@ -67,7 +67,7 @@ curl -s http://localhost:8080/mcp -H 'Content-Type: application/json' \
   }'
 ```
 
-#### 2. Tool aufrufen
+#### 2. Call a tool
 
 ```bash
 curl -s http://localhost:8080/mcp -H 'Content-Type: application/json' \
@@ -77,7 +77,7 @@ curl -s http://localhost:8080/mcp -H 'Content-Type: application/json' \
     "params": {
       "name": "search_knowledge",
       "arguments": {
-        "query": "Homeoffice Regelung",
+        "query": "remote work policy",
         "collection": "pb_general",
         "top_k": 5,
         "agent_id": "my-agent",
@@ -87,7 +87,7 @@ curl -s http://localhost:8080/mcp -H 'Content-Type: application/json' \
   }'
 ```
 
-Response enthält `result.content[0].text` mit JSON-Payload.
+The response contains `result.content[0].text` with the JSON payload.
 
 ## Tools Reference
 
@@ -244,7 +244,7 @@ curl -s http://localhost:8080/mcp -H 'Content-Type: application/json' \
 # 2. Search
 curl -s http://localhost:8080/mcp -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_knowledge","arguments":{"query":"Gehaltsbänder Vergütung","collection":"pb_general","agent_id":"hr-bot","agent_role":"admin","top_k":3}}}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_knowledge","arguments":{"query":"salary bands compensation","collection":"pb_general","agent_id":"hr-bot","agent_role":"admin","top_k":3}}}'
 ```
 
 ### Multi-collection search
@@ -255,12 +255,12 @@ For questions spanning multiple topics, search each collection separately and co
 # Search rules collection
 curl -s http://localhost:8080/mcp -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_knowledge","arguments":{"query":"Datenschutz DSGVO","collection":"pb_rules","top_k":3,"agent_id":"my-agent","agent_role":"analyst"}}}'
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_knowledge","arguments":{"query":"data protection GDPR","collection":"pb_rules","top_k":3,"agent_id":"my-agent","agent_role":"analyst"}}}'
 
 # Search general docs
 curl -s http://localhost:8080/mcp -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"search_knowledge","arguments":{"query":"Datenschutz DSGVO","collection":"pb_general","top_k":3,"agent_id":"my-agent","agent_role":"analyst"}}}'
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"search_knowledge","arguments":{"query":"data protection GDPR","collection":"pb_general","top_k":3,"agent_id":"my-agent","agent_role":"analyst"}}}'
 ```
 
 Present results grouped by collection or merged by relevance to the user's question.

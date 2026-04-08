@@ -1,6 +1,6 @@
 # ============================================================
-#  Wissensdatenbank – OPA Rego Policies
-#  Paket: pb.access
+#  Knowledge base – OPA Rego policies
+#  Package: pb.access
 #
 #  Data-driven: role/classification matrix from data.json
 # ============================================================
@@ -9,17 +9,17 @@ package pb.access
 
 import rego.v1
 
-# Default: Zugriff verweigert
+# Default: access denied
 default allow := false
 
-# Read-Zugriff: Rolle muss in der access_matrix stehen
+# Read access: role must be in the access_matrix
 allow if {
     input.action != "write"
     some role in data.pb.config.access_matrix[input.classification]
     input.agent_role == role
 }
 
-# Write-Zugriff: nur konfigurierte Rollen auf konfigurierte Klassifizierungen
+# Write access: only configured roles on configured classifications
 allow if {
     input.action == "write"
     some role in data.pb.config.write_roles
@@ -28,11 +28,11 @@ allow if {
     input.classification == cls
 }
 
-# Deny-Reason für Debugging
+# Deny reason for debugging
 reason := msg if {
     not allow
-    msg := sprintf("Zugriff verweigert: Rolle '%s' darf nicht auf '%s'-Daten zugreifen (Aktion: %s)",
+    msg := sprintf("Access denied: role '%s' is not allowed to access '%s' data (action: %s)",
                    [input.agent_role, input.classification, input.action])
 }
 
-reason := "Zugriff erlaubt" if allow
+reason := "Access allowed" if allow

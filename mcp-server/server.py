@@ -1,13 +1,13 @@
 """
-Wissensdatenbank MCP-Server
+Knowledge base MCP server
 ============================
-Einziger Zugangspunkt für Agenten. Implementiert MCP-Tools für
-semantische Suche, strukturierte Abfragen, Regelwerk-Zugriff,
-Daten-Ingestion, Evaluation/Feedback und Snapshots.
+Single access point for agents. Implements MCP tools for
+semantic search, structured queries, rule-set access,
+data ingestion, evaluation/feedback and snapshots.
 
-Baustein 3: submit_feedback, get_eval_stats (+ Feedback-Loop in search_knowledge)
-Baustein 4: create_snapshot, list_snapshots
-Baustein 5: Prometheus-Metriken (/metrics HTTP auf Port 8080) + OpenTelemetry Tracing
+Building block 3: submit_feedback, get_eval_stats (+ feedback loop in search_knowledge)
+Building block 4: create_snapshot, list_snapshots
+Building block 5: Prometheus metrics (/metrics HTTP on port 8080) + OpenTelemetry tracing
 """
 
 import asyncio
@@ -117,7 +117,7 @@ RATE_LIMITS_BY_ROLE   = {
 DEFAULT_TOP_K      = 10
 OVERSAMPLE_FACTOR  = 5
 
-# Feedback-Loop: Warnung wenn avg_rating unter diesem Schwellwert mit mind. N Feedbacks
+# Feedback loop: warning when avg_rating is below this threshold with at least N feedbacks
 FEEDBACK_WARN_THRESHOLD = 2.5
 FEEDBACK_WARN_MIN_COUNT = 3
 
@@ -132,36 +132,36 @@ _opa_cache_lock = __import__("threading").Lock()
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("pb-mcp")
 
-# ── Prometheus Metriken ──────────────────────────────────────
+# ── Prometheus metrics ───────────────────────────────────────
 mcp_requests_total = Counter(
     "pb_mcp_requests_total",
-    "MCP-Requests pro Tool und Status",
+    "MCP requests per tool and status",
     ["tool", "status"],
 )
 mcp_request_duration = Histogram(
     "pb_mcp_request_duration_seconds",
-    "Latenz pro MCP-Tool",
+    "Latency per MCP tool",
     ["tool"],
     buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0],
 )
 mcp_policy_decisions_total = Counter(
     "pb_mcp_policy_decisions_total",
-    "OPA Policy-Entscheidungen",
+    "OPA policy decisions",
     ["result"],
 )
 mcp_search_results_count = Histogram(
     "pb_mcp_search_results_count",
-    "Anzahl Suchergebnisse nach Reranking",
+    "Number of search results after reranking",
     ["collection"],
     buckets=[0, 1, 3, 5, 10, 20, 50],
 )
 mcp_rerank_fallback_total = Counter(
     "pb_mcp_rerank_fallback_total",
-    "Anzahl Reranker-Fallbacks (nicht erreichbar)",
+    "Number of reranker fallbacks (unreachable)",
 )
 mcp_feedback_avg_rating = Gauge(
     "pb_feedback_avg_rating",
-    "Aktueller Durchschnitt des Feedback-Ratings (letzte 24h)",
+    "Current average of the feedback rating (last 24h)",
 )
 
 # Note: B-45 accuracy gauges (pb_accuracy_*) live in worker/metrics.py
@@ -305,7 +305,7 @@ class RateLimitMiddleware:
             # No authenticated user — skip rate limiting (auth middleware handles rejection)
         except Exception as e:
             # Fail open — rate limiter error should not block requests
-            log.warning(f"Rate limiter Fehler, Request wird durchgelassen: {e!r}")
+            log.warning(f"Rate limiter error, request is being passed through: {e!r}")
 
         return await self.app(scope, receive, send)
 
@@ -388,7 +388,7 @@ class ApiKeyVerifier(TokenVerifier):
     wait=wait_exponential(multiplier=2, min=2, max=8),
     retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
     reraise=True,
-    before_sleep=lambda rs: log.warning(f"Embed retry #{rs.attempt_number} nach Fehler: {rs.outcome.exception()}"),
+    before_sleep=lambda rs: log.warning(f"Embed retry #{rs.attempt_number} after error: {rs.outcome.exception()}"),
 )
 async def embed_text(text: str) -> list[float]:
     with trace_operation(tracer, "embedding", "mcp-server",
@@ -541,7 +541,7 @@ async def rerank_results(query: str, documents: list[dict], top_n: int,
     wait=wait_exponential(multiplier=0.5, min=0.5, max=2),
     retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
     reraise=True,
-    before_sleep=lambda rs: log.warning(f"OPA retry #{rs.attempt_number} nach Fehler: {rs.outcome.exception()}"),
+    before_sleep=lambda rs: log.warning(f"OPA retry #{rs.attempt_number} after error: {rs.outcome.exception()}"),
 )
 async def check_opa_policy(agent_id: str, agent_role: str,
                            resource: str, classification: str,
@@ -629,7 +629,7 @@ async def log_access(agent_id: str, agent_role: str,
                     break
                 except (httpx.ConnectError, httpx.TimeoutException):
                     if attempt == 0:
-                        log.warning("PII scan retry nach Verbindungsfehler...")
+                        log.warning("PII scan retry after connection error...")
                         await asyncio.sleep(1)
                     else:
                         raise
@@ -641,7 +641,7 @@ async def log_access(agent_id: str, agent_role: str,
                 context["query_contains_pii"] = True
                 context["pii_entity_types"] = scan_data["entity_types"]
         except Exception as e:
-            log.warning(f"PII scan für Audit-Log fehlgeschlagen, speichere ohne Scan: {e}")
+            log.warning(f"PII scan for audit log failed, saving without scan: {e}")
             # Continue without PII scan — better to log unscanned than to fail
 
     pool = await get_pg_pool()
@@ -661,7 +661,7 @@ VAULT_HMAC_SECRET = read_secret("VAULT_HMAC_SECRET", "change-me-in-production")
 
 def validate_pii_access_token(token: dict) -> dict:
     """
-    Validiert einen PII Access Token (HMAC-signiert, kurzlebig).
+    Validates a PII access token (HMAC-signed, short-lived).
     Returns: {"valid": bool, "reason": str, "payload": dict}
     """
     import hmac as hmac_mod
@@ -671,7 +671,7 @@ def validate_pii_access_token(token: dict) -> dict:
     signature = token.get("signature", "")
     payload = {k: v for k, v in token.items() if k != "signature"}
 
-    # HMAC-Signatur prüfen
+    # Verify HMAC signature
     expected = hmac_mod.new(
         VAULT_HMAC_SECRET.encode(),
         json.dumps(payload, sort_keys=True).encode(),
@@ -681,7 +681,7 @@ def validate_pii_access_token(token: dict) -> dict:
     if not hmac_mod.compare_digest(signature, expected):
         return {"valid": False, "reason": "Invalid token signature", "payload": payload}
 
-    # Ablauf prüfen
+    # Check expiration
     expires_at = token.get("expires_at", "")
     try:
         exp = datetime.fromisoformat(expires_at)
@@ -699,7 +699,7 @@ async def check_opa_vault_access(
     agent_role: str, purpose: str, classification: str,
     data_category: str, token_valid: bool, token_expired: bool,
 ) -> dict:
-    """Prüft via OPA ob Vault-Zugriff erlaubt ist."""
+    """Checks via OPA whether vault access is allowed."""
     input_data = {
         "agent_role": agent_role,
         "purpose": purpose,
@@ -732,8 +732,8 @@ async def check_opa_vault_access(
 
 
 def redact_fields(text: str, pii_entities: list[dict], fields_to_redact: set[str]) -> str:
-    """Redaktiert bestimmte PII-Entity-Typen im Text basierend auf OPA-Policy."""
-    # Mapping von OPA-Feldnamen zu Presidio-Entity-Typen
+    """Redacts specific PII entity types in the text based on OPA policy."""
+    # Mapping from OPA field names to Presidio entity types
     field_to_entity = {
         "email": "EMAIL_ADDRESS",
         "phone": "PHONE_NUMBER",
@@ -748,7 +748,7 @@ def redact_fields(text: str, pii_entities: list[dict], fields_to_redact: set[str
     if not entities_to_redact:
         return text
 
-    # Sortiere nach Position absteigend für stabile Offsets
+    # Sort by position descending for stable offsets
     sorted_entities = sorted(pii_entities, key=lambda e: e.get("start", 0), reverse=True)
     result = text
     for entity in sorted_entities:
@@ -763,7 +763,7 @@ def redact_fields(text: str, pii_entities: list[dict], fields_to_redact: set[str
 async def vault_lookup(
     document_id: str, chunk_indices: list[int] | None = None
 ) -> list[dict]:
-    """Holt Original-Daten aus dem Vault."""
+    """Retrieves original data from the vault."""
     pool = await get_pg_pool()
     if chunk_indices:
         rows = await pool.fetch("""
@@ -796,7 +796,7 @@ async def log_vault_access(
     agent_id: str, document_id: str, chunk_index: int | None,
     purpose: str, token_hash: str,
 ):
-    """Loggt Vault-Zugriff in separates Audit-Log."""
+    """Logs vault access into a separate audit log."""
     pool = await get_pg_pool()
     await pool.execute("""
         INSERT INTO pii_vault.vault_access_log
@@ -806,7 +806,7 @@ async def log_vault_access(
 
 
 async def check_feedback_warning(query: str, pool: asyncpg.Pool):
-    """Warnt wenn eine Query häufig schlecht bewertet wird (Feedback-Loop)."""
+    """Warns when a query is frequently rated poorly (feedback loop)."""
     row = await pool.fetchrow("""
         SELECT COUNT(*) AS cnt, AVG(rating) AS avg_rating
         FROM search_feedback
@@ -816,8 +816,8 @@ async def check_feedback_warning(query: str, pool: asyncpg.Pool):
         avg = float(row["avg_rating"])
         if avg < FEEDBACK_WARN_THRESHOLD:
             log.warning(
-                f"[Feedback-Loop] Query '{query[:80]}' hat avg_rating={avg:.2f} "
-                f"bei {row['cnt']} Feedbacks → Retrieval-Qualität prüfen"
+                f"[Feedback loop] Query '{query[:80]}' has avg_rating={avg:.2f} "
+                f"with {row['cnt']} feedbacks → check retrieval quality"
             )
 
 
@@ -830,8 +830,8 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="search_knowledge",
-            description="Semantische Suche über die Wissensdatenbank. "
-                        "Findet relevante Dokumente, Code-Snippets und Regeln.",
+            description="Semantic search over the knowledge base. "
+                        "Finds relevant documents, code snippets, and rules.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -888,7 +888,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="query_data",
-            description="Strukturierte Abfrage auf PostgreSQL-Datensätze.",
+            description="Structured query against PostgreSQL datasets.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -901,7 +901,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="get_rules",
-            description="Aktive Business Rules für einen Kontext abrufen.",
+            description="Retrieve active business rules for a context.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -913,7 +913,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="check_policy",
-            description="OPA-Policy evaluieren.",
+            description="Evaluate OPA policy.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -926,13 +926,13 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="ingest_data",
-            description="Neue Daten in die Wissensdatenbank einspeisen.",
+            description="Ingest new data into the knowledge base.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "source":         {"type": "string"},
                     "source_type":    {"type": "string", "default": "text",
-                                       "description": "Quelltyp (text). Weitere Typen via Adapter."},
+                                       "description": "Source type (text). Additional types via adapters."},
                     "project":        {"type": "string"},
                     "classification": {"type": "string", "default": "internal"},
                     "metadata":       {"type": "object"},
@@ -942,7 +942,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="get_classification",
-            description="Klassifizierung eines Datenobjekts abfragen.",
+            description="Query the classification of a data object.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -954,7 +954,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="list_datasets",
-            description="Verfügbare Datensätze auflisten.",
+            description="List available datasets.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -966,7 +966,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="get_code_context",
-            description="Code-Kontext aus Repos abrufen. Semantische Suche über Code-Embeddings.",
+            description="Retrieve code context from repos. Semantic search over code embeddings.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -996,7 +996,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="graph_query",
-            description="Knowledge Graph abfragen (Knoten, Beziehungen, Pfade).",
+            description="Query the knowledge graph (nodes, relationships, paths).",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1016,7 +1016,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="graph_mutate",
-            description="Knowledge Graph verändern (nur developer/admin).",
+            description="Mutate the knowledge graph (developer/admin only).",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1035,24 +1035,24 @@ async def list_tools() -> list[Tool]:
                 "required": ["action"]
             }
         ),
-        # ── Baustein 3: Evaluation + Feedback ──────────────────
+        # ── Building block 3: Evaluation + Feedback ────────────
         Tool(
             name="submit_feedback",
-            description="Feedback zu Suchergebnissen einreichen. "
-                        "Bewertet die Qualität einer Suche (1–5 Sterne).",
+            description="Submit feedback on search results. "
+                        "Rates the quality of a search (1–5 stars).",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query":          {"type": "string", "description": "Die ursprüngliche Suchanfrage"},
+                    "query":          {"type": "string", "description": "The original search query"},
                     "result_ids":     {"type": "array", "items": {"type": "string"},
-                                       "description": "IDs der erhaltenen Ergebnisse"},
+                                       "description": "IDs of the received results"},
                     "rating":         {"type": "integer", "minimum": 1, "maximum": 5,
-                                       "description": "Gesamtbewertung (1=schlecht, 5=sehr gut)"},
+                                       "description": "Overall rating (1=poor, 5=excellent)"},
                     "relevant_ids":   {"type": "array", "items": {"type": "string"},
-                                       "description": "IDs der hilfreichen Ergebnisse"},
+                                       "description": "IDs of helpful results"},
                     "irrelevant_ids": {"type": "array", "items": {"type": "string"},
-                                       "description": "IDs der nicht hilfreichen Ergebnisse"},
-                    "comment":        {"type": "string", "description": "Freitext-Kommentar"},
+                                       "description": "IDs of unhelpful results"},
+                    "comment":        {"type": "string", "description": "Free-text comment"},
                     "collection":     {"type": "string"},
                     "rerank_scores":  {"type": "object"},
                 },
@@ -1061,26 +1061,26 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="get_eval_stats",
-            description="Statistiken zur Retrieval-Qualität abrufen. "
-                        "Zeigt avg_rating, schlechteste Queries und Trend.",
+            description="Retrieve statistics on retrieval quality. "
+                        "Shows avg_rating, worst queries and trend.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "days":       {"type": "integer", "default": 30,
-                                   "description": "Auswertungszeitraum in Tagen"},
+                                   "description": "Evaluation period in days"},
                 },
                 "required": []
             }
         ),
-        # ── Baustein 4: Snapshots ───────────────────────────────
+        # ── Building block 4: Snapshots ─────────────────────────
         Tool(
             name="create_snapshot",
-            description="Wissens-Snapshot erstellen (Qdrant + PG + OPA Policy-Commit). "
-                        "Nur für admin.",
+            description="Create a knowledge snapshot (Qdrant + PG + OPA policy commit). "
+                        "Admin only.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "name":        {"type": "string", "description": "Snapshot-Name (z.B. 'before-migration-v2')"},
+                    "name":        {"type": "string", "description": "Snapshot name (e.g. 'before-migration-v2')"},
                     "description": {"type": "string"},
                 },
                 "required": ["name"]
@@ -1088,7 +1088,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="list_snapshots",
-            description="Verfügbare Wissens-Snapshots auflisten.",
+            description="List available knowledge snapshots.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1287,7 +1287,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             try:
                 result = await _dispatch(name, arguments, agent_id, agent_role)
             except Exception as e:
-                log.error(f"Tool {name} fehlgeschlagen: {e}", exc_info=True)
+                log.error(f"Tool {name} failed: {e}", exc_info=True)
                 status = "error"
                 result = [TextContent(type="text", text=json.dumps({"error": str(e)}))]
 
@@ -1642,14 +1642,14 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         )
         if not ds:
             return [TextContent(type="text",
-                text=json.dumps({"error": f"Dataset '{dataset}' nicht gefunden"}))]
+                text=json.dumps({"error": f"Dataset '{dataset}' not found"}))]
 
         policy = await check_opa_policy(agent_id, agent_role,
                                         f"dataset/{ds['id']}", ds["classification"])
         if not policy["allowed"]:
             await log_access(agent_id, agent_role, "dataset", str(ds["id"]), "query", "deny")
             return [TextContent(type="text",
-                text=json.dumps({"error": "Zugriff verweigert", "classification": ds["classification"]}))]
+                text=json.dumps({"error": "Access denied", "classification": ds["classification"]}))]
 
         where_clauses = ["dataset_id = $1"]
         params: list[Any] = [ds["id"]]
@@ -1657,7 +1657,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         for key, value in conditions.items():
             if not validate_identifier(key):
                 return [TextContent(type="text",
-                    text=json.dumps({"error": f"Ungültiger Condition-Key: {key!r}"}))]
+                    text=json.dumps({"error": f"Invalid condition key: {key!r}"}))]
             where_clauses.append(f"data->>'{key}' = ${idx}")
             params.append(str(value))
             idx += 1
@@ -1683,7 +1683,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
             resp.raise_for_status()
             rules = resp.json().get("result", {})
         except Exception as e:
-            rules = {"error": f"Regeln konnten nicht abgerufen werden: {str(e)}"}
+            rules = {"error": f"Rules could not be retrieved: {str(e)}"}
 
         await log_access(agent_id, agent_role, "rule", category, "get_rules", "allow")
         return [TextContent(type="text",
@@ -1713,7 +1713,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
             resp.raise_for_status()
             result = resp.json()
         except Exception as e:
-            result = {"error": f"Ingestion fehlgeschlagen: {str(e)}"}
+            result = {"error": f"Ingestion failed: {str(e)}"}
 
         await log_access(agent_id, agent_role, "ingestion", arguments["source"],
                          "ingest", "allow", {"source_type": arguments.get("source_type", "text")})
@@ -1869,7 +1869,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
             return [TextContent(type="text", text=json.dumps(
                 {"resource_id": resource_id, "type": resource_type, "classification": row["classification"]}
             ))]
-        return [TextContent(type="text", text=json.dumps({"error": "Ressource nicht gefunden"}))]
+        return [TextContent(type="text", text=json.dumps({"error": "Resource not found"}))]
 
     # ── graph_query ──────────────────────────────────────────
     elif name == "graph_query":
@@ -1912,9 +1912,9 @@ async def _dispatch(name: str, arguments: dict[str, Any],
                     max_depth=arguments.get("max_depth", 2),
                 )
             else:
-                data = {"error": f"Unbekannte Graph-Action: {action}"}
+                data = {"error": f"Unknown graph action: {action}"}
         except Exception as e:
-            log.error(f"Graph-Query fehlgeschlagen: {e}")
+            log.error(f"Graph query failed: {e}")
             data = {"error": str(e)}
 
         await log_access(agent_id, agent_role, "graph", action, "graph_query", "allow")
@@ -1926,7 +1926,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         if agent_role not in ("developer", "admin"):
             await log_access(agent_id, agent_role, "graph", arguments["action"], "graph_mutate", "deny")
             return [TextContent(type="text",
-                text=json.dumps({"error": "Graph-Mutationen erfordern developer- oder admin-Rolle"}))]
+                text=json.dumps({"error": "Graph mutations require developer or admin role"}))]
 
         action = arguments["action"]
         pool   = await get_pg_pool()
@@ -1950,16 +1950,16 @@ async def _dispatch(name: str, arguments: dict[str, Any],
                 )
                 data = {"created": result}
             else:
-                data = {"error": f"Unbekannte Graph-Mutation: {action}"}
+                data = {"error": f"Unknown graph mutation: {action}"}
         except Exception as e:
-            log.error(f"Graph-Mutation fehlgeschlagen: {e}")
+            log.error(f"Graph mutation failed: {e}")
             data = {"error": str(e)}
 
         await log_access(agent_id, agent_role, "graph", action, "graph_mutate", "allow")
         return [TextContent(type="text",
             text=json.dumps(data, ensure_ascii=False, indent=2, default=str))]
 
-    # ── submit_feedback (Baustein 3) ─────────────────────────
+    # ── submit_feedback (building block 3) ───────────────────
     elif name == "submit_feedback":
         query          = arguments["query"]
         result_ids     = arguments["result_ids"]
@@ -1992,7 +1992,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         return [TextContent(type="text",
             text=json.dumps({"feedback_id": row["id"], "stored": True}, indent=2))]
 
-    # ── get_eval_stats (Baustein 3) ──────────────────────────
+    # ── get_eval_stats (building block 3) ────────────────────
     elif name == "get_eval_stats":
         days = arguments.get("days", 30)
         pool = await get_pg_pool()
@@ -2097,11 +2097,11 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         return [TextContent(type="text",
             text=json.dumps(result, ensure_ascii=False, indent=2))]
 
-    # ── create_snapshot (Baustein 4) ─────────────────────────
+    # ── create_snapshot (building block 4) ───────────────────
     elif name == "create_snapshot":
         if agent_role != "admin":
             return [TextContent(type="text",
-                text=json.dumps({"error": "Snapshots erstellen erfordert admin-Rolle"}))]
+                text=json.dumps({"error": "Creating snapshots requires the admin role"}))]
 
         snapshot_name = arguments["name"]
         description   = arguments.get("description", "")
@@ -2114,13 +2114,13 @@ async def _dispatch(name: str, arguments: dict[str, Any],
             resp.raise_for_status()
             result = resp.json()
         except Exception as e:
-            result = {"error": f"Snapshot-Erstellung fehlgeschlagen: {str(e)}"}
+            result = {"error": f"Snapshot creation failed: {str(e)}"}
 
         await log_access(agent_id, agent_role, "snapshot", snapshot_name,
                          "create_snapshot", "allow")
         return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 
-    # ── list_snapshots (Baustein 4) ──────────────────────────
+    # ── list_snapshots (building block 4) ────────────────────
     elif name == "list_snapshots":
         limit = arguments.get("limit", 10)
         pool  = await get_pg_pool()
@@ -2618,7 +2618,7 @@ async def _dispatch(name: str, arguments: dict[str, Any],
                          {"format": fmt, "count": len(rows), "limit": limit})
         return [TextContent(type="text", text=body)]
 
-    return [TextContent(type="text", text=json.dumps({"error": f"Unbekanntes Tool: {name}"}))]
+    return [TextContent(type="text", text=json.dumps({"error": f"Unknown tool: {name}"}))]
 
 
 # ── B-44: Risk-indicator health payload ──────────────────────

@@ -13,11 +13,11 @@ def render_login_page(
     )
 
     return f"""<!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Powerbrain MCP – Anmelden</title>
+  <title>Powerbrain MCP – Sign in</title>
   <style>
     * {{ margin: 0; padding: 0; box-sizing: border-box; }}
     body {{
@@ -94,17 +94,17 @@ def render_login_page(
 <body>
   <div class="card">
     <h1>Powerbrain MCP</h1>
-    <p class="subtitle">Gib deinen Powerbrain API-Key ein, um fortzufahren.</p>
+    <p class="subtitle">Enter your Powerbrain API key to continue.</p>
     {error_html}
     <form method="POST" action="{html.escape(callback_url)}">
       <input type="hidden" name="login_session_id" value="{html.escape(login_session_id)}">
 
-      <label for="api_key">API-Key</label>
+      <label for="api_key">API key</label>
       <input type="text" id="api_key" name="api_key" required
              placeholder="pb_..." autocomplete="off">
 
-      <button type="submit">Verbinden</button>
-      <p class="hint">Der Key wird serverseitig validiert und mit deiner OAuth-Session verknüpft.</p>
+      <button type="submit">Connect</button>
+      <p class="hint">The key is validated server-side and linked to your OAuth session.</p>
     </form>
   </div>
 </body>

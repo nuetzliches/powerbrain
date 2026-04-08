@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Seed testdata into the Wissensdatenbank via the Ingestion API.
+Seed testdata into the knowledge base via the Ingestion API.
 
 Reads documents from documents.json and sends each one through the
 Ingestion API (POST /ingest). The API handles embedding (via Ollama),

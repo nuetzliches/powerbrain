@@ -1,9 +1,9 @@
 """
-PII-Middleware für den pb-proxy Chat-Pfad.
+PII middleware for the pb-proxy chat path.
 
-Pseudonymisiert User-Nachrichten vor dem LLM-Aufruf,
-de-pseudonymisiert LLM-Antworten vor der Rückgabe an den User.
-Tool-Call-Argumente werden vor MCP-Aufrufen de-pseudonymisiert.
+Pseudonymizes user messages before the LLM call,
+de-pseudonymizes LLM responses before returning to the user.
+Tool call arguments are de-pseudonymized before MCP calls.
 """
 
 import logging
@@ -18,12 +18,12 @@ import config
 
 log = logging.getLogger("pb-proxy.pii")
 
-# Regex für typisierte Pseudonyme: [TYPE:8-hex-chars]
+# Regex for typed pseudonyms: [TYPE:8-hex-chars]
 PII_PSEUDONYM_PATTERN = r"\[([A-Z_]+):([a-f0-9]{8})\]"
 
 
 def generate_session_salt() -> str:
-    """Erzeugt einen zufälligen Salt für diese Request-Session."""
+    """Generates a random salt for this request session."""
     return secrets.token_hex(16)
 
 
@@ -33,13 +33,13 @@ async def pseudonymize_messages(
     http_client: httpx.AsyncClient,
 ) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """
-    Pseudonymisiert PII in allen Chat-Nachrichten.
+    Pseudonymizes PII in all chat messages.
 
-    Ruft den Ingestion-Service /pseudonymize für jede Nachricht auf.
-    Baut ein aggregiertes Reverse-Mapping über alle Nachrichten.
+    Calls the ingestion service /pseudonymize for each message.
+    Builds an aggregated reverse mapping across all messages.
 
     Returns:
-        Tuple aus (pseudonymisierte Messages, reverse_map {pseudonym -> original})
+        Tuple of (pseudonymized messages, reverse_map {pseudonym -> original})
     """
     reverse_map: dict[str, str] = {}
     result_messages = deepcopy(messages)
@@ -76,12 +76,12 @@ async def pseudonymize_tool_result(
     reverse_map: dict[str, str],
 ) -> str:
     """
-    Pseudonymisiert PII in einem Tool-Result-String.
+    Pseudonymizes PII in a tool result string.
 
-    Ruft den Ingestion-Service /pseudonymize auf und erweitert die reverse_map
-    um neue Pseudonyme. Gibt den pseudonymisierten Text zurück.
-    Bei Fehler wird der Originaltext zurückgegeben (fail-open für Tool-Results,
-    da ein Abbruch die gesamte Konversation zerstören würde).
+    Calls the ingestion service /pseudonymize and extends the reverse_map
+    with new pseudonyms. Returns the pseudonymized text.
+    On error, the original text is returned (fail-open for tool results,
+    since aborting would destroy the entire conversation).
     """
     if not text or not text.strip():
         return text
@@ -107,7 +107,7 @@ async def pseudonymize_tool_result(
 
 
 def depseudonymize_text(text: str, reverse_map: dict[str, str]) -> str:
-    """Ersetzt alle Pseudonyme im Text durch die Originale."""
+    """Replaces all pseudonyms in the text with the originals."""
     if not reverse_map:
         return text
     result = text
@@ -119,7 +119,7 @@ def depseudonymize_text(text: str, reverse_map: dict[str, str]) -> str:
 def depseudonymize_tool_arguments(
     arguments: dict[str, Any], reverse_map: dict[str, str]
 ) -> dict[str, Any]:
-    """De-pseudonymisiert alle String-Werte in Tool-Call-Argumenten (rekursiv)."""
+    """De-pseudonymizes all string values in tool call arguments (recursive)."""
     if not reverse_map:
         return arguments
     result = {}
@@ -144,13 +144,13 @@ def filter_non_text_content(
     messages: list[dict[str, Any]], action: str = "placeholder"
 ) -> tuple[list[dict[str, Any]], bool]:
     """
-    Filtert non-text Content (Bilder, Dateien) aus multimodalen Messages.
+    Filters non-text content (images, files) from multimodal messages.
 
     Args:
-        action: "block" (ValueError), "placeholder" (ersetzen), "allow" (durchlassen)
+        action: "block" (ValueError), "placeholder" (replace), "allow" (pass through)
 
     Returns:
-        Tuple aus (gefilterte Messages, ob non-text Content gefunden wurde)
+        Tuple of (filtered messages, whether non-text content was found)
     """
     result = deepcopy(messages)
     had_non_text = False
@@ -188,13 +188,13 @@ def filter_non_text_content(
 
 
 def build_system_hint(entity_types: list[str]) -> str:
-    """Erzeugt einen System-Prompt-Hinweis für das LLM."""
+    """Generates a system prompt hint for the LLM."""
     if not entity_types:
         return ""
     types_str = ", ".join(f"[{t}:...]" for t in sorted(entity_types))
     return (
-        "Die folgende Konversation enthält typisierte Pseudonyme "
-        f"({types_str}). Behandle sie als normale Namen bzw. Werte ihres Typs. "
-        "Verwende die Pseudonyme exakt so wie angegeben in deinen Antworten. "
-        "Versuche nicht, die Originale zu erraten."
+        "The following conversation contains typed pseudonyms "
+        f"({types_str}). Treat them as normal names or values of their type. "
+        "Use the pseudonyms exactly as given in your responses. "
+        "Do not attempt to guess the originals."
     )
