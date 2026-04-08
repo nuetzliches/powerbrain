@@ -358,7 +358,7 @@ class TestPIIProtection:
         messages_sent = run_call.kwargs.get("messages") or run_call.args[1]
         # System hint should be injected as first message
         assert any(
-            "Pseudonyme" in m.get("content", "")
+            "pseudonyms" in m.get("content", "").lower()
             for m in messages_sent if m["role"] == "system"
         )
 
