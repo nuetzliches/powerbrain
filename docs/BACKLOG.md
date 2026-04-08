@@ -1,6 +1,6 @@
 # Powerbrain Backlog
 
-Offene Aufgaben, priorisiert. Aktualisiert: 2026-03-27.
+Offene Aufgaben, priorisiert. Aktualisiert: 2026-04-08.
 
 ---
 
@@ -85,6 +85,112 @@ Die Ingestion-Pipeline scannt und pseudonymisiert den `source`-Text (der embedde
 
 ---
 
+## Backlog — EU AI Act Compliance (August 2026)
+
+Anforderungen aus Art. 9–15 EU AI Act für High-Risk AI Systeme.
+Powerbrain ist selbst kein High-Risk-System, aber Deployer in regulierten Branchen
+(Finanz, Gesundheit, HR) brauchen diese Fähigkeiten von ihrer Context-Infrastruktur.
+
+### B-40: Tamper-Resistant Audit Logs (Art. 12 Record-Keeping)
+**Priorität:** Hoch
+**Aufwand:** ~2 Tage
+**EU AI Act:** Art. 12 — automatische, manipulationssichere Protokollierung
+
+Aktueller Stand: Audit-Log in PostgreSQL vorhanden (`init-db/001_schema.sql`),
+aber keine kryptographische Integritätssicherung.
+
+- [ ] Hash-Chain für Audit-Log-Einträge (SHA-256, jeder Eintrag referenziert Hash des Vorgängers)
+- [ ] Append-Only-Constraint auf Audit-Tabelle (kein UPDATE/DELETE via RLS)
+- [ ] Integritätsprüfung: MCP-Tool oder CLI-Befehl zum Verifizieren der Hash-Chain
+- [ ] Konfigurierbare Log-Retention mit Policy (`data.json`: `audit_retention_days`)
+- [ ] Export-Funktion für Audit-Logs (JSON/CSV) für externe Archivierung
+
+### B-41: Transparency Report / Model Card Endpoint (Art. 13 Transparency)
+**Priorität:** Hoch
+**Aufwand:** ~1.5 Tage
+**EU AI Act:** Art. 13 — verständliche Informationen über Systemverhalten für Deployer
+
+- [ ] `GET /transparency` Endpoint auf MCP-Server: maschinenlesbarer Report (JSON)
+  - System-Zweck und Einsatzgrenzen
+  - Verwendete Modelle (Embedding, Reranker, Summarization) mit Versionen
+  - Aktive OPA-Policies und Klassifizierungsstufen
+  - PII-Verarbeitungsstatus und Pseudonymisierungs-Methode
+  - Datenquellen und letzte Aktualisierung
+- [ ] MCP-Tool `get_system_info` für Agents
+- [ ] Versionierung des Reports (bei Config-Änderungen neuer Snapshot)
+
+### B-42: Human Oversight Controls (Art. 14 Human Oversight)
+**Priorität:** Hoch
+**Aufwand:** ~2–3 Tage
+**EU AI Act:** Art. 14 — menschliche Aufsicht zur Risikominimierung
+
+Powerbrain hat aktuell keinen Mechanismus für menschliche Intervention.
+
+- [ ] Approval-Queue: OPA-Policy kann Ergebnisse in `pending_review` setzen statt direkt auszuliefern
+  - Neue Klassifizierung `requires_approval` in `data.json`
+  - Deployer entscheidet per Policy, welche Daten/Aktionen Review brauchen
+- [ ] MCP-Tool `review_pending`: Anzeige + Approve/Reject von wartenden Ergebnissen
+- [ ] Kill-Switch: `POST /circuit-breaker` — deaktiviert alle Datenauslieferung sofort
+  - Persistenter State (überlebt Restart)
+  - Nur admin-Rolle
+  - Audit-Log-Eintrag bei Aktivierung/Deaktivierung
+- [ ] Rate-basierter Auto-Alert: bei ungewöhnlich hohem Zugriff auf `confidential`/`restricted` Daten
+
+### B-43: Data Quality Validation bei Ingestion (Art. 10 Data Governance)
+**Priorität:** Mittel
+**Aufwand:** ~1.5 Tage
+**EU AI Act:** Art. 10 — Daten müssen relevant, repräsentativ, fehlerfrei und vollständig sein
+
+- [ ] Schema-Validierung: Pflichtfelder pro `source_type` prüfen (JSON Schema)
+- [ ] Duplikaterkennung: Embedding-Similarity-Check gegen bestehende Dokumente (Threshold konfigurierbar)
+- [ ] Qualitäts-Score pro Dokument (Länge, Sprache erkannt, PII-Anteil, Encoding-Fehler)
+- [ ] Ingestion-Report: Zusammenfassung pro Batch (accepted/rejected/warnings)
+- [ ] OPA-Policy `pb.ingestion.quality_gate`: Mindest-Score konfigurierbar
+
+### B-44: Risk Management Documentation (Art. 9 Risk Management)
+**Priorität:** Mittel
+**Aufwand:** ~1 Tag
+**EU AI Act:** Art. 9 — dokumentiertes, fortlaufendes Risikomanagement über den gesamten Lebenszyklus
+
+- [ ] `docs/risk-management.md` — Template für Deployer:
+  - Identifizierte Risiken der Context-Pipeline (Halluzination durch falschen Kontext, PII-Leaks, Policy-Bypass)
+  - Mitigationsmaßnahmen (OPA-Policies, PII-Vault, Reranking-Quality)
+  - Residual-Risiken und empfohlene Deployer-Maßnahmen
+- [ ] Automatisierter Risk-Indikator auf `/health` Endpoint:
+  - OPA-Policy-Alter (stale policies = risk)
+  - PII-Scanner-Status (disabled = risk)
+  - Reranker-Verfügbarkeit (down = quality risk)
+  - Audit-Log-Integrität (Hash-Chain-Status)
+
+### B-45: Accuracy Monitoring und Drift Detection (Art. 15 Accuracy/Robustness)
+**Priorität:** Mittel
+**Aufwand:** ~2 Tage
+**EU AI Act:** Art. 15 — Genauigkeit, Robustheit und Cybersicherheit über den gesamten Lebenszyklus
+
+Aktueller Stand: `submit_feedback` + `get_eval_stats` vorhanden, aber kein systematisches Monitoring.
+
+- [ ] Automatische Qualitätsmetriken pro Zeitfenster (gleitend):
+  - Durchschnittlicher Feedback-Score
+  - Anteil Suchen ohne relevante Ergebnisse (empty results / low reranker scores)
+  - Reranker-Score-Verteilung (Drift-Indikator)
+- [ ] Alerting bei Qualitätsdrift: Prometheus Alert wenn avg_score unter Threshold fällt
+- [ ] Embedding-Drift-Check: Periodischer Vergleich neuer Embeddings gegen Referenz-Set
+- [ ] Dashboard-Panel in Grafana: Retrieval Quality über Zeit
+
+### B-46: Technical Documentation Generator (Art. 11 Annex IV)
+**Priorität:** Niedrig
+**Aufwand:** ~1.5 Tage
+**EU AI Act:** Art. 11 + Annex IV — detaillierte technische Dokumentation
+
+- [ ] CLI-Befehl / MCP-Tool `generate_compliance_doc`:
+  - Sammelt automatisch: aktive OPA-Policies, Modell-Versionen, Collection-Stats, PII-Config
+  - Generiert Annex-IV-konformes Template (Markdown/PDF)
+  - Abschnitte: Systemzweck, Datenquellen, Trainings-/Embedding-Modelle, Risiko-Assessment, Monitoring-Metriken
+- [ ] Versionierter Output in `docs/compliance/` mit Datum
+- [ ] Diff-Ansicht bei Änderungen (was hat sich seit letzter Version geändert)
+
+---
+
 ## Backlog — Technische Schulden
 
 ### B-20: PipelineStep-Mock in proxy.py aufräumen
@@ -93,17 +199,11 @@ Die Ingestion-Pipeline scannt und pseudonymisiert den `source`-Text (der embedde
 
 Der `except ImportError`-Fallback definiert einen eigenen `PipelineStep`, der vom Original in `shared/telemetry.py` divergieren kann.
 
-### B-21: Forgejo Workflows → internes Infra-Repo
-**Priorität:** Mittel (Pre-Public)
-**Aufwand:** ~0.5 Tag
+### B-21: ~~Forgejo Workflows → internes Infra-Repo~~
+**Erledigt** — `.forgejo/` bleibt im Repo (Coexistence Model). GitHub ignoriert das Verzeichnis.
 
-`.forgejo/workflows/` enthält interne Runner-Namen und Registry-URLs. Vor Open-Sourcing in internes Repo verschieben.
-
-### B-22: GitHub Actions CI (Pre-Public)
-**Priorität:** Mittel (Pre-Public)
-**Aufwand:** ~1 Tag
-
-Generische GitHub Actions als Ersatz für Forgejo-spezifische Workflows.
+### B-22: ~~GitHub Actions CI (Pre-Public)~~
+**Erledigt** — `.github/workflows/pr-validate.yml` mit 3 Jobs (unit-tests, opa-tests, docker-build).
 
 ---
 
