@@ -16,7 +16,7 @@ QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
 
 DEMO_DOC_ID = "search-first-mvp-doc"
-DEMO_CONTENT = "Search-first MVP smoke test document for the Wissensdatenbank MCP server."
+DEMO_CONTENT = "Search-first MVP smoke test document for the knowledge base MCP server."
 
 
 def request_json(method: str, url: str, payload: dict | None = None) -> dict:

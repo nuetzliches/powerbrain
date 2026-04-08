@@ -20,8 +20,8 @@
 **Step 1: Write the migration**
 
 ```sql
--- 010_api_keys.sql: API-Key-Authentifizierung
--- Speichert gehashte API-Keys mit Rollen-Mapping
+-- 010_api_keys.sql: API key authentication
+-- Stores hashed API keys with role mapping
 
 CREATE TABLE IF NOT EXISTS api_keys (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -263,7 +263,7 @@ AUTH_REQUIRED  = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
 Place after the `get_pg_pool()` function (after line 135):
 
 ```python
-# ── API-Key-Authentifizierung ────────────────────────────────
+# ── API key authentication ───────────────────────────────────
 
 class ApiKeyVerifier:
     """TokenVerifier implementation that validates API keys against PostgreSQL."""
@@ -337,7 +337,7 @@ if __name__ == "__main__":
         lifespan=lambda app: session_manager.run(),
     )
 
-    # ── Auth-Middleware (inside-out: last applied = outermost) ──
+    # ── Auth middleware (inside-out: last applied = outermost) ──
     verifier = ApiKeyVerifier()
     # AuthContextMiddleware: stores authenticated user in contextvars
     app = AuthContextMiddleware(app)
@@ -513,17 +513,17 @@ git commit -m "docs: update querying-knowledge-base skill for API key auth"
 Add a `RESOLVED` section for P1-1, similar to the existing resolved entries:
 
 ```markdown
-### ~~P1-1: Keine Authentifizierung — Rollen sind selbst-deklariert~~ — RESOLVED
+### ~~P1-1: No authentication — roles are self-declared~~ — RESOLVED
 
-**Status:** RESOLVED — API-Key-Authentifizierung implementiert. Jeder Agent
-benötigt einen `Authorization: Bearer kb_...` Header. Keys werden als SHA-256-Hash
-in der `api_keys`-Tabelle gespeichert und bilden auf eine feste Rolle
-(analyst/developer/admin) ab. `agent_id` und `agent_role` sind nicht mehr
-Tool-Parameter, sondern werden aus dem verifizierten Token abgeleitet.
-`AUTH_REQUIRED` Env-Var steuert ob Authentifizierung erzwungen wird.
+**Status:** RESOLVED — API key authentication implemented. Every agent
+requires an `Authorization: Bearer kb_...` header. Keys are stored as SHA-256
+hashes in the `api_keys` table and map to a fixed role
+(analyst/developer/admin). `agent_id` and `agent_role` are no longer
+tool parameters, but are derived from the verified token.
+The `AUTH_REQUIRED` env var controls whether authentication is enforced.
 ```
 
-Also update the Phase 2 section to remove "Authentifizierung" from the list.
+Also update the Phase 2 section to remove "Authentication" from the list.
 
 **Step 2: Commit**
 

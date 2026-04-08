@@ -1,229 +1,229 @@
 # Powerbrain Backlog
 
-Offene Aufgaben, priorisiert. Aktualisiert: 2026-04-08.
+Open tasks, prioritized. Last updated: 2026-04-08.
 
 ---
 
 ## Backlog — Policy Management Roadmap
 
 ### B-10: OPAL Integration (Option B)
-**Priorität:** Niedrig (nach B-01)
-**Aufwand:** ~2–3 Tage
+**Priority:** Low (after B-01)
+**Effort:** ~2–3 days
 
-OPAL für Realtime Policy+Data Sync statt OPA Bundle-Polling.
+OPAL for realtime policy + data sync instead of OPA bundle polling.
 
-- [ ] OPAL Server + Client als Docker-Services
-- [ ] Git-Watcher auf Forgejo `pb-policies` Repo
-- [ ] WebSocket-basierter Push bei Policy-Änderungen
+- [ ] OPAL server + client as Docker services
+- [ ] Git watcher on Forgejo `pb-policies` repo
+- [ ] WebSocket-based push on policy changes
 
-### B-11: Policy Management Web-UI (Option C)
-**Priorität:** Niedrig (nach B-01, optional nach B-10)
-**Aufwand:** ~4–5 Tage
+### B-11: Policy Management Web UI (Option C)
+**Priority:** Low (after B-01, optional after B-10)
+**Effort:** ~4–5 days
 
-Leichtgewichtiges Web-Frontend für Policy-Data-Verwaltung.
+Lightweight web frontend for policy-data management.
 
-- [ ] Policy-Data Editor (JSON-Formulare)
-- [ ] JSON-Schema-Validierung im Frontend
-- [ ] OPA Dry-Run / Policy Preview
-- [ ] Commit nach Forgejo (Versioning + Audit Trail)
-- [ ] Rollen-basierter Zugriff (Admin only)
+- [ ] Policy-data editor (JSON forms)
+- [ ] JSON Schema validation in the frontend
+- [ ] OPA dry-run / policy preview
+- [ ] Commit to Forgejo (versioning + audit trail)
+- [ ] Role-based access (admin only)
 
-### B-12: MCP-Tool `manage_policies` (CRUD)
-**Priorität:** Mittel
-**Aufwand:** ~1 Tag
+### B-12: MCP tool `manage_policies` (CRUD)
+**Priority:** Medium
+**Effort:** ~1 day
 
-MCP-Tool zum Lesen/Schreiben von Policy-Daten via OPA Data API.
+MCP tool for reading/writing policy data via the OPA Data API.
 
-- [ ] `manage_policies` Tool: read/update policy data sections
-- [ ] JSON-Schema-Validierung vor Schreibzugriff
-- [ ] OPA-Admin-only Zugriffskontrolle
+- [ ] `manage_policies` tool: read/update policy data sections
+- [ ] JSON Schema validation before write access
+- [ ] OPA admin-only access control
 
 ---
 
 ## Backlog — Reranking
 
-### B-13: boost_corrections — Korrektur-Dokumente im Reranking bevorzugen
-**Priorität:** Niedrig
-**Aufwand:** ~0.5 Tag
+### B-13: boost_corrections — prefer correction documents in reranking
+**Priority:** Low
+**Effort:** ~0.5 day
 
-timecockpit-mcp speichert benutzerkorrigierte Zeiteintrags-Beschreibungen als Dokumente mit
-`metadata.isCorrection: true` in der KB (source_type `timesheet`). Diese repräsentieren
-validierte, qualitativ hochwertige Texte und sollten bei Ähnlichkeitssuchen bevorzugt werden.
+timecockpit-mcp stores user-corrected timesheet descriptions as documents with
+`metadata.isCorrection: true` in the KB (source_type `timesheet`). These represent
+validated, high-quality texts and should be preferred in similarity searches.
 
-Neuer Reranking-Parameter `boost_corrections` (analog zu `boost_same_author`):
-- Heuristic Boost auf Dokumente mit `metadata.isCorrection == true`
-- Empfohlener Default-Boost: 0.1–0.2
-- Konfigurierbar über `rerank_options` im `search_knowledge`-Aufruf
+New reranking parameter `boost_corrections` (analogous to `boost_same_author`):
+- Heuristic boost on documents with `metadata.isCorrection == true`
+- Recommended default boost: 0.1–0.2
+- Configurable via `rerank_options` in the `search_knowledge` call
 
-- [ ] `boost_corrections` Parameter in Reranking-Pipeline implementieren
-- [ ] Metadata-Field `isCorrection` in Scoring berücksichtigen
-- [ ] Tests: Korrektur-Dokument wird höher gerankt als identischer Text ohne Flag
+- [ ] Implement `boost_corrections` parameter in the reranking pipeline
+- [ ] Consider `isCorrection` metadata field in scoring
+- [ ] Tests: correction document is ranked higher than identical text without the flag
 
 ---
 
-## Backlog — PII & Datenschutz
+## Backlog — PII & Data Protection
 
-### B-30: graph_query liefert ungescannte Klarnamen
-**Priorität:** Mittel
-**Aufwand:** ~0.5–1 Tag
+### B-30: graph_query returns unscanned cleartext names
+**Priority:** Medium
+**Effort:** ~0.5–1 day
 
-`graph_query` liefert Knowledge-Graph-Knoten aus Apache AGE, die beim Import mit Klarnamen angelegt wurden (User-Nodes mit `firstname`, `lastname`, `email`). Diese Daten wurden nicht durch die PII-Ingestion-Pipeline pseudonymisiert. Powerbrain ist als `pii_status: scanned` deklariert, was für `graph_query` streng genommen nicht zutrifft.
+`graph_query` returns knowledge graph nodes from Apache AGE that were created with cleartext names at import time (user nodes with `firstname`, `lastname`, `email`). This data was not pseudonymized by the PII ingestion pipeline. Powerbrain is declared as `pii_status: scanned`, which strictly speaking does not apply to `graph_query`.
 
-**Optionen:**
-- [ ] A: Powerbrain auf `pii_status: mixed` umstellen und `graph_query` als unscanned deklarieren
-- [ ] B: Graph-Knoten-Properties beim Import pseudonymisieren (analog zu Qdrant Dual Storage)
-- [ ] C: `graph_query` Results im MCP-Server pseudonymisieren bevor sie zurückgegeben werden
+**Options:**
+- [ ] A: Change Powerbrain to `pii_status: mixed` and declare `graph_query` as unscanned
+- [ ] B: Pseudonymize graph node properties at import time (analogous to Qdrant dual storage)
+- [ ] C: Pseudonymize `graph_query` results in the MCP server before returning them
 
-### B-31: Ingestion pseudonymisiert Metadaten nicht
-**Priorität:** Mittel
-**Aufwand:** ~1 Tag
+### B-31: Ingestion does not pseudonymize metadata
+**Priority:** Medium
+**Effort:** ~1 day
 
-Die Ingestion-Pipeline scannt und pseudonymisiert den `source`-Text (der embedded wird), aber das `metadata`-Objekt bleibt unverändert. Import-Scripts schreiben dort Klarnamen (`userName`, `customerName`, `authorEmail`). Diese Metadaten landen ungescannt in Qdrant-Payload und PostgreSQL und werden bei `search_knowledge`-Results mitgeliefert.
+The ingestion pipeline scans and pseudonymizes the `source` text (which is embedded), but the `metadata` object remains unchanged. Import scripts write cleartext names there (`userName`, `customerName`, `authorEmail`). This metadata ends up unscanned in the Qdrant payload and PostgreSQL and is returned with `search_knowledge` results.
 
-- [ ] PII-Scan auf konfigurierbare Metadaten-Felder ausweiten
-- [ ] Oder: Metadaten-Felder mit PII bei der Ausgabe filtern (OPA `fields_to_redact`)
+- [ ] Extend PII scan to configurable metadata fields
+- [ ] Or: filter metadata fields containing PII on output (OPA `fields_to_redact`)
 
 ---
 
 ## Backlog — EU AI Act Compliance (August 2026)
 
-Anforderungen aus Art. 9–15 EU AI Act für High-Risk AI Systeme.
-Powerbrain ist selbst kein High-Risk-System, aber Deployer in regulierten Branchen
-(Finanz, Gesundheit, HR) brauchen diese Fähigkeiten von ihrer Context-Infrastruktur.
+Requirements from Art. 9–15 EU AI Act for high-risk AI systems.
+Powerbrain itself is not a high-risk system, but deployers in regulated industries
+(finance, healthcare, HR) need these capabilities from their context infrastructure.
 
 ### B-40: Tamper-Resistant Audit Logs (Art. 12 Record-Keeping)
-**Priorität:** Hoch
-**Aufwand:** ~2 Tage
-**EU AI Act:** Art. 12 — automatische, manipulationssichere Protokollierung
+**Priority:** High
+**Effort:** ~2 days
+**EU AI Act:** Art. 12 — automatic, tamper-resistant logging
 
-Aktueller Stand: Audit-Log in PostgreSQL vorhanden (`init-db/001_schema.sql`),
-aber keine kryptographische Integritätssicherung.
+Current state: audit log in PostgreSQL exists (`init-db/001_schema.sql`),
+but no cryptographic integrity protection.
 
-- [ ] Hash-Chain für Audit-Log-Einträge (SHA-256, jeder Eintrag referenziert Hash des Vorgängers)
-- [ ] Append-Only-Constraint auf Audit-Tabelle (kein UPDATE/DELETE via RLS)
-- [ ] Integritätsprüfung: MCP-Tool oder CLI-Befehl zum Verifizieren der Hash-Chain
-- [ ] Konfigurierbare Log-Retention mit Policy (`data.json`: `audit_retention_days`)
-- [ ] Export-Funktion für Audit-Logs (JSON/CSV) für externe Archivierung
+- [ ] Hash chain for audit log entries (SHA-256, each entry references the previous entry's hash)
+- [ ] Append-only constraint on the audit table (no UPDATE/DELETE via RLS)
+- [ ] Integrity verification: MCP tool or CLI command to verify the hash chain
+- [ ] Configurable log retention with policy (`data.json`: `audit_retention_days`)
+- [ ] Export function for audit logs (JSON/CSV) for external archival
 
 ### B-41: Transparency Report / Model Card Endpoint (Art. 13 Transparency)
-**Priorität:** Hoch
-**Aufwand:** ~1.5 Tage
-**EU AI Act:** Art. 13 — verständliche Informationen über Systemverhalten für Deployer
+**Priority:** High
+**Effort:** ~1.5 days
+**EU AI Act:** Art. 13 — understandable information about system behavior for deployers
 
-- [ ] `GET /transparency` Endpoint auf MCP-Server: maschinenlesbarer Report (JSON)
-  - System-Zweck und Einsatzgrenzen
-  - Verwendete Modelle (Embedding, Reranker, Summarization) mit Versionen
-  - Aktive OPA-Policies und Klassifizierungsstufen
-  - PII-Verarbeitungsstatus und Pseudonymisierungs-Methode
-  - Datenquellen und letzte Aktualisierung
-- [ ] MCP-Tool `get_system_info` für Agents
-- [ ] Versionierung des Reports (bei Config-Änderungen neuer Snapshot)
+- [ ] `GET /transparency` endpoint on the MCP server: machine-readable report (JSON)
+  - System purpose and operational limits
+  - Models in use (embedding, reranker, summarization) with versions
+  - Active OPA policies and classification levels
+  - PII processing status and pseudonymization method
+  - Data sources and last update
+- [ ] MCP tool `get_system_info` for agents
+- [ ] Versioning of the report (new snapshot on config changes)
 
 ### B-42: Human Oversight Controls (Art. 14 Human Oversight)
-**Priorität:** Hoch
-**Aufwand:** ~2–3 Tage
-**EU AI Act:** Art. 14 — menschliche Aufsicht zur Risikominimierung
+**Priority:** High
+**Effort:** ~2–3 days
+**EU AI Act:** Art. 14 — human oversight for risk minimization
 
-Powerbrain hat aktuell keinen Mechanismus für menschliche Intervention.
+Powerbrain currently has no mechanism for human intervention.
 
-- [ ] Approval-Queue: OPA-Policy kann Ergebnisse in `pending_review` setzen statt direkt auszuliefern
-  - Neue Klassifizierung `requires_approval` in `data.json`
-  - Deployer entscheidet per Policy, welche Daten/Aktionen Review brauchen
-- [ ] MCP-Tool `review_pending`: Anzeige + Approve/Reject von wartenden Ergebnissen
-- [ ] Kill-Switch: `POST /circuit-breaker` — deaktiviert alle Datenauslieferung sofort
-  - Persistenter State (überlebt Restart)
-  - Nur admin-Rolle
-  - Audit-Log-Eintrag bei Aktivierung/Deaktivierung
-- [ ] Rate-basierter Auto-Alert: bei ungewöhnlich hohem Zugriff auf `confidential`/`restricted` Daten
+- [ ] Approval queue: OPA policy can set results to `pending_review` instead of delivering directly
+  - New classification `requires_approval` in `data.json`
+  - Deployer decides via policy which data/actions need review
+- [ ] MCP tool `review_pending`: display + approve/reject of pending results
+- [ ] Kill switch: `POST /circuit-breaker` — deactivates all data delivery immediately
+  - Persistent state (survives restart)
+  - Admin role only
+  - Audit log entry on activation/deactivation
+- [ ] Rate-based auto alert: on unusually high access to `confidential`/`restricted` data
 
-### B-43: Data Quality Validation bei Ingestion (Art. 10 Data Governance)
-**Priorität:** Mittel
-**Aufwand:** ~1.5 Tage
-**EU AI Act:** Art. 10 — Daten müssen relevant, repräsentativ, fehlerfrei und vollständig sein
+### B-43: Data Quality Validation at Ingestion (Art. 10 Data Governance)
+**Priority:** Medium
+**Effort:** ~1.5 days
+**EU AI Act:** Art. 10 — data must be relevant, representative, error-free, and complete
 
-- [ ] Schema-Validierung: Pflichtfelder pro `source_type` prüfen (JSON Schema)
-- [ ] Duplikaterkennung: Embedding-Similarity-Check gegen bestehende Dokumente (Threshold konfigurierbar)
-- [ ] Qualitäts-Score pro Dokument (Länge, Sprache erkannt, PII-Anteil, Encoding-Fehler)
-- [ ] Ingestion-Report: Zusammenfassung pro Batch (accepted/rejected/warnings)
-- [ ] OPA-Policy `pb.ingestion.quality_gate`: Mindest-Score konfigurierbar
+- [ ] Schema validation: check required fields per `source_type` (JSON Schema)
+- [ ] Duplicate detection: embedding similarity check against existing documents (configurable threshold)
+- [ ] Quality score per document (length, language detected, PII ratio, encoding errors)
+- [ ] Ingestion report: summary per batch (accepted/rejected/warnings)
+- [ ] OPA policy `pb.ingestion.quality_gate`: configurable minimum score
 
 ### B-44: Risk Management Documentation (Art. 9 Risk Management)
-**Priorität:** Mittel
-**Aufwand:** ~1 Tag
-**EU AI Act:** Art. 9 — dokumentiertes, fortlaufendes Risikomanagement über den gesamten Lebenszyklus
+**Priority:** Medium
+**Effort:** ~1 day
+**EU AI Act:** Art. 9 — documented, ongoing risk management across the entire lifecycle
 
-- [ ] `docs/risk-management.md` — Template für Deployer:
-  - Identifizierte Risiken der Context-Pipeline (Halluzination durch falschen Kontext, PII-Leaks, Policy-Bypass)
-  - Mitigationsmaßnahmen (OPA-Policies, PII-Vault, Reranking-Quality)
-  - Residual-Risiken und empfohlene Deployer-Maßnahmen
-- [ ] Automatisierter Risk-Indikator auf `/health` Endpoint:
-  - OPA-Policy-Alter (stale policies = risk)
-  - PII-Scanner-Status (disabled = risk)
-  - Reranker-Verfügbarkeit (down = quality risk)
-  - Audit-Log-Integrität (Hash-Chain-Status)
+- [ ] `docs/risk-management.md` — template for deployers:
+  - Identified risks of the context pipeline (hallucination from wrong context, PII leaks, policy bypass)
+  - Mitigation measures (OPA policies, PII vault, reranking quality)
+  - Residual risks and recommended deployer measures
+- [ ] Automated risk indicator on `/health` endpoint:
+  - OPA policy age (stale policies = risk)
+  - PII scanner status (disabled = risk)
+  - Reranker availability (down = quality risk)
+  - Audit log integrity (hash chain status)
 
-### B-45: Accuracy Monitoring und Drift Detection (Art. 15 Accuracy/Robustness)
-**Priorität:** Mittel
-**Aufwand:** ~2 Tage
-**EU AI Act:** Art. 15 — Genauigkeit, Robustheit und Cybersicherheit über den gesamten Lebenszyklus
+### B-45: Accuracy Monitoring and Drift Detection (Art. 15 Accuracy/Robustness)
+**Priority:** Medium
+**Effort:** ~2 days
+**EU AI Act:** Art. 15 — accuracy, robustness, and cybersecurity across the entire lifecycle
 
-Aktueller Stand: `submit_feedback` + `get_eval_stats` vorhanden, aber kein systematisches Monitoring.
+Current state: `submit_feedback` + `get_eval_stats` exist, but no systematic monitoring.
 
-- [ ] Automatische Qualitätsmetriken pro Zeitfenster (gleitend):
-  - Durchschnittlicher Feedback-Score
-  - Anteil Suchen ohne relevante Ergebnisse (empty results / low reranker scores)
-  - Reranker-Score-Verteilung (Drift-Indikator)
-- [ ] Alerting bei Qualitätsdrift: Prometheus Alert wenn avg_score unter Threshold fällt
-- [ ] Embedding-Drift-Check: Periodischer Vergleich neuer Embeddings gegen Referenz-Set
-- [ ] Dashboard-Panel in Grafana: Retrieval Quality über Zeit
+- [ ] Automated quality metrics per time window (sliding):
+  - Average feedback score
+  - Share of searches without relevant results (empty results / low reranker scores)
+  - Reranker score distribution (drift indicator)
+- [ ] Alerting on quality drift: Prometheus alert when avg_score drops below threshold
+- [ ] Embedding drift check: periodic comparison of new embeddings against a reference set
+- [ ] Dashboard panel in Grafana: retrieval quality over time
 
 ### B-46: Technical Documentation Generator (Art. 11 Annex IV)
-**Priorität:** Niedrig
-**Aufwand:** ~1.5 Tage
-**EU AI Act:** Art. 11 + Annex IV — detaillierte technische Dokumentation
+**Priority:** Low
+**Effort:** ~1.5 days
+**EU AI Act:** Art. 11 + Annex IV — detailed technical documentation
 
-- [ ] CLI-Befehl / MCP-Tool `generate_compliance_doc`:
-  - Sammelt automatisch: aktive OPA-Policies, Modell-Versionen, Collection-Stats, PII-Config
-  - Generiert Annex-IV-konformes Template (Markdown/PDF)
-  - Abschnitte: Systemzweck, Datenquellen, Trainings-/Embedding-Modelle, Risiko-Assessment, Monitoring-Metriken
-- [ ] Versionierter Output in `docs/compliance/` mit Datum
-- [ ] Diff-Ansicht bei Änderungen (was hat sich seit letzter Version geändert)
-
----
-
-## Backlog — Technische Schulden
-
-### B-20: PipelineStep-Mock in proxy.py aufräumen
-**Priorität:** Niedrig
-**Aufwand:** ~0.5 Tag
-
-Der `except ImportError`-Fallback definiert einen eigenen `PipelineStep`, der vom Original in `shared/telemetry.py` divergieren kann.
-
-### B-21: ~~Forgejo Workflows → internes Infra-Repo~~
-**Erledigt** — `.forgejo/` bleibt im Repo (Coexistence Model). GitHub ignoriert das Verzeichnis.
-
-### B-22: ~~GitHub Actions CI (Pre-Public)~~
-**Erledigt** — `.github/workflows/pr-validate.yml` mit 3 Jobs (unit-tests, opa-tests, docker-build).
+- [ ] CLI command / MCP tool `generate_compliance_doc`:
+  - Automatically collects: active OPA policies, model versions, collection stats, PII config
+  - Generates Annex-IV-compliant template (Markdown/PDF)
+  - Sections: system purpose, data sources, training/embedding models, risk assessment, monitoring metrics
+- [ ] Versioned output in `docs/compliance/` with date
+- [ ] Diff view on changes (what has changed since the last version)
 
 ---
 
-## Erledigt
+## Backlog — Technical Debt
 
-### ✅ B-01: OPA Policy-Data Extraktion (2026-03-27)
-Alle Business-Daten aus 5 Rego-Dateien in `opa-policies/pb/data.json` extrahiert.
-Rego enthält nur noch Logik. JSON-Schema-Validierung. 85 OPA-Tests (vorher: 33).
+### B-20: Clean up PipelineStep mock in proxy.py
+**Priority:** Low
+**Effort:** ~0.5 day
 
-### ✅ B-02: E2E Smoke Tests für pb-proxy (2026-03-27)
-`tests/integration/e2e/test_proxy_smoke.py` — Auth, OPA-Policy, Tool-Injection, Health/Models/Metrics.
+The `except ImportError` fallback defines its own `PipelineStep`, which can diverge from the original in `shared/telemetry.py`.
+
+### B-21: ~~Forgejo Workflows → internal infra repo~~
+**Done** — `.forgejo/` stays in the repo (coexistence model). GitHub ignores the directory.
+
+### B-22: ~~GitHub Actions CI (pre-public)~~
+**Done** — `.github/workflows/pr-validate.yml` with 3 jobs (unit-tests, opa-tests, docker-build).
+
+---
+
+## Done
+
+### ✅ B-01: OPA Policy-Data Extraction (2026-03-27)
+All business data extracted from 5 Rego files into `opa-policies/pb/data.json`.
+Rego now contains logic only. JSON Schema validation. 85 OPA tests (previously: 33).
+
+### ✅ B-02: E2E Smoke Tests for pb-proxy (2026-03-27)
+`tests/integration/e2e/test_proxy_smoke.py` — auth, OPA policy, tool injection, health/models/metrics.
 
 ### ✅ B-23: Secrets/URLs Audit (2026-03-27)
-`build-images.sh` parameterisiert (REGISTRY als Required-Var), Doku-Pfade bereinigt, `.env.example` verifiziert.
+`build-images.sh` parameterized (REGISTRY as required var), doc paths cleaned up, `.env.example` verified.
 
-### ✅ B-24: LICENSE-Datei (2026-03-27)
-Apache License 2.0 hinzugefügt.
+### ✅ B-24: LICENSE file (2026-03-27)
+Apache License 2.0 added.
 
-### ✅ B-03: Reranker Provider Integrationstest (2026-03-27)
-`mcp-server/tests/test_reranker_integration.py` — 7 Tests für Provider-Wechsel (powerbrain/tei/cohere), Graceful Fallback bei Timeout/Connection-Error/500.
+### ✅ B-03: Reranker Provider Integration Test (2026-03-27)
+`mcp-server/tests/test_reranker_integration.py` — 7 tests for provider switching (powerbrain/tei/cohere), graceful fallback on timeout/connection error/500.
 
-Siehe auch `docs/KNOWN_ISSUES.md` für alle gelösten Issues (Sprints 1–5).
-Siehe `docs/plans/` für abgeschlossene Feature-Implementierungen.
+See also `docs/KNOWN_ISSUES.md` for all resolved issues (sprints 1–5).
+See `docs/plans/` for completed feature implementations.

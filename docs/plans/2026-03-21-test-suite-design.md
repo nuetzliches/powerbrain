@@ -1,25 +1,25 @@
-# Test-Suite Design — Echte Tests für Powerbrain
+# Test Suite Design — Real Tests for Powerbrain
 
 > **Approved:** 2026-03-21
 
-## Ziel
+## Goal
 
-Die 21 strukturellen "Source-String-Check"-Tests durch echte Unit- und Integration-Tests ersetzen. Alle 4 Services (mcp-server, ingestion, reranker, evaluation) abdecken mit pytest, mocked I/O und pure-function Tests.
+Replace the 21 structural "source-string-check" tests with real unit and integration tests. Cover all 4 services (mcp-server, ingestion, reranker, evaluation) with pytest, mocked I/O, and pure-function tests.
 
-## Entscheidungen
+## Decisions
 
-| Frage | Entscheidung | Grund |
-|-------|-------------|-------|
-| Strukturelle Tests | Löschen, durch echte Tests ersetzen | Prüfen keine Logik, nur ob Strings im Source vorkommen |
-| Test-Scope | Alles: Pure Functions + Mocked I/O + Integration | Vollständige Abdeckung von Anfang an |
-| Framework | pytest + pytest-asyncio + pytest-mock + respx | Industriestandard, async-native, bestehende Tests nutzen bereits pytest |
-| Struktur | Tests pro Service + zentrale Integration-Tests | Spiegelt Docker-Architektur, triviale Imports, kein Package-Umbau |
+| Question | Decision | Reason |
+|----------|----------|--------|
+| Structural tests | Delete, replace with real tests | They don't verify any logic, only check whether strings appear in the source |
+| Test scope | Everything: pure functions + mocked I/O + integration | Full coverage from the start |
+| Framework | pytest + pytest-asyncio + pytest-mock + respx | Industry standard, async-native, existing tests already use pytest |
+| Structure | Tests per service + central integration tests | Mirrors Docker architecture, trivial imports, no package restructuring |
 
-## Verzeichnisstruktur
+## Directory structure
 
 ```
-pyproject.toml                         # pytest-Konfiguration, Markers, testpaths
-requirements-dev.txt                   # Test-Dependencies
+pyproject.toml                         # pytest configuration, markers, testpaths
+requirements-dev.txt                   # Test dependencies
 
 mcp-server/tests/
   conftest.py                          # Fixtures: mock httpx (respx), mock asyncpg pool
@@ -28,9 +28,9 @@ mcp-server/tests/
   test_rate_limiter.py                 # server: TokenBucket
   test_embed_text.py                   # server: embed_text (mocked Ollama)
   test_opa_policy.py                   # server: check_opa_policy, filter_by_policy (mocked OPA)
-  test_rerank.py                       # server: rerank_results inkl. Fallback (mocked Reranker)
+  test_rerank.py                       # server: rerank_results incl. fallback (mocked Reranker)
   test_auth.py                         # server: ApiKeyVerifier (mocked asyncpg)
-  test_log_access.py                   # server: log_access inkl. PII-Scan-Fallback
+  test_log_access.py                   # server: log_access incl. PII scan fallback
   test_graph_crud.py                   # graph_service: create/find/delete node, relationships (mocked pool)
 
 ingestion/tests/
@@ -38,7 +38,7 @@ ingestion/tests/
   test_chunk_text.py                   # ingestion_api: chunk_text (pure)
   test_pii_scanner.py                  # pii_scanner: scan/mask/pseudonymize (mocked Presidio)
   test_opa_privacy.py                  # ingestion_api: check_opa_privacy (mocked OPA)
-  test_ingest_pipeline.py              # ingestion_api: ingest_text_chunks (alle Deps gemockt)
+  test_ingest_pipeline.py              # ingestion_api: ingest_text_chunks (all deps mocked)
 
 reranker/tests/
   conftest.py                          # Fixture: mock CrossEncoder model
@@ -50,13 +50,13 @@ evaluation/tests/
   test_metrics.py                      # run_eval: precision/recall/MRR/keyword_coverage (pure)
   test_search_with_opa.py              # run_eval: search + check_opa_access (mocked)
 
-tests/integration/                     # Cross-Service (bestehende Tests bleiben)
+tests/integration/                     # Cross-service (existing tests stay)
   conftest.py
-  test_auth.py                         # bestehend
-  test_vault_integration.py            # bestehend
+  test_auth.py                         # existing
+  test_vault_integration.py            # existing
 ```
 
-Alte strukturelle Testdateien im Root `tests/` werden gelöscht.
+Old structural test files in the root `tests/` directory are deleted.
 
 ## Dependencies (requirements-dev.txt)
 
@@ -68,7 +68,7 @@ respx>=0.22
 coverage>=7.0
 ```
 
-## pytest-Konfiguration (pyproject.toml)
+## pytest configuration (pyproject.toml)
 
 ```toml
 [tool.pytest.ini_options]
@@ -85,11 +85,11 @@ markers = [
 ]
 ```
 
-## Fixture-Strategie
+## Fixture strategy
 
 ### mock_pg_pool (mcp-server, ingestion)
 
-AsyncMock der asyncpg.Pool-Schnittstelle. Return-Werte pro Test konfigurierbar via `pool.fetchrow.return_value = {...}`.
+AsyncMock of the asyncpg.Pool interface. Return values configurable per test via `pool.fetchrow.return_value = {...}`.
 
 ```python
 @pytest.fixture
@@ -105,7 +105,7 @@ def mock_pg_pool():
 
 ### mock_http (mcp-server, ingestion, evaluation)
 
-respx-Router für httpx-Requests. Deklaratives Mocking ohne monkeypatching.
+respx router for httpx requests. Declarative mocking without monkeypatching.
 
 ```python
 @pytest.fixture
@@ -116,47 +116,47 @@ def mock_http():
 
 ### mock_qdrant (mcp-server, ingestion)
 
-AsyncMock des QdrantClient mit konfigurierbaren Search-Results.
+AsyncMock of the QdrantClient with configurable search results.
 
-## Testplan nach Priorität
+## Test plan by priority
 
-| Prio | Datei | Modul | Was wird getestet | Typ |
-|------|-------|-------|-------------------|-----|
-| 1 | `test_validate_identifier` | graph_service | SQL/Cypher-Injection-Prevention: valid identifiers, injection payloads, edge cases | Pure |
-| 2 | `test_token_validation` | server | HMAC-Validierung, Ablauf, ungültige Tokens, redact_fields mit Entity-Offsets | Pure |
-| 3 | `test_rate_limiter` | server | TokenBucket consume/refill, Burst, Concurrency | Pure |
-| 4 | `test_metrics` | run_eval | precision_at_k, recall_at_k, MRR, keyword_coverage: korrekte Berechnung, Edge Cases (leer, keine Treffer) | Pure |
-| 5 | `test_chunk_text` | ingestion_api | Chunking mit Overlap, kurze Texte, exakte Grenzen | Pure |
-| 6 | `test_embed_text` | server | Ollama-Aufruf, Retry bei ConnectError/Timeout (tenacity), korrektes Response-Parsing | Mocked |
-| 7 | `test_opa_policy` | server | OPA allow/deny, Fail-closed bei Fehler, filter_by_policy mit asyncio.gather | Mocked |
-| 8 | `test_rerank` | server | Reranker-Aufruf, Score-Sortierung, Graceful Fallback bei Fehler | Mocked |
-| 9 | `test_auth` | server | API-Key-Verifikation, Rollen-Mapping, ungültige Keys, Rate-Limit pro Agent | Mocked |
-| 10 | `test_graph_crud` | graph_service | Cypher-Generierung, AGE agtype-Parsing, Fehlerbehandlung | Mocked |
-| 11 | `test_pii_scanner` | pii_scanner | Scan/Mask/Pseudonymize, deterministisches Hashing, Multi-Entity | Mocked |
-| 12 | `test_rerank_endpoint` | reranker/service | FastAPI /rerank: Sortierung, top_n, leere Docs, max_batch | Mocked |
-| 13 | `test_log_access` | server | Audit-Log-Insert, PII-Scan-Fallback bei Fehler | Mocked |
-| 14 | `test_ingest_pipeline` | ingestion_api | Full Flow: chunk -> scan -> OPA -> embed -> store (alle Deps gemockt) | Mocked |
-| 15 | `test_search_with_opa` | run_eval | Eval-Search mit OPA-Filter, Cache-Verhalten | Mocked |
+| Prio | File | Module | What is tested | Type |
+|------|------|--------|----------------|------|
+| 1 | `test_validate_identifier` | graph_service | SQL/Cypher injection prevention: valid identifiers, injection payloads, edge cases | Pure |
+| 2 | `test_token_validation` | server | HMAC validation, expiry, invalid tokens, redact_fields with entity offsets | Pure |
+| 3 | `test_rate_limiter` | server | TokenBucket consume/refill, burst, concurrency | Pure |
+| 4 | `test_metrics` | run_eval | precision_at_k, recall_at_k, MRR, keyword_coverage: correct calculation, edge cases (empty, no hits) | Pure |
+| 5 | `test_chunk_text` | ingestion_api | Chunking with overlap, short texts, exact boundaries | Pure |
+| 6 | `test_embed_text` | server | Ollama call, retry on ConnectError/Timeout (tenacity), correct response parsing | Mocked |
+| 7 | `test_opa_policy` | server | OPA allow/deny, fail-closed on error, filter_by_policy with asyncio.gather | Mocked |
+| 8 | `test_rerank` | server | Reranker call, score sorting, graceful fallback on error | Mocked |
+| 9 | `test_auth` | server | API key verification, role mapping, invalid keys, rate limit per agent | Mocked |
+| 10 | `test_graph_crud` | graph_service | Cypher generation, AGE agtype parsing, error handling | Mocked |
+| 11 | `test_pii_scanner` | pii_scanner | Scan/mask/pseudonymize, deterministic hashing, multi-entity | Mocked |
+| 12 | `test_rerank_endpoint` | reranker/service | FastAPI /rerank: sorting, top_n, empty docs, max_batch | Mocked |
+| 13 | `test_log_access` | server | Audit log insert, PII scan fallback on error | Mocked |
+| 14 | `test_ingest_pipeline` | ingestion_api | Full flow: chunk -> scan -> OPA -> embed -> store (all deps mocked) | Mocked |
+| 15 | `test_search_with_opa` | run_eval | Eval search with OPA filter, cache behavior | Mocked |
 
-## Ausführung
+## Execution
 
 ```bash
-# Alle Unit-Tests (kein laufender Service nötig)
+# All unit tests (no running service needed)
 pytest -m "not integration" -v
 
-# Nur einen Service testen
+# Test a single service only
 pytest mcp-server/tests/ -v
 
-# Mit Coverage
+# With coverage
 pytest --cov=mcp-server --cov=ingestion --cov=reranker --cov=evaluation -m "not integration"
 
-# Integration-Tests (Services müssen laufen)
+# Integration tests (services must be running)
 RUN_INTEGRATION_TESTS=1 pytest tests/integration/ -v
 ```
 
-## Was gelöscht wird
+## What gets deleted
 
-21 strukturelle Testdateien im Root `tests/`:
+21 structural test files in the root `tests/`:
 - test_agtype_parsing.py, test_art17_vault_deletion.py, test_audit_pii_protection.py
 - test_eval_opa_filter.py, test_find_path_fallback.py, test_graph_sync_log.py
 - test_ingestion_cleanup.py, test_ingestion_dual_storage.py, test_injection_prevention.py
@@ -167,4 +167,4 @@ RUN_INTEGRATION_TESTS=1 pytest tests/integration/ -v
 - test_search_first_mvp_docs.py, test_search_first_mvp_scripts.py
 - test_search_first_mvp_structure.py
 
-Behalten werden: `tests/integration/test_auth.py`, `tests/integration/test_vault_integration.py` (verschoben aus tests/).
+Kept: `tests/integration/test_auth.py`, `tests/integration/test_vault_integration.py` (moved from tests/).

@@ -1,9 +1,9 @@
 -- ============================================================
---  Baustein 3: Evaluation + Feedback-Loop
---  Tabellen für Suchergebnis-Feedback und Offline-Evaluation
+--  Building block 3: evaluation + feedback loop
+--  Tables for search-result feedback and offline evaluation
 -- ============================================================
 
--- Agenten-Feedback zu Suchergebnissen
+-- Agent feedback on search results
 CREATE TABLE search_feedback (
     id              BIGSERIAL PRIMARY KEY,
     query           TEXT NOT NULL,
@@ -11,10 +11,10 @@ CREATE TABLE search_feedback (
     rating          INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
     agent_id        VARCHAR(100) NOT NULL,
     comment         TEXT,
-    relevant_ids    TEXT[],          -- Vom Agenten als hilfreich markiert
-    irrelevant_ids  TEXT[],          -- Vom Agenten als irrelevant markiert
+    relevant_ids    TEXT[],          -- Marked as helpful by the agent
+    irrelevant_ids  TEXT[],          -- Marked as irrelevant by the agent
     collection      VARCHAR(100),
-    rerank_scores   JSONB,           -- Rerank-Scores zum Zeitpunkt des Feedbacks
+    rerank_scores   JSONB,           -- Rerank scores at the time of the feedback
     created_at      TIMESTAMPTZ DEFAULT now()
 );
 
@@ -23,18 +23,18 @@ CREATE INDEX idx_feedback_rating  ON search_feedback(rating);
 CREATE INDEX idx_feedback_agent   ON search_feedback(agent_id);
 CREATE INDEX idx_feedback_time    ON search_feedback(created_at);
 
--- Testset für Offline-Evaluation
+-- Test set for offline evaluation
 CREATE TABLE eval_test_set (
     id                SERIAL PRIMARY KEY,
     query             TEXT NOT NULL,
-    expected_ids      TEXT[],           -- Bekannt relevante Dokument-IDs
-    expected_keywords TEXT[],           -- Begriffe die im Ergebnis vorkommen sollten
+    expected_ids      TEXT[],           -- Known relevant document IDs
+    expected_keywords TEXT[],           -- Terms that should appear in the result
     collection        VARCHAR(100) DEFAULT 'pb_general',
-    category          VARCHAR(50),      -- z.B. "pricing", "technical", "compliance"
+    category          VARCHAR(50),      -- e.g. "pricing", "technical", "compliance"
     created_at        TIMESTAMPTZ DEFAULT now()
 );
 
--- Evaluation-Läufe (gespeicherte Ergebnisse von run_eval.py)
+-- Evaluation runs (stored results from run_eval.py)
 CREATE TABLE eval_runs (
     id              SERIAL PRIMARY KEY,
     run_date        TIMESTAMPTZ DEFAULT now(),
@@ -43,6 +43,6 @@ CREATE TABLE eval_runs (
     avg_recall      FLOAT,
     avg_mrr         FLOAT,            -- Mean Reciprocal Rank
     avg_latency_ms  FLOAT,
-    details         JSONB,            -- Per-Query Ergebnisse
-    config          JSONB             -- Modell, Reranker, etc.
+    details         JSONB,            -- Per-query results
+    config          JSONB             -- Model, reranker, etc.
 );

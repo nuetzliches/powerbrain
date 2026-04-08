@@ -1,49 +1,49 @@
-# MCP-Server Integration Checklist
+# MCP Server Integration Checklist
 
-Checkliste bei Anbindung eines neuen MCP-Servers an den pb-proxy.
+Checklist for connecting a new MCP server to the pb-proxy.
 
-## PII & Datenschutz
+## PII & Data Protection
 
-- [ ] **Datenquellen identifizieren**: Welche externen APIs/Datenbanken greift der MCP zu?
-- [ ] **PII-Klassifikation pro Tool**:
-  - Tools die in Powerbrain suchen (`search_knowledge`) liefern pseudonymisierte Daten
-  - Tools die externe APIs direkt aufrufen liefern Rohdaten mit potentiell PII
-  - Gemischte Server brauchen eine explizite Tool-Liste
-- [ ] **`pii_status` in `mcp_servers.yaml` setzen**:
-  - `scanned` — alle Tool-Results bereits pseudonymisiert (z.B. Powerbrain MCP)
-  - `unscanned` — Tool-Results enthalten potentiell PII (Default, fail-safe)
-  - `mixed` — per-Tool Deklaration via `pii_scanned_tools`
-- [ ] **`pii_scanned_tools` pflegen** (nur bei `mixed`): Liste der Tool-Namen (unprefixed), deren Results bereits pseudonymisiert sind
-- [ ] **Ingestion-Pfad pruefen**: Werden Daten ueber `ingest_data` eingespeist? Falls ja: PII-Scanner greift automatisch bei der Ingestion (Presidio + OPA Policy)
-- [ ] **Tool-Results pruefen**: Enthalten Results Personennamen, E-Mails, Beschreibungen mit PII? Als `unscanned` deklarieren
+- [ ] **Identify data sources**: which external APIs / databases does the MCP access?
+- [ ] **PII classification per tool**:
+  - Tools that search inside Powerbrain (`search_knowledge`) return pseudonymized data
+  - Tools that call external APIs directly return raw data with potential PII
+  - Mixed servers need an explicit per-tool list
+- [ ] **Set `pii_status` in `mcp_servers.yaml`**:
+  - `scanned` — all tool results already pseudonymized (e.g. Powerbrain MCP)
+  - `unscanned` — tool results may contain PII (default, fail-safe)
+  - `mixed` — per-tool declaration via `pii_scanned_tools`
+- [ ] **Maintain `pii_scanned_tools`** (only for `mixed`): list of tool names (unprefixed) whose results are already pseudonymized
+- [ ] **Check the ingestion path**: is data fed in via `ingest_data`? If so, the PII scanner automatically runs during ingestion (Presidio + OPA policy)
+- [ ] **Inspect tool results**: do results contain person names, emails, or descriptions with PII? Declare as `unscanned`
 
-## Authentifizierung
+## Authentication
 
-- [ ] **Auth-Modus waehlen**: `bearer` (User-Token forwarding), `static` (fester Token aus Env-Var), `none`
-- [ ] **`forward_headers` definieren**: Welche Client-Headers muss der Proxy an den MCP weiterleiten? (z.B. `X-TC-PAT` fuer TimeCockpit)
-- [ ] **OPA-Policy erweitern**: Server in `proxy.rego` `mcp_servers_allowed` aufnehmen (welche Rollen duerfen zugreifen?)
+- [ ] **Choose auth mode**: `bearer` (user token forwarding), `static` (fixed token from env var), `none`
+- [ ] **Define `forward_headers`**: which client headers must the proxy forward to the MCP? (e.g. `X-TC-PAT` for TimeCockpit)
+- [ ] **Extend OPA policy**: add the server to `mcp_servers_allowed` in `proxy.rego` (which roles may access it?)
 
-## Allgemein
+## General
 
-- [ ] **`prefix` festlegen**: Eindeutiger Namespace fuer Tool-Namen (z.B. `tc_`, `jira_`, `slack_`)
-- [ ] **`required` festlegen**: Muss der Server beim Proxy-Start erreichbar sein? (`true` = Proxy startet nicht ohne diesen Server)
-- [ ] **`tool_whitelist` pruefen**: Sollen nur bestimmte Tools exponiert werden? (Default: alle Tools des Servers)
-- [ ] **Docker Networking**: Server muss im `proxy-net` Netzwerk erreichbar sein
-- [ ] **Health Check**: Server sollte auf Tool-Discovery reagieren (MCP `list_tools`)
+- [ ] **Set `prefix`**: unique namespace for tool names (e.g. `tc_`, `jira_`, `slack_`)
+- [ ] **Set `required`**: must the server be reachable when the proxy starts? (`true` = proxy will not start without this server)
+- [ ] **Check `tool_whitelist`**: should only specific tools be exposed? (default: all tools of the server)
+- [ ] **Docker networking**: server must be reachable in the `proxy-net` network
+- [ ] **Health check**: server should respond to tool discovery (MCP `list_tools`)
 
-## Referenz: mcp_servers.yaml Beispiel
+## Reference: mcp_servers.yaml example
 
 ```yaml
 servers:
-  - name: neuer-mcp
-    url: http://neuer-mcp:3000/mcp
+  - name: new-mcp
+    url: http://new-mcp:3000/mcp
     auth: static
-    auth_token_env: NEUER_MCP_TOKEN
-    prefix: neu
+    auth_token_env: NEW_MCP_TOKEN
+    prefix: new
     required: false
-    pii_status: unscanned        # oder: scanned, mixed
-    # pii_scanned_tools:         # nur bei mixed
-    #   - tool_das_powerbrain_sucht
+    pii_status: unscanned        # or: scanned, mixed
+    # pii_scanned_tools:         # only for mixed
+    #   - tool_that_searches_powerbrain
     forward_headers:
       - X-Custom-Auth
 ```

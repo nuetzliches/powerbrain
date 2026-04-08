@@ -1,8 +1,8 @@
 """
-E2E-Test: Chat-Path PII Protection.
+E2E test: chat-path PII protection.
 
 Verifies the full product promise:
-User-Nachricht mit PII -> pseudonymisiert an LLM -> de-pseudonymisiert zurück.
+User message with PII -> pseudonymized to LLM -> de-pseudonymized on return.
 
 Requires: RUN_INTEGRATION_TESTS=1, running pb-proxy + ingestion services.
 """

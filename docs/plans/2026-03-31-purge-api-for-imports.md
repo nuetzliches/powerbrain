@@ -1,47 +1,47 @@
-# Backlog: Purge-API für Import-Workflows
+# Backlog: Purge API for Import Workflows
 
-**Status:** Done (implementiert in Commit 9895515)
-**Erstellt:** 2026-03-31
-**Kontext:** timecockpit-mcp Import-Script benötigt die Möglichkeit, vor einem Neuimport alle Daten eines bestimmten `source_type` (z.B. `timesheet`, `git-commit`) oder alle Daten komplett zu löschen.
+**Status:** Done (implemented in commit 9895515)
+**Created:** 2026-03-31
+**Context:** The timecockpit-mcp import script needs the ability to delete all data of a specific `source_type` (e.g. `timesheet`, `git-commit`) or all data entirely before a re-import.
 
-## Anforderung
+## Requirement
 
-### MCP-Tool: `delete_documents`
+### MCP Tool: `delete_documents`
 
-Neues MCP-Tool im Powerbrain-Server, das Dokumente nach Filter-Kriterien löscht:
+New MCP tool in the Powerbrain server that deletes documents by filter criteria:
 
 ```
 Tool: delete_documents
 Parameter:
-  - source_type: string (optional) — z.B. "timesheet", "git-commit", "github-issue"
-  - project: string (optional) — z.B. "PROJ-A"
-  - confirm: boolean (required) — Sicherheits-Flag, muss true sein
-  - delete_all: boolean (optional) — wenn true, ignoriert source_type/project-Filter
+  - source_type: string (optional) — e.g. "timesheet", "git-commit", "github-issue"
+  - project: string (optional) — e.g. "PROJ-A"
+  - confirm: boolean (required) — safety flag, must be true
+  - delete_all: boolean (optional) — if true, ignores source_type/project filters
 ```
 
-### Erwartetes Verhalten
+### Expected Behavior
 
-1. **Qdrant:** Alle Vektoren mit passendem Payload-Filter (`source_type`, `project`) löschen
-2. **PostgreSQL:** Zugehörige Einträge in `documents_meta` entlöschen
-3. **Graph:** Zugehörige Nodes (Timesheet, Commit) und deren Relationships entfernen
-4. **Response:** Anzahl gelöschter Dokumente/Vektoren/Nodes zurückgeben
+1. **Qdrant:** Delete all vectors matching the payload filter (`source_type`, `project`)
+2. **PostgreSQL:** Delete associated entries in `documents_meta`
+3. **Graph:** Remove associated nodes (Timesheet, Commit) and their relationships
+4. **Response:** Return the number of deleted documents/vectors/nodes
 
-### Anwendungsfälle im Import-Script
+### Use Cases in the Import Script
 
 ```bash
-# Nur Timesheets löschen (für sauberen Reimport)
+# Delete only timesheets (for a clean reimport)
 npx tsx scripts/import-from-timecockpit.ts --purge
 
-# Alles löschen (Timesheets + Commits + Issues + Graph-Nodes)
+# Delete everything (timesheets + commits + issues + graph nodes)
 npx tsx scripts/import-from-timecockpit.ts --purge-all
 ```
 
-### Bestehende Infrastruktur
+### Existing Infrastructure
 
-- `ingestion/retention_cleanup.py` hat bereits `delete_dataset()` — löscht einzelne Datensätze per ID
-- Muster kann auf Bulk-Löschung per `source_type` erweitert werden
-- Qdrant-Filter auf `source_type` ist bereits im Payload vorhanden
+- `ingestion/retention_cleanup.py` already has `delete_dataset()` — deletes individual datasets by ID
+- The pattern can be extended to bulk deletion by `source_type`
+- Qdrant filter on `source_type` is already present in the payload
 
-## Abhängigkeit
+## Dependency
 
-Das `--purge` / `--purge-all` Flag im timecockpit-mcp Import-Script wird implementiert, sobald dieses Tool verfügbar ist.
+The `--purge` / `--purge-all` flag in the timecockpit-mcp import script will be implemented once this tool is available.

@@ -1,34 +1,34 @@
 -- ============================================================
---  Wissensdatenbank – Datenschutz-Erweiterung
+--  Knowledge base – privacy extension
 --  Migration: 002_privacy.sql
 -- ============================================================
 
--- Datenkategorien für DSGVO-Zweckbindung
+-- Data categories for GDPR purpose binding
 CREATE TABLE data_categories (
     id              VARCHAR(50) PRIMARY KEY,
     description     TEXT NOT NULL,
     contains_pii    BOOLEAN DEFAULT false,
-    legal_basis     VARCHAR(100),           -- Art. 6 DSGVO Rechtsgrundlage
-    allowed_purposes TEXT[],                -- Erlaubte Verarbeitungszwecke
+    legal_basis     VARCHAR(100),           -- Art. 6 GDPR legal basis
+    allowed_purposes TEXT[],                -- Permitted processing purposes
     retention_days  INTEGER NOT NULL DEFAULT 365
 );
 
 INSERT INTO data_categories (id, description, contains_pii, legal_basis, allowed_purposes, retention_days) VALUES
-('customer_data',   'Kundenstammdaten',          true,  'Art. 6 Abs. 1 lit. b (Vertragserfüllung)', ARRAY['support','billing','contract_fulfillment'], 730),
-('employee_data',   'Mitarbeiterdaten',           true,  'Art. 6 Abs. 1 lit. b (Arbeitsvertrag)',    ARRAY['hr_management','payroll'], 1095),
-('analytics_data',  'Anonymisierte Analysedaten', false, 'Art. 6 Abs. 1 lit. f (Berechtigtes Interesse)', ARRAY['reporting','product_improvement'], 90),
-('marketing_data',  'Marketing-Kontakte',         true,  'Art. 6 Abs. 1 lit. a (Einwilligung)',      ARRAY['campaign_management','consent_based_contact'], 365),
-('contract_data',   'Vertragsdokumente',          true,  'Art. 6 Abs. 1 lit. b (Vertragserfüllung)', ARRAY['contract_fulfillment','legal'], 1095),
-('accounting_data', 'Buchhaltungsdaten',          true,  'Art. 6 Abs. 1 lit. c (Rechtl. Verpflichtung)', ARRAY['accounting','audit'], 3650),
-('technical_data',  'Technische Dokumentation',   false, NULL, ARRAY['development','operations'], 365);
+('customer_data',   'Customer master data',        true,  'Art. 6 para. 1 lit. b (contract performance)', ARRAY['support','billing','contract_fulfillment'], 730),
+('employee_data',   'Employee data',                true,  'Art. 6 para. 1 lit. b (employment contract)', ARRAY['hr_management','payroll'], 1095),
+('analytics_data',  'Anonymized analytics data',    false, 'Art. 6 para. 1 lit. f (legitimate interest)', ARRAY['reporting','product_improvement'], 90),
+('marketing_data',  'Marketing contacts',           true,  'Art. 6 para. 1 lit. a (consent)',             ARRAY['campaign_management','consent_based_contact'], 365),
+('contract_data',   'Contract documents',           true,  'Art. 6 para. 1 lit. b (contract performance)', ARRAY['contract_fulfillment','legal'], 1095),
+('accounting_data', 'Accounting data',              true,  'Art. 6 para. 1 lit. c (legal obligation)',    ARRAY['accounting','audit'], 3650),
+('technical_data',  'Technical documentation',      false, NULL, ARRAY['development','operations'], 365);
 
--- Datenschutz-Felder zu datasets hinzufügen
+-- Add privacy fields to datasets
 ALTER TABLE datasets
     ADD COLUMN data_category     VARCHAR(50) REFERENCES data_categories(id),
     ADD COLUMN contains_pii      BOOLEAN DEFAULT false,
     ADD COLUMN legal_basis        VARCHAR(100),
     ADD COLUMN retention_expires_at TIMESTAMPTZ,
-    ADD COLUMN pii_fields         TEXT[],           -- Welche Felder PII enthalten
+    ADD COLUMN pii_fields         TEXT[],           -- Which fields contain PII
     ADD COLUMN pseudonymized      BOOLEAN DEFAULT false;
 
 CREATE INDEX idx_datasets_retention ON datasets(retention_expires_at)
@@ -36,42 +36,42 @@ CREATE INDEX idx_datasets_retention ON datasets(retention_expires_at)
 CREATE INDEX idx_datasets_pii ON datasets(contains_pii)
     WHERE contains_pii = true;
 
--- Datenschutz-Felder zu documents_meta hinzufügen
+-- Add privacy fields to documents_meta
 ALTER TABLE documents_meta
     ADD COLUMN data_category     VARCHAR(50) REFERENCES data_categories(id),
     ADD COLUMN contains_pii      BOOLEAN DEFAULT false,
     ADD COLUMN retention_expires_at TIMESTAMPTZ,
-    ADD COLUMN data_subject_refs TEXT[];    -- Referenzen auf betroffene Personen
+    ADD COLUMN data_subject_refs TEXT[];    -- References to data subjects
 
 CREATE INDEX idx_docs_retention ON documents_meta(retention_expires_at)
     WHERE retention_expires_at IS NOT NULL;
 
--- Betroffene Personen (für Auskunfts- und Löschanfragen)
+-- Data subjects (for access and deletion requests)
 CREATE TABLE data_subjects (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    external_ref    VARCHAR(255) UNIQUE NOT NULL,  -- Externe ID (Kunden-Nr., etc.)
-    pseudonym       VARCHAR(100) UNIQUE,           -- Pseudonymisierter Identifier
-    datasets        UUID[],                        -- Verknüpfte Datensätze
-    qdrant_point_ids TEXT[],                       -- Verknüpfte Qdrant-Vektor-IDs
+    external_ref    VARCHAR(255) UNIQUE NOT NULL,  -- External ID (customer no., etc.)
+    pseudonym       VARCHAR(100) UNIQUE,           -- Pseudonymized identifier
+    datasets        UUID[],                        -- Linked datasets
+    qdrant_point_ids TEXT[],                       -- Linked Qdrant vector IDs
     created_at      TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX idx_data_subjects_ref ON data_subjects(external_ref);
 CREATE INDEX idx_data_subjects_pseudonym ON data_subjects(pseudonym);
 
--- Löschanfragen-Tracking (Art. 17 DSGVO)
+-- Deletion request tracking (Art. 17 GDPR)
 CREATE TABLE deletion_requests (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     data_subject_id UUID REFERENCES data_subjects(id),
     request_date    TIMESTAMPTZ DEFAULT now(),
     status          VARCHAR(20) DEFAULT 'pending',  -- pending, processing, completed, blocked
-    blocked_reason  TEXT,                            -- z.B. gesetzliche Aufbewahrungspflicht
+    blocked_reason  TEXT,                            -- e.g. statutory retention obligation
     completed_at    TIMESTAMPTZ,
-    deleted_records JSONB,                          -- Was wurde gelöscht (Nachweis)
-    processed_by    VARCHAR(100)                    -- Agent oder Admin
+    deleted_records JSONB,                          -- What was deleted (evidence)
+    processed_by    VARCHAR(100)                    -- Agent or admin
 );
 
--- Audit-Log um Datenschutzfelder erweitern
+-- Extend audit log with privacy fields
 ALTER TABLE agent_access_log
     ADD COLUMN contains_pii      BOOLEAN DEFAULT false,
     ADD COLUMN purpose            VARCHAR(100),
@@ -79,7 +79,7 @@ ALTER TABLE agent_access_log
     ADD COLUMN data_category      VARCHAR(50),
     ADD COLUMN fields_redacted    TEXT[];
 
--- PII-Scan-Ergebnisse (Protokoll der Erkennung)
+-- PII scan results (detection log)
 CREATE TABLE pii_scan_log (
     id              BIGSERIAL PRIMARY KEY,
     source          VARCHAR(500),
@@ -90,7 +90,7 @@ CREATE TABLE pii_scan_log (
     dataset_id      UUID REFERENCES datasets(id)
 );
 
--- View: Alle Datensätze mit ablaufender Aufbewahrungsfrist
+-- View: all datasets with an expiring retention period
 CREATE VIEW v_expiring_data AS
 SELECT
     'dataset' AS source_type,

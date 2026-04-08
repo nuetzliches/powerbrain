@@ -1,14 +1,14 @@
 """
-Retention-Service: Automatische Datenlöschung
+Retention Service: Automatic Data Deletion
 ==============================================
-Wird als Cronjob ausgeführt (z.B. täglich) und löscht Daten,
-deren Aufbewahrungsfrist abgelaufen ist.
+Runs as a cron job (e.g. daily) and deletes data
+whose retention period has expired.
 
-Löscht koordiniert aus: PostgreSQL, Qdrant und anonymisiert Audit-Logs.
+Deletes in a coordinated manner from: PostgreSQL, Qdrant, and anonymizes audit logs.
 
-Aufruf:
-    python retention_cleanup.py              # Dry-Run (nur Report)
-    python retention_cleanup.py --execute    # Tatsächlich löschen
+Usage:
+    python retention_cleanup.py              # Dry run (report only)
+    python retention_cleanup.py --execute    # Actually delete
 """
 
 import asyncio
@@ -35,7 +35,7 @@ AUDIT_RETENTION_DAYS = int(os.getenv("AUDIT_RETENTION_DAYS", "365"))
 
 
 async def get_expiring_data(pool: asyncpg.Pool) -> list[dict]:
-    """Findet alle Datensätze mit abgelaufener Aufbewahrungsfrist."""
+    """Finds all records with expired retention periods."""
     rows = await pool.fetch("""
         SELECT source_type, id, title, data_category, contains_pii,
                retention_expires_at, time_remaining
@@ -48,23 +48,23 @@ async def get_expiring_data(pool: asyncpg.Pool) -> list[dict]:
 
 async def delete_dataset(pool: asyncpg.Pool, qdrant: AsyncQdrantClient,
                          dataset_id: str, execute: bool) -> dict:
-    """Löscht einen Datensatz aus PostgreSQL und zugehörige Vektoren aus Qdrant."""
+    """Deletes a dataset from PostgreSQL and associated vectors from Qdrant."""
     report = {"dataset_id": dataset_id, "actions": []}
 
-    # 1. Qdrant-Vektoren finden und löschen
+    # 1. Find and delete Qdrant vectors
     doc = await pool.fetchrow(
         "SELECT qdrant_collection FROM documents_meta WHERE id = $1", dataset_id
     )
     if doc and doc["qdrant_collection"]:
         collection = doc["qdrant_collection"]
-        # Finde Punkte mit dieser Dataset-Referenz
-        # (In der Praxis: Payload-Filter auf dataset_id)
-        report["actions"].append(f"Qdrant: Vektoren in Collection '{collection}' markiert")
+        # Find points with this dataset reference
+        # (In practice: payload filter on dataset_id)
+        report["actions"].append(f"Qdrant: vectors in collection '{collection}' marked")
 
         if execute:
             try:
                 from qdrant_client.models import Filter, FieldCondition, MatchValue
-                # Scroll durch alle Punkte mit diesem Dataset
+                # Scroll through all points with this dataset
                 points, _ = await qdrant.scroll(
                     collection_name=collection,
                     scroll_filter=Filter(must=[
@@ -78,43 +78,43 @@ async def delete_dataset(pool: asyncpg.Pool, qdrant: AsyncQdrantClient,
                         collection_name=collection,
                         points_selector=PointIdsList(points=point_ids),
                     )
-                    report["actions"].append(f"Qdrant: {len(point_ids)} Vektoren gelöscht")
+                    report["actions"].append(f"Qdrant: {len(point_ids)} vectors deleted")
             except Exception as e:
-                report["actions"].append(f"Qdrant-Fehler: {e}")
+                report["actions"].append(f"Qdrant error: {e}")
 
-    # 2. PostgreSQL: Datensatz-Zeilen löschen
+    # 2. PostgreSQL: Delete dataset rows
     if execute:
         deleted = await pool.execute(
             "DELETE FROM dataset_rows WHERE dataset_id = $1", dataset_id
         )
-        report["actions"].append(f"PostgreSQL: dataset_rows gelöscht ({deleted})")
+        report["actions"].append(f"PostgreSQL: dataset_rows deleted ({deleted})")
 
         await pool.execute("DELETE FROM documents_meta WHERE id = $1", dataset_id)
-        report["actions"].append("PostgreSQL: documents_meta gelöscht")
+        report["actions"].append("PostgreSQL: documents_meta deleted")
 
         await pool.execute("DELETE FROM datasets WHERE id = $1", dataset_id)
-        report["actions"].append("PostgreSQL: datasets gelöscht")
+        report["actions"].append("PostgreSQL: datasets deleted")
     else:
         count = await pool.fetchval(
             "SELECT count(*) FROM dataset_rows WHERE dataset_id = $1", dataset_id
         )
-        report["actions"].append(f"[DRY-RUN] Würde {count} Zeilen löschen")
+        report["actions"].append(f"[DRY-RUN] Would delete {count} rows")
 
-    # 3. Audit-Log: PII anonymisieren (nicht löschen — Nachweispflicht)
+    # 3. Audit log: Anonymize PII (do not delete — accountability requirement)
     if execute:
         await pool.execute("""
             UPDATE agent_access_log
             SET request_context = '{"anonymized": true}'::jsonb
             WHERE resource_id = $1 AND contains_pii = true
         """, dataset_id)
-        report["actions"].append("Audit-Log: PII-Einträge anonymisiert")
+        report["actions"].append("Audit log: PII entries anonymized")
 
     return report
 
 
 async def process_deletion_requests(pool: asyncpg.Pool, qdrant: AsyncQdrantClient,
                                      execute: bool) -> list[dict]:
-    """Verarbeitet offene Löschanfragen (Art. 17 DSGVO)."""
+    """Processes pending deletion requests (Art. 17 GDPR)."""
     requests = await pool.fetch("""
         SELECT dr.id, dr.data_subject_id, ds.external_ref, ds.datasets, ds.qdrant_point_ids
         FROM deletion_requests dr
@@ -127,13 +127,13 @@ async def process_deletion_requests(pool: asyncpg.Pool, qdrant: AsyncQdrantClien
     for req in requests:
         report = {"request_id": str(req["id"]), "subject": req["external_ref"], "actions": []}
 
-        # Alle verknüpften Datensätze durchgehen
+        # Process all linked datasets
         if req["datasets"]:
             for ds_id in req["datasets"]:
                 ds_report = await delete_dataset(pool, qdrant, str(ds_id), execute)
                 report["actions"].extend(ds_report["actions"])
 
-        # Qdrant-Punkte direkt löschen
+        # Delete Qdrant points directly
         if req["qdrant_point_ids"] and execute:
             for collection_points in req["qdrant_point_ids"]:
                 # Format: "collection:point_id"
@@ -144,11 +144,11 @@ async def process_deletion_requests(pool: asyncpg.Pool, qdrant: AsyncQdrantClien
                             collection_name=parts[0],
                             points_selector=PointIdsList(points=[parts[1]]),
                         )
-                        report["actions"].append(f"Qdrant: Punkt {parts[1]} aus {parts[0]} gelöscht")
+                        report["actions"].append(f"Qdrant: point {parts[1]} from {parts[0]} deleted")
                     except Exception as e:
-                        report["actions"].append(f"Qdrant-Fehler: {e}")
+                        report["actions"].append(f"Qdrant error: {e}")
 
-        # Vault: Original + Mapping löschen (Stufe 1: restrict)
+        # Vault: Delete original + mapping (tier 1: restrict)
         vault_deleted = 0
         mapping_deleted = 0
         dataset_ids = [str(ds_id) for ds_id in req["datasets"]] if req["datasets"] else []
@@ -170,8 +170,8 @@ async def process_deletion_requests(pool: asyncpg.Pool, qdrant: AsyncQdrantClien
                 """, ds_id)
                 vault_deleted += int(v_result.split()[-1]) if v_result else 0
 
-            # restrict: Qdrant-Punkte behalten, aber contains_pii → false
-            # (Pseudonyme sind jetzt irreversibel = de facto anonym)
+            # restrict: Keep Qdrant points, but contains_pii → false
+            # (Pseudonyms are now irreversible = de facto anonymous)
             if vault_deleted > 0:
                 for ds_id in dataset_ids:
                     await pool.execute("""
@@ -181,14 +181,14 @@ async def process_deletion_requests(pool: asyncpg.Pool, qdrant: AsyncQdrantClien
 
             report["actions"].append(
                 f"Vault: {vault_deleted} original entries, "
-                f"{mapping_deleted} mappings gelöscht (restrict)"
+                f"{mapping_deleted} mappings deleted (restrict)"
             )
         elif dataset_ids:
             report["actions"].append(
-                f"[DRY-RUN] Würde Vault-Einträge für {len(dataset_ids)} Dokumente löschen (restrict)"
+                f"[DRY-RUN] Would delete vault entries for {len(dataset_ids)} documents (restrict)"
             )
 
-        # Status aktualisieren
+        # Update status
         if execute:
             await pool.execute("""
                 UPDATE deletion_requests
@@ -197,7 +197,7 @@ async def process_deletion_requests(pool: asyncpg.Pool, qdrant: AsyncQdrantClien
                     deleted_records = $2
                 WHERE id = $1
             """, req["id"], json.dumps(report["actions"]))
-            report["actions"].append("Löschanfrage als abgeschlossen markiert")
+            report["actions"].append("Deletion request marked as completed")
 
         reports.append(report)
 
@@ -206,12 +206,12 @@ async def process_deletion_requests(pool: asyncpg.Pool, qdrant: AsyncQdrantClien
 
 async def clean_expired_vault(conn, dry_run: bool = True) -> dict:
     """
-    Löscht abgelaufene Vault-Einträge und zugehörige Mappings.
-    Gibt Statistiken zurück.
+    Deletes expired vault entries and associated mappings.
+    Returns statistics.
     """
     stats = {"expired_content": 0, "expired_mappings": 0, "orphaned": 0}
 
-    # 1. Abgelaufene Vault-Einträge finden
+    # 1. Find expired vault entries
     expired = await conn.fetch("""
         SELECT id, document_id, chunk_index
         FROM pii_vault.original_content
@@ -223,7 +223,7 @@ async def clean_expired_vault(conn, dry_run: bool = True) -> dict:
         expired_ids = [r["id"] for r in expired]
         expired_doc_chunks = [(r["document_id"], r["chunk_index"]) for r in expired]
 
-        # Mappings löschen
+        # Delete mappings
         for doc_id, chunk_idx in expired_doc_chunks:
             deleted = await conn.execute("""
                 DELETE FROM pii_vault.pseudonym_mapping
@@ -231,7 +231,7 @@ async def clean_expired_vault(conn, dry_run: bool = True) -> dict:
             """, doc_id, chunk_idx)
             stats["expired_mappings"] += int(deleted.split()[-1]) if deleted else 0
 
-        # Original-Content löschen
+        # Delete original content
         await conn.execute("""
             DELETE FROM pii_vault.original_content
             WHERE id = ANY($1::uuid[])
@@ -242,7 +242,7 @@ async def clean_expired_vault(conn, dry_run: bool = True) -> dict:
             f"{stats['expired_mappings']} mappings removed"
         )
 
-    # 2. Verwaiste Vault-Einträge (document_meta gelöscht, Vault noch da)
+    # 2. Orphaned vault entries (document_meta deleted, vault still present)
     orphaned = await conn.fetch("""
         SELECT oc.id, oc.document_id
         FROM pii_vault.original_content oc
@@ -273,9 +273,9 @@ async def clean_expired_vault(conn, dry_run: bool = True) -> dict:
 
 async def anonymize_old_audit_logs(pool: asyncpg.Pool, execute: bool) -> dict:
     """
-    Anonymisiert Audit-Log-Einträge, deren Aufbewahrungsfrist abgelaufen ist.
-    Setzt request_context auf '{"anonymized": true}' für Einträge älter als
-    AUDIT_RETENTION_DAYS Tage.
+    Anonymizes audit log entries whose retention period has expired.
+    Sets request_context to '{"anonymized": true}' for entries older than
+    AUDIT_RETENTION_DAYS days.
     """
     count = await pool.fetchval("""
         SELECT count(*) FROM agent_access_log
@@ -296,65 +296,65 @@ async def anonymize_old_audit_logs(pool: asyncpg.Pool, execute: bool) -> dict:
             WHERE created_at < now() - interval '1 day' * $1
               AND request_context != '{"anonymized": true}'::jsonb
         """, AUDIT_RETENTION_DAYS)
-        report["actions"].append(f"Audit-Log: {count} Einträge anonymisiert (>{AUDIT_RETENTION_DAYS} Tage)")
+        report["actions"].append(f"Audit log: {count} entries anonymized (>{AUDIT_RETENTION_DAYS} days)")
     else:
-        report["actions"].append(f"[DRY-RUN] Würde {count} Audit-Einträge anonymisieren (>{AUDIT_RETENTION_DAYS} Tage)")
+        report["actions"].append(f"[DRY-RUN] Would anonymize {count} audit entries (>{AUDIT_RETENTION_DAYS} days)")
 
     return report
 
 
 async def main():
     parser = argparse.ArgumentParser(description="Retention Cleanup Service")
-    parser.add_argument("--execute", action="store_true", help="Tatsächlich löschen (ohne: Dry-Run)")
+    parser.add_argument("--execute", action="store_true", help="Actually delete (without: dry run)")
     args = parser.parse_args()
 
     mode = "EXECUTE" if args.execute else "DRY-RUN"
-    log.info(f"Retention Cleanup gestartet [{mode}]")
+    log.info(f"Retention cleanup started [{mode}]")
 
     pool = await asyncpg.create_pool(POSTGRES_URL, min_size=PG_POOL_MIN, max_size=PG_POOL_MAX)
     qdrant = AsyncQdrantClient(url=QDRANT_URL)
 
-    # 1. Abgelaufene Aufbewahrungsfristen
-    log.info("Prüfe abgelaufene Aufbewahrungsfristen...")
+    # 1. Expired retention periods
+    log.info("Checking expired retention periods...")
     expiring = await get_expiring_data(pool)
-    log.info(f"  {len(expiring)} abgelaufene Datensätze gefunden")
+    log.info(f"  {len(expiring)} expired records found")
 
     for item in expiring:
         log.info(f"  → {item['source_type']} '{item['title']}' "
-                 f"(Kategorie: {item['data_category']}, PII: {item['contains_pii']})")
+                 f"(category: {item['data_category']}, PII: {item['contains_pii']})")
         if item["source_type"] == "dataset":
             report = await delete_dataset(pool, qdrant, str(item["id"]), args.execute)
             for action in report["actions"]:
                 log.info(f"    {action}")
 
-    # 2. Löschanfragen (Art. 17)
-    log.info("Prüfe offene Löschanfragen...")
+    # 2. Deletion requests (Art. 17)
+    log.info("Checking pending deletion requests...")
     deletion_reports = await process_deletion_requests(pool, qdrant, args.execute)
-    log.info(f"  {len(deletion_reports)} Löschanfragen verarbeitet")
+    log.info(f"  {len(deletion_reports)} deletion requests processed")
 
     for report in deletion_reports:
-        log.info(f"  → Betroffene Person: {report['subject']}")
+        log.info(f"  → Data subject: {report['subject']}")
         for action in report["actions"]:
             log.info(f"    {action}")
 
-    # 3. Vault-Cleanup: Abgelaufene + verwaiste Einträge
+    # 3. Vault cleanup: Expired + orphaned entries
     log.info("=== Phase 3: Vault Retention + Orphan Cleanup ===")
     async with pool.acquire() as conn:
         vault_stats = await clean_expired_vault(conn, dry_run=not args.execute)
     log.info(
         f"  Vault: {vault_stats['expired_content']} expired, "
         f"{vault_stats['orphaned']} orphaned"
-        f"{' (dry-run)' if not args.execute else ' → gelöscht'}"
+        f"{' (dry-run)' if not args.execute else ' → deleted'}"
     )
 
-    # 4. Audit-Log: Zeitbasierte Anonymisierung
+    # 4. Audit log: Time-based anonymization
     log.info("=== Phase 4: Audit-Log Retention ===")
     audit_report = await anonymize_old_audit_logs(pool, args.execute)
     for action in audit_report["actions"]:
         log.info(f"  {action}")
 
     await pool.close()
-    log.info(f"Retention Cleanup abgeschlossen [{mode}]")
+    log.info(f"Retention cleanup completed [{mode}]")
 
 
 if __name__ == "__main__":

@@ -1,26 +1,26 @@
 # ============================================================
-#  Wissensdatenbank – Business Rules
-#  Paket: pb.rules
+#  Knowledge base – business rules
+#  Package: pb.rules
 #
 #  Data-driven: all rule definitions from data.json
 #
-#  Strategien und Geschäftsregeln, die Agenten bei
-#  Entscheidungen berücksichtigen müssen.
+#  Strategies and business rules that agents must
+#  consider when making decisions.
 # ============================================================
 
 package pb.rules
 
 import rego.v1
 
-# ── Regelkategorien aus data.json ───────────────────────────
+# ── Rule categories from data.json ──────────────────────────
 pricing := data.pb.config.rules.pricing
 
 workflow := data.pb.config.rules.workflow
 
 compliance := data.pb.config.rules.compliance
 
-# ── Dynamische Regelauswertung ──────────────────────────────
-# Agenten können Regeln nach Kategorie abfragen
+# ── Dynamic rule evaluation ─────────────────────────────────
+# Agents can query rules by category
 rules_for_category := data.pb.config.rules[input.context.category] if {
     data.pb.config.rules[input.context.category]
 }

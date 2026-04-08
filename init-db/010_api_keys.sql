@@ -1,5 +1,5 @@
--- 010_api_keys.sql: API-Key-Authentifizierung
--- Speichert gehashte API-Keys mit Rollen-Mapping
+-- 010_api_keys.sql: API key authentication
+-- Stores hashed API keys with role mapping
 
 CREATE TABLE IF NOT EXISTS api_keys (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),

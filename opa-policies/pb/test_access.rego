@@ -82,13 +82,13 @@ test_write_denied_on_restricted if {
 # ── Reason Messages ───────────────────────────────────────────
 
 test_reason_denied if {
-    access.reason == "Zugriff verweigert: Rolle 'viewer' darf nicht auf 'internal'-Daten zugreifen (Aktion: read)" with input as {
+    access.reason == "Access denied: role 'viewer' is not allowed to access 'internal' data (action: read)" with input as {
         "agent_role": "viewer", "classification": "internal", "action": "read",
     }
 }
 
 test_reason_allowed if {
-    access.reason == "Zugriff erlaubt" with input as {
+    access.reason == "Access allowed" with input as {
         "agent_role": "admin", "classification": "public", "action": "read",
     }
 }

@@ -881,7 +881,7 @@ and European data sovereignty angle."
 
 **Step 1: Update project description**
 
-Change "Self-hosted Wissensdatenbank" to context engine positioning.
+Change "Self-hosted knowledge base" to context engine positioning.
 
 **Step 2: Add summarization to MCP tools list**
 

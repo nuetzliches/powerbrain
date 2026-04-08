@@ -465,21 +465,21 @@ with nothing (delete the line).
 Replace the OPA access control part of the layer section (lines ~342-346):
 
 ```markdown
-**OPA-Zugriffssteuerung** (`pb.layers`):
-- Admin: immer L2
-- Nicht-Admin + confidential: max. L1
-- Nicht-Admin + restricted: max. L0
-- Viewer + internal: max. L0
+**OPA access control** (`pb.layers`):
+- Admin: always L2
+- Non-admin + confidential: max L1
+- Non-admin + restricted: max L0
+- Viewer + internal: max L0
 ```
 
 with:
 
 ```markdown
-**Zugriffssteuerung:**
-Layers sind ein Progressive-Loading-Mechanismus, keine Sicherheitsschicht.
-Die bestehende `pb.access`-Policy kontrolliert ob ein Agent ein Dokument sehen darf.
-`pb.summarization` kontrolliert ob Rohtext oder nur Zusammenfassungen erlaubt sind.
-Jeder Agent mit Zugriff kann jede Layer-Ebene abfragen.
+**Access control:**
+Layers are a progressive-loading mechanism, not a security layer.
+The existing `pb.access` policy controls whether an agent may see a document.
+`pb.summarization` controls whether raw text or only summaries are allowed.
+Any agent with access can query any layer level.
 ```
 
 - [ ] **Step 3: Run all existing tests to verify nothing is broken**

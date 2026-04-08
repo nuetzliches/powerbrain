@@ -1,11 +1,11 @@
 """
-Reranker-Service
+Reranker Service
 =================
-Eigenständiger FastAPI-Microservice, der Qdrant-Ergebnisse mit einem
-Cross-Encoder-Modell neu bewertet.
+Standalone FastAPI microservice that re-ranks Qdrant results using a
+cross-encoder model.
 
-Baustein 5: Prometheus-Metriken werden über /metrics (prometheus-fastapi-instrumentator)
-sowie custom Histogramme für Batch-Size und Modell-Ladezeit exponiert.
+Prometheus metrics are exposed via /metrics (prometheus-fastapi-instrumentator)
+as well as custom histograms for batch size and model load time.
 """
 
 import os
@@ -29,7 +29,7 @@ from prometheus_client import (
 )
 from starlette.responses import Response
 
-# ── Konfiguration ────────────────────────────────────────────
+# ── Configuration ────────────────────────────────────────────
 
 MODEL_NAME = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 MAX_BATCH_SIZE  = int(os.getenv("RERANKER_MAX_BATCH",      "128"))
@@ -38,29 +38,29 @@ DEFAULT_TOP_N   = int(os.getenv("RERANKER_DEFAULT_TOP_N",  "10"))
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("reranker")
 
-# ── Prometheus Metriken ──────────────────────────────────────
+# ── Prometheus Metrics ───────────────────────────────────────
 reranker_requests_total = Counter(
     "pb_reranker_requests_total",
-    "Gesamtzahl Reranking-Requests",
+    "Total reranking requests",
     ["status"],
 )
 reranker_duration = Histogram(
     "pb_reranker_duration_seconds",
-    "Dauer eines Reranking-Requests",
+    "Duration of a reranking request",
     buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0],
 )
 reranker_batch_size = Histogram(
     "pb_reranker_batch_size",
-    "Batch-Größe (Anzahl Dokumente) pro Request",
+    "Batch size (number of documents) per request",
     buckets=[1, 5, 10, 20, 50, 100, 128],
 )
 reranker_model_load_seconds = Histogram(
     "pb_reranker_model_load_seconds",
-    "Dauer des Modell-Ladens beim Start",
+    "Duration of model loading at startup",
     buckets=[1, 5, 10, 20, 30, 60],
 )
 
-# ── Modell laden ─────────────────────────────────────────────
+# ── Load Model ───────────────────────────────────────────────
 
 model: CrossEncoder | None = None
 
@@ -68,19 +68,19 @@ model: CrossEncoder | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global model
-    log.info(f"Lade Reranker-Modell: {MODEL_NAME}")
+    log.info(f"Loading reranker model: {MODEL_NAME}")
     t0 = time.time()
     model = CrossEncoder(MODEL_NAME, max_length=512)
     elapsed = time.time() - t0
     reranker_model_load_seconds.observe(elapsed)
-    log.info(f"Modell geladen in {elapsed:.1f}s")
+    log.info(f"Model loaded in {elapsed:.1f}s")
     yield
-    log.info("Reranker-Service beendet")
+    log.info("Reranker service stopped")
 
 
 app = FastAPI(
     title="Powerbrain Reranker Service",
-    description="Cross-Encoder Reranking für die Wissensdatenbank",
+    description="Cross-Encoder reranking for the knowledge base",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -89,7 +89,7 @@ _reranker_tracer = init_telemetry("pb-reranker")
 setup_auto_instrumentation(app)
 _reranker_metrics = MetricsAggregator("reranker")
 
-# Prometheus ASGI-App unter /metrics einbinden
+# Mount Prometheus ASGI app under /metrics
 metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
 
@@ -134,7 +134,7 @@ class RerankResponse(BaseModel):
 async def rerank(request: RerankRequest):
     if model is None:
         reranker_requests_total.labels(status="error").inc()
-        raise HTTPException(status_code=503, detail="Modell noch nicht geladen")
+        raise HTTPException(status_code=503, detail="Model not yet loaded")
 
     if len(request.documents) == 0:
         reranker_requests_total.labels(status="ok").inc()
@@ -147,7 +147,7 @@ async def rerank(request: RerankRequest):
         reranker_requests_total.labels(status="error").inc()
         raise HTTPException(
             status_code=400,
-            detail=f"Maximal {MAX_BATCH_SIZE} Dokumente pro Request"
+            detail=f"Maximum {MAX_BATCH_SIZE} documents per request"
         )
 
     t0 = time.time()

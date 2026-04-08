@@ -21,16 +21,23 @@ Agent / Skill
 ┌─────────────────────────────────────────────────┐
 │  Powerbrain MCP Server                          │
 │  ├─ OPA Policy Check (every request)            │
+│  ├─ Circuit Breaker + Approval Queue (Art. 14)  │
 │  ├─ Qdrant Vector Search (oversampled)          │
 │  ├─ Cross-Encoder Reranking (top-k)             │
 │  ├─ Context Summarization (policy-controlled)   │
 │  ├─ Sealed Vault (PII pseudonymization)         │
-│  └─ Audit Log (GDPR-compliant)                  │
+│  └─ Tamper-Evident Audit Log (Art. 12)          │
 └─────────────────────────────────────────────────┘
     │           │           │           │
     ▼           ▼           ▼           ▼
  Qdrant    PostgreSQL     OPA       Ollama
  (vectors)  (data+vault)  (policies) (embeddings+LLM)
+                │
+                ▼
+         ┌──────────────┐
+         │  pb-worker   │  Accuracy metrics, drift
+         │ (APScheduler)│  detection, audit retention
+         └──────────────┘
 ```
 
 ## ✨ Core Features
@@ -43,11 +50,27 @@ Agent / Skill
 
 📝 **Context Summarization** — Agents can request summaries instead of raw chunks. OPA policies can enforce summarization for sensitive data (confidential = summary only, no raw text), control detail levels, or deny summarization entirely. Powered by Ollama.
 
-🔌 **MCP-Native Interface** — 10 tools accessible through the Model Context Protocol. Works with any MCP-compatible agent (Claude, OpenCode, custom). One endpoint, one protocol.
+🔌 **MCP-Native Interface** — 16 tools accessible through the Model Context Protocol. Works with any MCP-compatible agent (Claude, OpenCode, custom). One endpoint, one protocol.
 
 🏠 **Self-Hosted & GDPR-Native** — Everything runs on your infrastructure. No external API calls for embeddings, search, or summarization. Docker Compose up and you're running.
 
 🔀 **AI Provider Proxy** — Optional gateway between your AI consumers and their LLM providers. Transparently injects Powerbrain tools into every LLM request and executes tool calls automatically. Your teams use any LLM they prefer (100+ providers via LiteLLM); Powerbrain ensures they always query policy-checked enterprise context. Activate with `docker compose --profile proxy up`.
+
+## 🇪🇺 EU AI Act Compliance Toolkit
+
+Powerbrain is **not itself a high-risk AI system**, but Deployers who operate one in regulated sectors (finance, healthcare, HR) need infrastructure that delivers the Art. 9–15 capabilities. Powerbrain ships them as executable building blocks, not PDFs:
+
+| Article | Feature | How |
+|---|---|---|
+| **Art. 9** — Risk management | Concrete risk register + live indicators | [`docs/risk-management.md`](docs/risk-management.md) with 8 identified risks (R-01..R-08). `GET /health` with `Accept: application/json` returns 6 live risk indicators and HTTP 503 when critical. |
+| **Art. 10** — Data quality | Blocking ingestion quality gate | Composite score (length, language confidence, PII density, encoding, metadata) with per-source_type thresholds via OPA `pb.ingestion.quality_gate`. Rejected documents are audited in `ingestion_rejections`. |
+| **Art. 11** / Annex IV — Technical docs | Admin-triggered Annex IV generator | `generate_compliance_doc` MCP tool renders all 9 Annex IV sections as Markdown from live runtime state (models, OPA policies, collections, audit chain, risk register). |
+| **Art. 12** — Logging | Tamper-evident audit hash chain | SHA-256 hash chain on `agent_access_log` via PostgreSQL trigger with advisory locks, append-only enforcement, checkpoint+prune retention that preserves chain continuity. Verify via `verify_audit_integrity`, export via `export_audit_log`. |
+| **Art. 13** — Transparency | Auth-required transparency endpoint | `GET /transparency` and `get_system_info` MCP tool expose active models, OPA policies, collection stats, PII scanner config, and audit integrity — with deterministic version fingerprint. |
+| **Art. 14** — Human oversight | Global kill-switch + approval queue | `POST /circuit-breaker` halts all data-retrieval tools instantly. Confidential/restricted requests from non-admin roles are intercepted into `pending_reviews`; admins decide via `review_pending`, agents poll via `get_review_status`. |
+| **Art. 15** — Accuracy & drift | Windowed feedback metrics + embedding drift detection | Per-collection baseline centroids in `embedding_reference_set`, refreshed every 5 minutes by `pb-worker`. Prometheus gauges + alerts (`QualityDrift`, `HighEmptyResultRate`, `RerankerScoreDrift`, `EmbeddingDriftDetected`), pre-provisioned `pb-accuracy` Grafana dashboard. |
+
+The `pb-worker` maintenance container runs four APScheduler jobs: accuracy metrics refresh (5 min), pending-review timeouts (hourly), GDPR retention cleanup (daily 02:00), audit retention cleanup (daily 03:00).
 
 ## 🚀 Quick Start
 
@@ -82,7 +105,7 @@ Connect your agent:
 }
 ```
 
-That's it. Your agent now has access to `search_knowledge`, `query_data`, `graph_query`, and 7 more tools.
+That's it. Your agent now has access to `search_knowledge`, `query_data`, `graph_query`, `generate_compliance_doc`, and 12 more tools.
 
 ### Optional: AI Provider Proxy
 
@@ -129,6 +152,8 @@ curl http://localhost:8090/v1/chat/completions \
 | [Architecture](docs/architecture.md) | Technical deep-dive |
 | [Deployment Guide](docs/deployment.md) | Dev, production, TLS, Docker Secrets |
 | [Technology Decisions](docs/technology-decisions.md) | ADRs and trade-offs |
+| [Risk Register](docs/risk-management.md) | EU AI Act Art. 9 risk register (R-01..R-08) |
+| [EU AI Act Plan](docs/plans/2026-04-08-eu-ai-act-compliance.md) | Implementation plan for B-40..B-46 |
 | [CLAUDE.md](CLAUDE.md) | Agent-facing reference (tools, schemas, conventions) |
 
 ## 🤝 Contributing

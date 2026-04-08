@@ -905,13 +905,13 @@ git commit -m "docs: mark P2-6, P3-2, P3-3 as resolved, Sprint 5 complete"
 
 ## Summary
 
-| Task | Issue | Aufwand | Abhängigkeiten |
-|------|-------|---------|----------------|
-| 1 | P2-6 graph_sync_log migration | 5 min | keine |
-| 2 | P2-6 agtype parsing hardening | 10 min | keine |
+| Task | Issue | Effort | Dependencies |
+|------|-------|--------|--------------|
+| 1 | P2-6 graph_sync_log migration | 5 min | none |
+| 2 | P2-6 agtype parsing hardening | 10 min | none |
 | 3 | P2-6 shortestPath fallback | 10 min | Task 2 (same file) |
-| 4 | P3-2 rate limiting middleware | 20 min | keine |
-| 5 | P3-3 ingestion cleanup + chunk API | 15 min | keine |
+| 4 | P3-2 rate limiting middleware | 20 min | none |
+| 5 | P3-3 ingestion cleanup + chunk API | 15 min | none |
 | 6 | Docker rebuild + verify + docs | 10 min | Tasks 1-5 |
 
 Tasks 1, 2, 4, 5 are independent. Task 3 depends on Task 2 (same file).

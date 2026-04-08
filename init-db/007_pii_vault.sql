@@ -1,11 +1,11 @@
 -- init-db/007_pii_vault.sql
--- Sealed Vault: Sichere Speicherung von Original-PII-Daten
--- Separates Schema mit Row-Level Security
+-- Sealed Vault: secure storage of original PII data
+-- Separate schema with Row-Level Security
 
--- ── Schema + Rolle ─────────────────────────────────────────
+-- ── Schema + role ──────────────────────────────────────────
 CREATE SCHEMA IF NOT EXISTS pii_vault;
 
--- DB-Rolle für Vault-Zugriff (nur MCP-Server darf diese Rolle annehmen)
+-- DB role for vault access (only the MCP server may assume this role)
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'mcp_vault_reader') THEN
@@ -14,12 +14,12 @@ BEGIN
 END
 $$;
 
--- Dem pb_admin Zugriff gewähren (der Applikationsuser)
+-- Grant access to pb_admin (the application user)
 GRANT USAGE ON SCHEMA pii_vault TO mcp_vault_reader;
 
--- ── Tabellen ───────────────────────────────────────────────
+-- ── Tables ─────────────────────────────────────────────────
 
--- Original-Inhalte (Klartext + erkannte PII-Entities)
+-- Original content (plaintext + detected PII entities)
 CREATE TABLE pii_vault.original_content (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id     UUID NOT NULL REFERENCES documents_meta(id) ON DELETE CASCADE,
@@ -37,7 +37,7 @@ CREATE INDEX idx_vault_content_retention
 CREATE INDEX idx_vault_content_document
     ON pii_vault.original_content(document_id);
 
--- Pseudonym-Mapping (für Rückverfolgung + Art. 17 Löschung)
+-- Pseudonym mapping (for traceability + Art. 17 deletion)
 CREATE TABLE pii_vault.pseudonym_mapping (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id     UUID NOT NULL REFERENCES documents_meta(id) ON DELETE CASCADE,
@@ -53,7 +53,7 @@ CREATE INDEX idx_vault_mapping_document
 CREATE INDEX idx_vault_mapping_pseudonym
     ON pii_vault.pseudonym_mapping(pseudonym);
 
--- Separates Audit-Log nur für Vault-Zugriffe
+-- Separate audit log only for vault access
 CREATE TABLE pii_vault.vault_access_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     agent_id        VARCHAR(200) NOT NULL,
@@ -69,7 +69,7 @@ CREATE INDEX idx_vault_access_agent
 CREATE INDEX idx_vault_access_document
     ON pii_vault.vault_access_log(document_id);
 
--- Projekt-Salts (deterministisch pro Projekt)
+-- Project salts (deterministic per project)
 CREATE TABLE pii_vault.project_salts (
     project_id      VARCHAR(100) PRIMARY KEY REFERENCES projects(id),
     salt            VARCHAR(200) NOT NULL,
@@ -84,10 +84,10 @@ ALTER TABLE pii_vault.pseudonym_mapping ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pii_vault.vault_access_log  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pii_vault.project_salts     ENABLE ROW LEVEL SECURITY;
 
--- Audit-Log: auch der Table Owner darf nicht löschen
+-- Audit log: even the table owner may not delete
 ALTER TABLE pii_vault.vault_access_log FORCE ROW LEVEL SECURITY;
 
--- Policy: Nur mcp_vault_reader und der DB-Owner (pb_admin) dürfen zugreifen
+-- Policy: only mcp_vault_reader and the DB owner (pb_admin) may access
 CREATE POLICY vault_content_read ON pii_vault.original_content
     FOR SELECT TO mcp_vault_reader USING (true);
 
@@ -112,27 +112,27 @@ CREATE POLICY vault_access_log_insert ON pii_vault.vault_access_log
 CREATE POLICY vault_access_log_read ON pii_vault.vault_access_log
     FOR SELECT TO mcp_vault_reader USING (true);
 
--- Salts sind append-only: kein UPDATE/DELETE um Pseudonym-Integrität zu sichern
+-- Salts are append-only: no UPDATE/DELETE to preserve pseudonym integrity
 CREATE POLICY vault_salts_read ON pii_vault.project_salts
     FOR SELECT TO mcp_vault_reader USING (true);
 
 CREATE POLICY vault_salts_insert ON pii_vault.project_salts
     FOR INSERT TO mcp_vault_reader WITH CHECK (true);
 
--- Grant Berechtigungen
+-- Grant permissions
 GRANT SELECT, INSERT, DELETE ON pii_vault.original_content TO mcp_vault_reader;
 GRANT SELECT, INSERT, DELETE ON pii_vault.pseudonym_mapping TO mcp_vault_reader;
 GRANT SELECT, INSERT ON pii_vault.vault_access_log TO mcp_vault_reader;
 GRANT SELECT, INSERT ON pii_vault.project_salts TO mcp_vault_reader;
 
--- ── View: Verwaiste Vault-Einträge ─────────────────────────
+-- ── View: orphaned vault entries ───────────────────────────
 CREATE OR REPLACE VIEW pii_vault.v_orphaned_content AS
 SELECT oc.id, oc.document_id, oc.chunk_index, oc.stored_at
 FROM pii_vault.original_content oc
 LEFT JOIN documents_meta dm ON dm.id = oc.document_id
 WHERE dm.id IS NULL;
 
--- ── View: Abgelaufene Vault-Einträge ───────────────────────
+-- ── View: expired vault entries ────────────────────────────
 CREATE OR REPLACE VIEW pii_vault.v_expired_vault_content AS
 SELECT id, document_id, chunk_index, retention_expires_at, data_category
 FROM pii_vault.original_content

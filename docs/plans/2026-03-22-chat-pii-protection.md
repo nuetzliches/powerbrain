@@ -2,28 +2,28 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Reversible PII-Pseudonymisierung im pb-proxy Chat-Pfad, sodass User-Nachrichten pseudonymisiert an den LLM-Provider gehen und LLM-Antworten vor der Rückgabe de-pseudonymisiert werden.
+**Goal:** Reversible PII pseudonymization in the pb-proxy chat path, so that user messages go to the LLM provider pseudonymized and LLM responses are de-pseudonymized before being returned.
 
-**Architecture:** Proxy-Middleware ruft den bestehenden Ingestion-Service (`POST /pseudonymize`) für PII-Erkennung auf. Mapping lebt ephemeral im Request-Scope. OPA-Policy steuert Aktivierung und Erzwingung. Tool-Call-Argumente werden vor MCP-Aufrufen de-pseudonymisiert, damit der MCP-Server echte Werte erhält.
+**Architecture:** Proxy middleware calls the existing ingestion service (`POST /pseudonymize`) for PII detection. Mapping lives ephemerally in the request scope. OPA policy controls activation and enforcement. Tool-call arguments are de-pseudonymized before MCP calls so that the MCP server receives real values.
 
-**Tech Stack:** Python 3.12+, FastAPI, httpx, OPA/Rego, Presidio (via Ingestion-Service), pytest
+**Tech Stack:** Python 3.12+, FastAPI, httpx, OPA/Rego, Presidio (via ingestion service), pytest
 
-**Design-Doc:** `docs/plans/2026-03-22-chat-pii-protection-design.md`
+**Design doc:** `docs/plans/2026-03-22-chat-pii-protection-design.md`
 
 ---
 
-### Task 0: Non-Text-Content Policy-Gate
+### Task 0: Non-text content policy gate
 
 **Files:**
-- Modify: `pb-proxy/pii_middleware.py` (wird in Task 5 erstellt — hier vorab-spezifiziert)
+- Modify: `pb-proxy/pii_middleware.py` (created in Task 5 — pre-specified here)
 - Modify: `opa-policies/kb/proxy.rego`
 - Modify: `opa-policies/kb/test_proxy.rego`
 - Create: `pb-proxy/tests/test_non_text_filter.py`
 
-Non-text content (Bilder, Dateien) in multimodalen Messages kann nicht PII-gescannt werden.
-Statt es als Known Limitation zu akzeptieren, steuert eine OPA-Policy das Verhalten.
+Non-text content (images, files) in multimodal messages cannot be PII-scanned.
+Instead of accepting this as a known limitation, an OPA policy controls the behavior.
 
-OpenAI-kompatibles multimodales Format:
+OpenAI-compatible multimodal format:
 ```json
 {"role": "user", "content": [
   {"type": "text", "text": "Was zeigt dieses Bild?"},
@@ -146,7 +146,7 @@ class TestFilterNonTextContent:
 
 **Step 6: Implement `filter_non_text_content` in `pii_middleware.py`**
 
-Wird in Task 5 integriert. Die Funktion:
+Will be integrated in Task 5. The function:
 
 ```python
 def filter_non_text_content(
@@ -211,7 +211,7 @@ git commit -m "feat(proxy): policy-controlled non-text content filter for multim
 
 ---
 
-### Task 1: Typisiertes Pseudonym-Format in PIIScanner
+### Task 1: Typed pseudonym format in PIIScanner
 
 **Files:**
 - Modify: `ingestion/pii_scanner.py:204-241`
@@ -343,7 +343,7 @@ git commit -m "feat(pii): typed pseudonym format [TYPE:hash] for LLM intelligibi
 
 ---
 
-### Task 2: Neuer Ingestion-Endpunkt `POST /pseudonymize`
+### Task 2: New ingestion endpoint `POST /pseudonymize`
 
 **Files:**
 - Modify: `ingestion/ingestion_api.py` (add models + endpoint after line 472)
@@ -498,7 +498,7 @@ git commit -m "feat(ingestion): add /pseudonymize endpoint for chat-path PII pro
 
 ---
 
-### Task 3: OPA-Policy für PII-Scan im Proxy
+### Task 3: OPA policy for PII scan in the proxy
 
 **Files:**
 - Modify: `opa-policies/kb/proxy.rego`
@@ -606,7 +606,7 @@ git commit -m "feat(opa): add PII protection policy for proxy chat path"
 
 ---
 
-### Task 4: Proxy-Config erweitern
+### Task 4: Extend proxy config
 
 **Files:**
 - Modify: `pb-proxy/config.py`
@@ -631,7 +631,7 @@ git commit -m "feat(proxy): add PII protection config (INGESTION_URL, PII_SCAN_*
 
 ---
 
-### Task 5: PII-Middleware im Proxy
+### Task 5: PII middleware in the proxy
 
 **Files:**
 - Create: `pb-proxy/pii_middleware.py`
@@ -941,7 +941,7 @@ git commit -m "feat(proxy): add PII middleware for chat-path pseudonymization"
 
 ---
 
-### Task 6: PII-Middleware in Proxy-Endpoint integrieren
+### Task 6: Integrate PII middleware into proxy endpoint
 
 **Files:**
 - Modify: `pb-proxy/proxy.py`
@@ -1139,7 +1139,7 @@ Policy-controlled: fail-closed when pii_scan_forced, fail-open otherwise."
 
 ---
 
-### Task 7: Prometheus-Metriken für PII-Schutz
+### Task 7: Prometheus metrics for PII protection
 
 **Files:**
 - Modify: `pb-proxy/proxy.py` (add counters)
@@ -1178,7 +1178,7 @@ git commit -m "feat(monitoring): add PII protection metrics to proxy + Prometheu
 
 ---
 
-### Task 8: docker-compose.yml — Umgebungsvariablen
+### Task 8: docker-compose.yml — environment variables
 
 **Files:**
 - Modify: `docker-compose.yml`
@@ -1211,7 +1211,7 @@ git commit -m "feat(docker): add PII protection env vars to pb-proxy service"
 
 ---
 
-### Task 9: E2E-Smoke-Test
+### Task 9: E2E smoke test
 
 **Files:**
 - Create: `tests/integration/test_pii_chat_protection.py`
@@ -1290,21 +1290,21 @@ git commit -m "test: add E2E integration test for chat-path PII protection"
 
 ---
 
-### Task 10: CLAUDE.md und Design-Doc aktualisieren
+### Task 10: Update CLAUDE.md and design doc
 
 **Files:**
-- Modify: `CLAUDE.md` — Feature-Liste, Architektur-Diagramm, MCP-Tools-Beschreibung
-- Modify: `docs/plans/2026-03-22-chat-pii-protection-design.md` — Status auf "implementiert"
+- Modify: `CLAUDE.md` — feature list, architecture diagram, MCP tool description
+- Modify: `docs/plans/2026-03-22-chat-pii-protection-design.md` — status to "implemented"
 
 **Step 1: Update CLAUDE.md**
 
-- Add `10. ✅ **Chat-Path PII Protection** — Reversible Pseudonymisierung im Proxy` to Completed Features
+- Add `10. ✅ **Chat-Path PII Protection** — Reversible pseudonymization in the proxy` to Completed Features
 - Add `PII_SCAN_ENABLED`, `PII_SCAN_FORCED`, `INGESTION_URL` to env var documentation
-- Update Architecture diagram to show PII middleware in proxy path
+- Update architecture diagram to show PII middleware in proxy path
 
 **Step 2: Update design doc status**
 
-Change `Status: Entwurf` → `Status: Implementiert`
+Change `Status: Draft` → `Status: Implemented`
 
 **Step 3: Commit**
 
@@ -1315,22 +1315,22 @@ git commit -m "docs: update CLAUDE.md and design doc for chat-path PII protectio
 
 ---
 
-## Zusammenfassung
+## Summary
 
-| Task | Komponente | Beschreibung |
+| Task | Component | Description |
 |------|-----------|-------------|
-| 0 | Non-Text Filter | Policy-gesteuertes Gate für multimodalen Content (Bilder, Dateien) |
-| 1 | Ingestion PIIScanner | Typisiertes Pseudonym-Format `[TYPE:hash]` |
-| 2 | Ingestion API | Neuer `POST /pseudonymize` Endpunkt |
-| 3 | OPA Policies | `pii_scan_enabled`, `pii_scan_forced`, `pii_entity_types` |
-| 4 | Proxy Config | `INGESTION_URL`, `PII_SCAN_ENABLED`, `PII_SCAN_FORCED` |
-| 5 | Proxy Middleware | `pii_middleware.py` — pseudonymize/depseudonymize + non-text filter |
-| 6 | Proxy Integration | Middleware in `proxy.py` + Tool-Arg-De-Pseudonymisierung in `agent_loop.py` |
-| 7 | Monitoring | Prometheus-Counter für PII-Entities + Scan-Failures |
-| 8 | Docker Compose | Env-Vars und `depends_on` für pb-proxy |
-| 9 | E2E Test | Integration-Test für den gesamten Chat-PII-Flow |
-| 10 | Docs | CLAUDE.md + Design-Doc aktualisieren |
+| 0 | Non-text filter | Policy-controlled gate for multimodal content (images, files) |
+| 1 | Ingestion PIIScanner | Typed pseudonym format `[TYPE:hash]` |
+| 2 | Ingestion API | New `POST /pseudonymize` endpoint |
+| 3 | OPA policies | `pii_scan_enabled`, `pii_scan_forced`, `pii_entity_types` |
+| 4 | Proxy config | `INGESTION_URL`, `PII_SCAN_ENABLED`, `PII_SCAN_FORCED` |
+| 5 | Proxy middleware | `pii_middleware.py` — pseudonymize/depseudonymize + non-text filter |
+| 6 | Proxy integration | Middleware in `proxy.py` + tool-arg de-pseudonymization in `agent_loop.py` |
+| 7 | Monitoring | Prometheus counter for PII entities + scan failures |
+| 8 | Docker Compose | Env vars and `depends_on` for pb-proxy |
+| 9 | E2E test | Integration test for the full chat PII flow |
+| 10 | Docs | Update CLAUDE.md + design doc |
 
-**Punkt 6 aus den Known Limitations (Tool-Call-Argumente)** wird in Task 6 gelöst: `agent_loop.py` de-pseudonymisiert Tool-Argumente vor dem MCP-Aufruf via `depseudonymize_tool_arguments()`.
+**Point 6 from the Known Limitations (tool-call arguments)** is resolved in Task 6: `agent_loop.py` de-pseudonymizes tool arguments before the MCP call via `depseudonymize_tool_arguments()`.
 
-**Known Limitation 1 (Non-Text Content)** wird in Task 0 gelöst: Policy-gesteuertes Gate (`block`/`placeholder`/`allow`) für multimodalen Content, der nicht PII-gescannt werden kann.
+**Known Limitation 1 (non-text content)** is resolved in Task 0: Policy-controlled gate (`block`/`placeholder`/`allow`) for multimodal content that cannot be PII-scanned.

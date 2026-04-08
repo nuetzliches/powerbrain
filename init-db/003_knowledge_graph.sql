@@ -1,25 +1,25 @@
 -- ============================================================
---  Wissensdatenbank – Knowledge Graph (Apache AGE)
+--  Knowledge base – Knowledge Graph (Apache AGE)
 --  Migration: 003_knowledge_graph.sql
 --
---  Apache AGE erweitert PostgreSQL um einen Property-Graph.
---  Damit können Beziehungen zwischen Entitäten (Projekte,
---  Technologien, Personen, Regeln) traversiert werden —
---  etwas, das reine Vektorsuche nicht kann.
+--  Apache AGE extends PostgreSQL with a property graph,
+--  enabling traversal of relationships between entities
+--  (projects, technologies, people, rules) — something that
+--  pure vector search cannot do.
 --
---  Voraussetzung: PostgreSQL-Image mit AGE-Extension
+--  Requirement: PostgreSQL image with AGE extension
 --  Image: apache/age
 -- ============================================================
 
--- Extension laden
+-- Load extension
 CREATE EXTENSION IF NOT EXISTS age;
 LOAD 'age';
 SET search_path = ag_catalog, "$user", public;
 
--- Graph erstellen
+-- Create graph
 SELECT create_graph('knowledge');
 
--- ── Vertex-Labels (Knotentypen) ────────────────────────────
+-- ── Vertex labels (node types) ─────────────────────────────
 
 SELECT create_vlabel('knowledge', 'Project');
 SELECT create_vlabel('knowledge', 'Technology');
@@ -28,7 +28,7 @@ SELECT create_vlabel('knowledge', 'Document');
 SELECT create_vlabel('knowledge', 'Rule');
 SELECT create_vlabel('knowledge', 'Concept');
 
--- ── Edge-Labels (Beziehungstypen) ──────────────────────────
+-- ── Edge labels (relationship types) ───────────────────────
 
 SELECT create_elabel('knowledge', 'USES');
 SELECT create_elabel('knowledge', 'WORKS_ON');
@@ -39,14 +39,14 @@ SELECT create_elabel('knowledge', 'APPLIES_TO');
 SELECT create_elabel('knowledge', 'RELATED_TO');
 SELECT create_elabel('knowledge', 'DEPENDS_ON');
 
--- ── Beispieldaten ──────────────────────────────────────────
+-- ── Example data ───────────────────────────────────────────
 
 SELECT * FROM cypher('knowledge', $$
-  CREATE (:Project {name: 'Wissensdatenbank', phase: 'Aufbau', classification: 'internal'})
+  CREATE (:Project {name: 'knowledge base', phase: 'setup', classification: 'internal'})
 $$) AS (v agtype);
 
 SELECT * FROM cypher('knowledge', $$
-  CREATE (:Project {name: 'API-Gateway', phase: 'Produktion', classification: 'confidential'})
+  CREATE (:Project {name: 'API-Gateway', phase: 'production', classification: 'confidential'})
 $$) AS (v agtype);
 
 SELECT * FROM cypher('knowledge', $$
@@ -66,34 +66,34 @@ SELECT * FROM cypher('knowledge', $$
 $$) AS (v agtype);
 
 SELECT * FROM cypher('knowledge', $$
-  MATCH (p:Project {name: 'Wissensdatenbank'}), (t:Technology {name: 'Qdrant'})
-  CREATE (p)-[:USES {since: '2026-03', purpose: 'Vektorsuche'}]->(t)
+  MATCH (p:Project {name: 'knowledge base'}), (t:Technology {name: 'Qdrant'})
+  CREATE (p)-[:USES {since: '2026-03', purpose: 'vector search'}]->(t)
 $$) AS (e agtype);
 
 SELECT * FROM cypher('knowledge', $$
-  MATCH (p:Project {name: 'Wissensdatenbank'}), (t:Technology {name: 'PostgreSQL'})
-  CREATE (p)-[:USES {since: '2026-03', purpose: 'Strukturierte Daten'}]->(t)
+  MATCH (p:Project {name: 'knowledge base'}), (t:Technology {name: 'PostgreSQL'})
+  CREATE (p)-[:USES {since: '2026-03', purpose: 'structured data'}]->(t)
 $$) AS (e agtype);
 
 SELECT * FROM cypher('knowledge', $$
-  MATCH (p:Project {name: 'Wissensdatenbank'}), (t:Technology {name: 'OPA'})
-  CREATE (p)-[:USES {since: '2026-03', purpose: 'Regelwerk'}]->(t)
+  MATCH (p:Project {name: 'knowledge base'}), (t:Technology {name: 'OPA'})
+  CREATE (p)-[:USES {since: '2026-03', purpose: 'policy set'}]->(t)
 $$) AS (e agtype);
 
 SELECT * FROM cypher('knowledge', $$
-  CREATE (:Concept {name: 'DSGVO', domain: 'compliance'})
+  CREATE (:Concept {name: 'GDPR', domain: 'compliance'})
 $$) AS (v agtype);
 
 SELECT * FROM cypher('knowledge', $$
-  CREATE (:Concept {name: 'PII-Erkennung', domain: 'datenschutz'})
+  CREATE (:Concept {name: 'PII detection', domain: 'privacy'})
 $$) AS (v agtype);
 
 SELECT * FROM cypher('knowledge', $$
-  MATCH (c1:Concept {name: 'PII-Erkennung'}), (c2:Concept {name: 'DSGVO'})
-  CREATE (c1)-[:RELATED_TO {relation: 'implementiert_anforderung_von'}]->(c2)
+  MATCH (c1:Concept {name: 'PII detection'}), (c2:Concept {name: 'GDPR'})
+  CREATE (c1)-[:RELATED_TO {relation: 'implements_requirement_of'}]->(c2)
 $$) AS (e agtype);
 
--- ── Views für schnellen Zugriff ────────────────────────────
+-- ── Views for fast access ──────────────────────────────────
 
 CREATE OR REPLACE VIEW v_project_technologies AS
 SELECT *

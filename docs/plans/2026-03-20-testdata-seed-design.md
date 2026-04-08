@@ -1,32 +1,32 @@
 # Testdata Seed Design
 
-**Goal:** Reproduzierbare Testdaten im Repo tracken und per Docker Compose Profil automatisch seeden.
+**Goal:** Track reproducible test data in the repo and seed it automatically via a Docker Compose profile.
 
-**Architecture:** 21 NovaTech-Testdokumente werden als JSON-Datei in `testdata/` versioniert. Ein Seed-Container liest die Dokumente und schickt sie einzeln durch die Ingestion-API (`POST /ingest`). Ollama generiert die Embeddings live. Der Seed-Container laeuft nur mit `docker compose --profile seed up`.
+**Architecture:** 21 NovaTech test documents are versioned as a JSON file in `testdata/`. A seed container reads the documents and sends them one by one through the Ingestion API (`POST /ingest`). Ollama generates the embeddings live. The seed container only runs with `docker compose --profile seed up`.
 
-## Entscheidungen
+## Decisions
 
-| Frage | Entscheidung | Grund |
-|-------|-------------|-------|
-| Embeddings | Live via Ollama | Einfacher zu pflegen, kein Regenerieren bei Modellwechsel |
-| Seed-Pfad | Durch Ingestion-API | Testet echten Pfad (PII-Scan, OPA, PostgreSQL-Metadaten) |
-| Ausloesung | Docker Compose `--profile seed` | Ein Befehl fuer komplette Testumgebung |
-| Datenformat | JSON-Datei im Repo | Reviewbar, diffbar, versioniert |
+| Question | Decision | Reason |
+|----------|----------|--------|
+| Embeddings | Live via Ollama | Easier to maintain, no regeneration when the model changes |
+| Seed path | Through Ingestion API | Exercises the real path (PII scan, OPA, PostgreSQL metadata) |
+| Trigger | Docker Compose `--profile seed` | A single command for a complete test environment |
+| Data format | JSON file in the repo | Reviewable, diffable, versioned |
 
-## Aenderungen
+## Changes
 
-### 1. Ingestion-API: `collection`-Override (ingestion/ingestion_api.py)
+### 1. Ingestion API: `collection` override (ingestion/ingestion_api.py)
 
-Neues optionales Feld `collection` in `IngestRequest`. Wenn gesetzt, wird die `COLLECTION_MAP`-Logik uebersprungen. Noetig weil `source_type=json` sonst immer auf `knowledge_general` mappt, aber Testdaten alle 3 Collections brauchen.
+New optional `collection` field in `IngestRequest`. When set, the `COLLECTION_MAP` logic is skipped. Required because `source_type=json` would otherwise always map to `knowledge_general`, but the test data needs all 3 collections.
 
 ### 2. testdata/documents.json
 
-21 Dokumente extrahiert aus `scripts/seed_comprehensive_testdata.py`:
-- `knowledge_general`: 10 Dokumente (HR, Finance, Culture, Legal, Ops)
-- `knowledge_code`: 6 Dokumente (Dev Guidelines, API, Security)
-- `knowledge_rules`: 5 Dokumente (Governance, Compliance)
+21 documents extracted from `scripts/seed_comprehensive_testdata.py`:
+- `knowledge_general`: 10 documents (HR, Finance, Culture, Legal, Ops)
+- `knowledge_code`: 6 documents (Dev Guidelines, API, Security)
+- `knowledge_rules`: 5 documents (Governance, Compliance)
 
-Format pro Dokument:
+Format per document:
 ```json
 {
   "id": "novatech-onboarding-checklist",
@@ -42,18 +42,18 @@ Format pro Dokument:
 
 ### 3. testdata/seed.py
 
-Python-Skript (nur stdlib + urllib):
-1. Wartet auf Ollama, Ingestion-API, MCP-Server (HTTP health polls)
-2. Pullt `nomic-embed-text` Modell falls nicht vorhanden
-3. Erstellt Qdrant-Collections falls noetig
-4. Iteriert ueber documents.json, ruft `POST /ingest` pro Dokument
-5. Verifiziert via MCP `search_knowledge` dass Daten abrufbar sind
+Python script (stdlib + urllib only):
+1. Waits for Ollama, Ingestion API, MCP server (HTTP health polls)
+2. Pulls the `nomic-embed-text` model if not present
+3. Creates Qdrant collections if needed
+4. Iterates over documents.json, calls `POST /ingest` for each document
+5. Verifies via MCP `search_knowledge` that the data is retrievable
 
 ### 4. testdata/Dockerfile
 
-Minimales Python-Image, kopiert seed.py + documents.json.
+Minimal Python image, copies seed.py + documents.json.
 
-### 5. docker-compose.yml: Seed-Service
+### 5. docker-compose.yml: Seed service
 
 ```yaml
 seed:
@@ -72,16 +72,16 @@ seed:
     QDRANT_URL: http://qdrant:6333
 ```
 
-### 6. Aufraeum: scripts/seed_comprehensive_testdata.py
+### 6. Cleanup: scripts/seed_comprehensive_testdata.py
 
-Wird durch Verweis auf `testdata/` ersetzt. Das alte Skript bleibt als deprecated Referenz oder wird entfernt.
+Replaced by a reference to `testdata/`. The old script either remains as a deprecated reference or is removed.
 
-## Nutzung
+## Usage
 
 ```bash
-# Kompletter Stack mit Testdaten
+# Full stack with test data
 docker compose --profile seed up -d
 
-# Nur Infrastruktur (ohne Testdaten)
+# Infrastructure only (without test data)
 docker compose up -d
 ```

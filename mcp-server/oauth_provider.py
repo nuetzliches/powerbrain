@@ -201,17 +201,17 @@ class PowerbrainOAuthProvider(
         """
         pending = self._pending_logins.get(login_session_id)
         if not pending:
-            return None, "Login-Session abgelaufen. Bitte erneut versuchen."
+            return None, "Login session expired. Please try again."
 
         if not api_key or not api_key.strip():
-            return None, "Bitte einen API-Key eingeben."
+            return None, "Please enter an API key."
 
         api_key = api_key.strip()
 
         # Validate the API key
         access = await self.api_key_verifier.verify_token(api_key)
         if access is None:
-            return None, "Ungültiger API-Key. Bitte prüfen und erneut versuchen."
+            return None, "Invalid API key. Please check and try again."
 
         # Valid! Generate auth code
         del self._pending_logins[login_session_id]

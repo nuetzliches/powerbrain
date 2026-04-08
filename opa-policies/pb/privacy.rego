@@ -1,24 +1,24 @@
 # ============================================================
-#  Wissensdatenbank – DSGVO / Datenschutz Policies
-#  Paket: pb.privacy
+#  Knowledge base – GDPR / privacy policies
+#  Package: pb.privacy
 #
 #  Data-driven: purposes, retention, field redaction from data.json
 #
-#  Regelt: Zweckbindung, PII-Zugriff, Aufbewahrungsfristen,
-#  Recht auf Löschung, Datenminimierung
+#  Governs: purpose binding, PII access, retention periods,
+#  right to erasure, data minimization
 # ============================================================
 
 package pb.privacy
 
 import rego.v1
 
-# ── Zweckbindung (Art. 5 Abs. 1 lit. b DSGVO) ─────────────
-# Jeder Zugriff auf PII-Daten muss einen gültigen Zweck angeben,
-# der mit dem ursprünglichen Erhebungszweck kompatibel ist.
+# ── Purpose binding (Art. 5(1)(b) GDPR) ───────────────────
+# Every access to PII data must specify a valid purpose that
+# is compatible with the original collection purpose.
 
 default purpose_allowed := false
 
-# Erlaubte Verarbeitungszwecke aus data.json
+# Allowed processing purposes from data.json
 allowed_purposes := data.pb.config.allowed_purposes
 
 purpose_allowed if {
@@ -36,13 +36,13 @@ purpose_denied_reason := reason if {
     not purpose_allowed
     input.contains_pii
     reason := sprintf(
-        "Zweckbindung verletzt: Zweck '%s' ist nicht erlaubt für Datenkategorie '%s'. Erlaubt: %v",
+        "Purpose binding violated: purpose '%s' is not allowed for data category '%s'. Allowed: %v",
         [input.purpose, input.data_category, allowed_purposes[input.data_category]]
     )
 }
 
-# ── Datenminimierung (Art. 5 Abs. 1 lit. c DSGVO) ─────────
-# Agenten erhalten nur die Felder, die für ihren Zweck nötig sind.
+# ── Data minimization (Art. 5(1)(c) GDPR) ─────────────────
+# Agents only receive the fields required for their purpose.
 
 default fields_to_redact := set()
 
@@ -55,15 +55,15 @@ fields_to_redact := {f | some f in data.pb.config.fields_to_redact["default"]} i
     input.purpose
 }
 
-# ── PII-Ingestion-Policy ───────────────────────────────────
-# Entscheidet, wie PII bei der Ingestion behandelt wird.
+# ── PII ingestion policy ───────────────────────────────────
+# Decides how PII is handled during ingestion.
 
 default pii_action := "block"
 
 pii_action := data.pb.config.pii_actions[input.classification] if {
     input.contains_pii == true
     data.pb.config.pii_actions[input.classification]
-    # Confidential benötigt legal_basis
+    # Confidential requires legal_basis
     input.classification != "confidential"
 }
 
@@ -79,7 +79,7 @@ pii_action := "block" if {
     not input.legal_basis
 }
 
-# ── Aufbewahrungsfristen (Art. 5 Abs. 1 lit. e DSGVO) ──────
+# ── Retention periods (Art. 5(1)(e) GDPR) ──────────────────
 
 default retention_days := 365
 
@@ -87,7 +87,7 @@ retention_days := data.pb.config.retention_days[input.data_category] if {
     data.pb.config.retention_days[input.data_category]
 }
 
-# ── Recht auf Löschung (Art. 17 DSGVO) ─────────────────────
+# ── Right to erasure (Art. 17 GDPR) ─────────────────────────
 
 default deletion_allowed := false
 
@@ -116,14 +116,14 @@ deletion_response := response if {
     has_legal_retention_obligation
     response := {
         "action": "restrict",
-        "reason": "Gesetzliche Aufbewahrungspflicht",
+        "reason": "Legal retention obligation",
         "scope": "restrict_processing",
         "review_after_days": retention_days,
     }
 }
 
 # ── Dual Storage Policy ─────────────────────────────────────
-# Bestimmt pro Klassifizierung, ob Original + Pseudonym gespeichert werden.
+# Determines per classification whether original + pseudonym are stored.
 
 default dual_storage_enabled := false
 
@@ -138,7 +138,7 @@ dual_storage_enabled if {
 }
 
 # ── Vault Access Policy ─────────────────────────────────────
-# Prüft ob ein Agent auf Original-Daten im Vault zugreifen darf.
+# Checks whether an agent may access original data in the vault.
 
 default vault_access_allowed := false
 
@@ -162,7 +162,7 @@ role_allowed_for_classification if {
 }
 
 # ── Vault Field Redaction ───────────────────────────────────
-# Welche Felder im Original redaktiert werden, abhängig vom Zweck.
+# Which fields in the original are redacted, depending on the purpose.
 
 default vault_fields_to_redact := set()
 

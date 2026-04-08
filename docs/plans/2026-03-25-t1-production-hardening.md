@@ -503,7 +503,7 @@ Then modify `check_opa_policy()` (around line 472) to check the cache before mak
     wait=wait_exponential(multiplier=0.5, min=0.5, max=2),
     retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
     reraise=True,
-    before_sleep=lambda rs: log.warning(f"OPA retry #{rs.attempt_number} nach Fehler: {rs.outcome.exception()}"),
+    before_sleep=lambda rs: log.warning(f"OPA retry #{rs.attempt_number} after error: {rs.outcome.exception()}"),
 )
 async def check_opa_policy(agent_id: str, agent_role: str,
                            resource: str, classification: str,
@@ -600,7 +600,7 @@ Modify `embed_text()` (line 354-356) to use the cache:
     wait=wait_exponential(multiplier=2, min=2, max=8),
     retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
     reraise=True,
-    before_sleep=lambda rs: log.warning(f"Embed retry #{rs.attempt_number} nach Fehler: {rs.outcome.exception()}"),
+    before_sleep=lambda rs: log.warning(f"Embed retry #{rs.attempt_number} after error: {rs.outcome.exception()}"),
 )
 async def embed_text(text: str) -> list[float]:
     with _otel_span("embed_text"):
@@ -626,7 +626,7 @@ Modify `get_embedding()` (line 157-159):
 
 ```python
 async def get_embedding(text: str) -> list[float]:
-    """Erzeugt Embedding über den konfigurierten Provider (OpenAI-compat), mit Cache."""
+    """Generate embedding via the configured provider (OpenAI-compat), with cache."""
     cached = embedding_cache.get(text, EMBEDDING_MODEL)
     if cached is not None:
         return cached
@@ -641,7 +641,7 @@ In `ingestion/ingestion_api.py`, replace the sequential embedding in `ingest_tex
 
 Refactor: collect all processed chunks first, then batch-embed. Replace the single-embed call in the chunk loop with a placeholder, then do a batch embed after the loop.
 
-After the chunk processing loop (after line 524, before line 526 `# 5. In Qdrant upserten`), replace the embedding approach:
+After the chunk processing loop (after line 524, before line 526 `# 5. Upsert into Qdrant`), replace the embedding approach:
 
 The current code at line 505 does `embedding = await get_embedding(chunk)` inside the loop. Change the loop to collect texts instead, then batch-embed:
 

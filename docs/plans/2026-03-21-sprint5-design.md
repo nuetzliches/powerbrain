@@ -1,17 +1,17 @@
 # Sprint 5 Design: P2-6 + P3-2 + P3-3
 
-**Datum:** 2026-03-21
-**Scope:** Apache AGE Hardening, Rate Limiting, Ingestion Cleanup + Chunk-API
+**Date:** 2026-03-21
+**Scope:** Apache AGE Hardening, Rate Limiting, Ingestion Cleanup + Chunk API
 
 ---
 
-## Übersicht
+## Overview
 
-| Issue | Titel | Art | Aufwand |
-|-------|-------|-----|---------|
-| P2-6 | Apache AGE Einschränkungen | Bugfix + Hardening | Mittel |
-| P3-2 | Kein Rate Limiting | Neues Feature | Mittel |
-| P3-3 | Ingestion-Pipeline Stubs | Aufräumen + API | Mittel |
+| Issue | Title | Type | Effort |
+|-------|-------|------|--------|
+| P2-6 | Apache AGE limitations | Bugfix + Hardening | Medium |
+| P3-2 | No rate limiting | New feature | Medium |
+| P3-3 | Ingestion pipeline stubs | Cleanup + API | Medium |
 
 ---
 
@@ -19,32 +19,32 @@
 
 ### Problem
 
-1. **Fehlende `graph_sync_log` Tabelle:** `_log_sync()` in `graph_service.py:333`
-   schreibt in eine Tabelle die in keiner Migration existiert. Jede Graph-Mutation
-   crasht beim Logging.
-2. **Fragiles agtype-Parsing:** `json.loads(str(raw))` bricht bei AGE-spezifischen
-   Suffixen (`::vertex`, `::edge`).
-3. **`shortestPath` Bugs:** Bekannte Probleme in AGE bei gerichteten Graphen.
-4. **Variable-Depth Traversal:** `[r*1..depth]` gibt Pfade/Listen statt einzelner
-   Relationships zurück.
+1. **Missing `graph_sync_log` table:** `_log_sync()` in `graph_service.py:333`
+   writes to a table that does not exist in any migration. Every graph mutation
+   crashes during logging.
+2. **Fragile agtype parsing:** `json.loads(str(raw))` breaks on AGE-specific
+   suffixes (`::vertex`, `::edge`).
+3. **`shortestPath` bugs:** Known issues in AGE with directed graphs.
+4. **Variable-depth traversal:** `[r*1..depth]` returns paths/lists instead of individual
+   relationships.
 
 ### Design
 
 **Migration `011_graph_sync_log.sql`:**
-- Tabelle mit: `id SERIAL`, `operation TEXT`, `label TEXT`, `node_id TEXT`,
+- Table with: `id SERIAL`, `operation TEXT`, `label TEXT`, `node_id TEXT`,
   `details JSONB`, `created_at TIMESTAMPTZ DEFAULT now()`
 
-**`graph_service.py` Hardening:**
-- `_execute_cypher()`: AGE agtype-Suffixe (`::vertex`, `::edge`, `::path`) per
-  Regex strippen vor `json.loads`. Robusteres Fallback-Parsing.
-- `find_path()`: Try/except um `shortestPath()`. Bei AGE-Fehler Fallback auf
-  iterativen BFS via `get_neighbors()` mit Tiefenlimit.
-- Variable-Depth: Ergebnis als Liste parsen wenn `*` in der Query.
+**`graph_service.py` hardening:**
+- `_execute_cypher()`: Strip AGE agtype suffixes (`::vertex`, `::edge`, `::path`) via
+  regex before `json.loads`. More robust fallback parsing.
+- `find_path()`: Try/except around `shortestPath()`. On AGE error, fall back to
+  iterative BFS via `get_neighbors()` with depth limit.
+- Variable-depth: Parse result as a list when `*` is in the query.
 
 **Tests:**
-- Migration definiert `graph_sync_log` Tabelle
-- `_execute_cypher` hat agtype-Suffix-Handling (Regex-Pattern)
-- `find_path` hat Fallback-Logik
+- Migration defines `graph_sync_log` table
+- `_execute_cypher` has agtype suffix handling (regex pattern)
+- `find_path` has fallback logic
 
 ---
 
@@ -52,103 +52,103 @@
 
 ### Problem
 
-Kein Rate Limiting — ein Agent kann den MCP-Server fluten.
+No rate limiting — an agent can flood the MCP server.
 
 ### Design
 
-**In-Memory Token Bucket pro `agent_id`, Limits pro Rolle via Env-Vars.**
+**In-memory token bucket per `agent_id`, limits per role via env vars.**
 
-**Konfiguration:**
+**Configuration:**
 ```
-RATE_LIMIT_ANALYST=60       # Requests pro Minute
+RATE_LIMIT_ANALYST=60       # Requests per minute
 RATE_LIMIT_DEVELOPER=120
 RATE_LIMIT_ADMIN=300
-RATE_LIMIT_ENABLED=true     # Komplett deaktivierbar
+RATE_LIMIT_ENABLED=true     # Can be fully disabled
 ```
 
-**Token Bucket:**
-- `TokenBucket` Klasse mit Kapazität, Refill-Rate, asyncio Lock
-- Registry: `dict[str, TokenBucket]` — ein Bucket pro `agent_id`
-- Cleanup: Buckets nach 10 Min Inaktivität entfernen
+**Token bucket:**
+- `TokenBucket` class with capacity, refill rate, asyncio lock
+- Registry: `dict[str, TokenBucket]` — one bucket per `agent_id`
+- Cleanup: Remove buckets after 10 min of inactivity
 
 **Integration:**
-- Starlette Middleware nach Auth, vor MCP-Dispatch
-- HTTP 429 mit `Retry-After` Header bei Überschreitung
-- Prometheus Counter `kb_rate_limit_rejected_total`
-- `/health` und `/metrics` ausgenommen
+- Starlette middleware after auth, before MCP dispatch
+- HTTP 429 with `Retry-After` header on exceedance
+- Prometheus counter `kb_rate_limit_rejected_total`
+- `/health` and `/metrics` excluded
 
-**Graceful Degradation:**
-- Rate Limiter Fehler → Requests durchlassen (fail-open)
+**Graceful degradation:**
+- Rate limiter error → let requests through (fail-open)
 
 **Tests:**
-- Env-Var-Konfiguration wird gelesen
-- Middleware in der Chain vorhanden
-- 429 Response-Logik existiert
-- Fail-open Pattern vorhanden
+- Env var configuration is read
+- Middleware present in the chain
+- 429 response logic exists
+- Fail-open pattern present
 
 ---
 
-## P3-3: Ingestion Aufräumen + Chunk-API
+## P3-3: Ingestion Cleanup + Chunk API
 
 ### Problem
 
-`/ingest` mischt Source-Parsing mit KB-Pipeline. `git_repo` und `sql_dump` sind
-Stubs. Adapter (Forgejo, etc.) brauchen einen sauberen Einstiegspunkt.
+`/ingest` mixes source parsing with KB pipeline. `git_repo` and `sql_dump` are
+stubs. Adapters (Forgejo, etc.) need a clean entry point.
 
-### Architektur-Entscheidung
+### Architecture decision
 
-`/ingest` ist der Endpoint über den Agenten Text in die KB schreiben.
-Adapter (Forgejo, CSV-Imports, etc.) sind separate Komponenten die Daten
-vorverarbeiten und über einen internen Chunk-Endpoint einspeisen.
-Beide Wege durchlaufen die gleiche Datenschutz-Pipeline (`ingest_text_chunks()`).
+`/ingest` is the endpoint via which agents write text into the KB.
+Adapters (Forgejo, CSV imports, etc.) are separate components that preprocess
+data and feed it in via an internal chunk endpoint.
+Both paths go through the same privacy pipeline (`ingest_text_chunks()`).
 
 ```
 Agent (MCP ingest_data) → POST /ingest       → ingest_text_chunks()
-Adapter (intern)        → POST /ingest/chunks → ingest_text_chunks()
+Adapter (internal)      → POST /ingest/chunks → ingest_text_chunks()
                                                   ↓
                                             PII → OPA → Vault → Embed → Qdrant
 ```
 
 ### Design
 
-**Stubs entfernen:**
-- `git_repo` und `sql_dump` Branches aus `/ingest` entfernen
-- MCP-Tool `ingest_data` Schema: `source_type` Enum auf `["text"]` reduzieren
-- Klare Fehlermeldung bei unbekanntem `source_type`
+**Remove stubs:**
+- Remove `git_repo` and `sql_dump` branches from `/ingest`
+- MCP tool `ingest_data` schema: Reduce `source_type` enum to `["text"]`
+- Clear error message on unknown `source_type`
 
-**Neuer Endpoint `POST /ingest/chunks`:**
+**New endpoint `POST /ingest/chunks`:**
 ```python
 class ChunkIngestRequest(BaseModel):
-    chunks: list[str]                    # Vorverarbeitete Text-Chunks
+    chunks: list[str]                    # Preprocessed text chunks
     project: str
     collection: str = "knowledge_general"
     classification: str = "internal"
     metadata: dict = {}
-    source: str = ""                     # Herkunftsbezeichnung
+    source: str = ""                     # Origin identifier
 ```
-- Ruft `ingest_text_chunks()` auf — volle Pipeline
-- Nur aus Docker-Netzwerk erreichbar (kein externer Zugang)
+- Calls `ingest_text_chunks()` — full pipeline
+- Only reachable from the Docker network (no external access)
 
-**`/ingest` vereinfachen:**
-- Nur `text` als Source-Type
+**Simplify `/ingest`:**
+- Only `text` as source type
 - Chunking + `ingest_text_chunks()`
-- Kein Source-Type-Switch
+- No source-type switch
 
 **Tests:**
-- MCP-Tool Schema hat nur `text` als Source-Type
-- `/ingest/chunks` Endpoint existiert
-- ChunkIngestRequest Model hat erwartete Felder
+- MCP tool schema only has `text` as source type
+- `/ingest/chunks` endpoint exists
+- ChunkIngestRequest model has expected fields
 
 ---
 
-## Abhängigkeiten
+## Dependencies
 
-Die drei Tasks sind voneinander unabhängig und können parallel implementiert werden.
-Task 4 (Docker rebuild + live verify) hängt von allen dreien ab.
+The three tasks are independent of each other and can be implemented in parallel.
+Task 4 (Docker rebuild + live verify) depends on all three.
 
-## Offene Punkte für spätere Sprints
+## Open points for later sprints
 
-- Forgejo-Adapter als erste Adapter-Implementierung
-- Multimodale Ingestion (Bilder, Videos)
-- Redis-backed Rate Limiting für Multi-Instance
-- AGE Integration-Tests gegen laufende Instanz
+- Forgejo adapter as the first adapter implementation
+- Multimodal ingestion (images, videos)
+- Redis-backed rate limiting for multi-instance
+- AGE integration tests against a running instance

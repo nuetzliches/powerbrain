@@ -1,84 +1,84 @@
 -- ============================================================
---  Datenschutzvorfälle (DSGVO Art. 33/34)
+--  Privacy incidents (GDPR Art. 33/34)
 --  Migration: 006_privacy_incidents.sql
 --
---  Zweck: Protokolliert potenzielle Datenschutzverletzungen,
---  die durch LLMs, PII-Scanner oder manuelle Prüfung entdeckt
---  wurden. Bildet den Nachweis-Pfad für Art. 5(2) (Rechenschaftspflicht)
---  und den 72h-Meldeweg nach Art. 33.
+--  Purpose: logs potential privacy breaches discovered by
+--  LLMs, PII scanners, or manual review. Forms the evidence
+--  path for Art. 5(2) (accountability) and the 72-hour
+--  notification process under Art. 33.
 --
---  WICHTIG: Diese Tabelle darf NIEMALS geleert werden.
---  Auch „geschlossene" Vorfälle bleiben als Nachweis erhalten.
+--  IMPORTANT: this table must NEVER be emptied.
+--  Even "closed" incidents remain as evidence.
 -- ============================================================
 
 CREATE TYPE incident_status AS ENUM (
-    'detected',          -- Automatisch oder manuell erkannt, noch nicht bewertet
-    'under_review',      -- Datenschutzbeauftragter / Admin prüft
-    'contained',         -- Datenzugriff gesperrt, weitere Verbreitung gestoppt
-    'notified_authority',-- Meldung an Aufsichtsbehörde erfolgt (Art. 33)
-    'notified_subject',  -- Betroffene Person informiert (Art. 34)
-    'resolved',          -- Abgeschlossen, kein Meldeerfordernis oder bereits gemeldet
-    'false_positive'     -- Prüfung ergab keine tatsächliche Verletzung
+    'detected',          -- Detected automatically or manually, not yet assessed
+    'under_review',      -- Data protection officer / admin is reviewing
+    'contained',         -- Data access locked, further dissemination stopped
+    'notified_authority',-- Notification to supervisory authority sent (Art. 33)
+    'notified_subject',  -- Data subject informed (Art. 34)
+    'resolved',          -- Closed, no notification required or already reported
+    'false_positive'     -- Review found no actual breach
 );
 
 CREATE TYPE incident_source AS ENUM (
-    'llm_detection',     -- LLM hat im Kontext PII erkannt, die nicht anonymisiert war
-    'pii_scanner',       -- Presidio-Scan bei Re-Indexierung
-    'agent_report',      -- Agent hat über submit_feedback oder expliziten Report gemeldet
-    'manual_audit',      -- Menschliche Prüfung
-    'retention_check'    -- Retention-Cleanup hat verwaiste PII-Daten entdeckt
+    'llm_detection',     -- LLM detected unanonymized PII in the context
+    'pii_scanner',       -- Presidio scan during re-indexing
+    'agent_report',      -- Agent reported via submit_feedback or explicit report
+    'manual_audit',      -- Human review
+    'retention_check'    -- Retention cleanup discovered orphaned PII data
 );
 
 CREATE TABLE privacy_incidents (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
-    -- Erkennung
+    -- Detection
     detected_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    detected_by         VARCHAR(200) NOT NULL,   -- Agent-ID, 'presidio', 'retention_job', etc.
+    detected_by         VARCHAR(200) NOT NULL,   -- Agent ID, 'presidio', 'retention_job', etc.
     source              incident_source NOT NULL,
     status              incident_status NOT NULL DEFAULT 'detected',
 
-    -- Was wurde erkannt
-    description         TEXT NOT NULL,           -- Freitext: was genau wurde gefunden
+    -- What was detected
+    description         TEXT NOT NULL,           -- Free text: exactly what was found
     affected_data       JSONB NOT NULL DEFAULT '{}',
-    -- Beispiel:
+    -- Example:
     -- {"dataset_ids": ["uuid1"], "document_ids": ["uuid2"],
     --  "qdrant_point_ids": ["id1","id2"],
     --  "pii_types": ["EMAIL_ADDRESS","PERSON"],
     --  "estimated_subject_count": 3}
-    pii_types_found     TEXT[],                  -- Redundant für schnelle Abfragen
+    pii_types_found     TEXT[],                  -- Redundant for fast queries
     data_category       VARCHAR(50) REFERENCES data_categories(id),
 
-    -- Betroffene Personen
-    data_subject_ids    UUID[],                  -- Referenzen auf data_subjects.id
-    estimated_subjects  INTEGER,                 -- Falls exakte Zuordnung nicht möglich
+    -- Affected data subjects
+    data_subject_ids    UUID[],                  -- References to data_subjects.id
+    estimated_subjects  INTEGER,                 -- When exact mapping is not possible
 
-    -- Kontainierung
+    -- Containment
     contained_at        TIMESTAMPTZ,
     containment_actions JSONB,
-    -- Beispiel:
+    -- Example:
     -- {"quarantined_datasets": ["uuid1"],
     --  "revoked_access": ["agent-x"],
     --  "qdrant_points_deleted": 5}
 
-    -- Meldepflicht-Bewertung (Art. 33/34)
-    -- Meldepflichtig wenn: Verletzung wahrscheinlich Risiko für Rechte/Freiheiten
-    notifiable_risk     BOOLEAN,                 -- NULL = noch nicht bewertet
-    risk_assessment     TEXT,                    -- Begründung
-    authority_notified_at TIMESTAMPTZ,           -- Null wenn nicht gemeldet
-    authority_ref       VARCHAR(200),            -- Aktenzeichen der Behörde
+    -- Notification assessment (Art. 33/34)
+    -- Notifiable when: the breach is likely to result in a risk to rights/freedoms
+    notifiable_risk     BOOLEAN,                 -- NULL = not yet assessed
+    risk_assessment     TEXT,                    -- Rationale
+    authority_notified_at TIMESTAMPTZ,           -- NULL if not reported
+    authority_ref       VARCHAR(200),            -- Authority reference number
     subject_notified_at TIMESTAMPTZ,
 
-    -- Abschluss
+    -- Closure
     resolved_at         TIMESTAMPTZ,
     resolved_by         VARCHAR(200),
     resolution_notes    TEXT,
 
-    -- Audit-Trail (append-only via Trigger)
+    -- Audit trail (append-only via trigger)
     status_history      JSONB NOT NULL DEFAULT '[]',
-    -- Array von: {"ts": "...", "from": "...", "to": "...", "by": "...", "note": "..."}
+    -- Array of: {"ts": "...", "from": "...", "to": "...", "by": "...", "note": "..."}
 
-    -- Verknüpfung mit Löschanfragen
+    -- Link to deletion requests
     deletion_request_id UUID REFERENCES deletion_requests(id)
 );
 
@@ -89,7 +89,7 @@ CREATE INDEX idx_incidents_pii_types ON privacy_incidents USING gin(pii_types_fo
 CREATE INDEX idx_incidents_notifiable ON privacy_incidents(notifiable_risk)
     WHERE notifiable_risk = true AND authority_notified_at IS NULL;
 
--- Trigger: Status-Änderungen automatisch in history schreiben
+-- Trigger: automatically record status changes in history
 CREATE OR REPLACE FUNCTION track_incident_status()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -109,8 +109,8 @@ CREATE TRIGGER trg_incident_status_history
     BEFORE UPDATE ON privacy_incidents
     FOR EACH ROW EXECUTE FUNCTION track_incident_status();
 
--- View: Offene Vorfälle die die 72h-Meldefrist gefährden könnten
--- (Art. 33: Meldung binnen 72h nach Bekanntwerden)
+-- View: open incidents that might endanger the 72-hour notification deadline
+-- (Art. 33: notification within 72 hours of becoming aware)
 CREATE VIEW v_incidents_requiring_attention AS
 SELECT
     id,
@@ -124,10 +124,10 @@ SELECT
     CASE
         WHEN EXTRACT(EPOCH FROM (now() - detected_at)) / 3600 > 48
              AND status NOT IN ('resolved', 'false_positive', 'notified_authority')
-        THEN 'KRITISCH: weniger als 24h bis zur 72h-Frist'
+        THEN 'CRITICAL: less than 24h until the 72h deadline'
         WHEN EXTRACT(EPOCH FROM (now() - detected_at)) / 3600 > 24
              AND status = 'detected'
-        THEN 'WARNUNG: Vorfall noch nicht bewertet'
+        THEN 'WARNING: incident not yet assessed'
         ELSE 'ok'
     END AS frist_warnung
 FROM privacy_incidents

@@ -1,19 +1,19 @@
 """
 Knowledge Graph Service
 ========================
-Verwaltet den Apache AGE Knowledge Graph innerhalb von PostgreSQL.
-Bietet Funktionen zum Erstellen, Abfragen und Traversieren von
-Entitäten und Beziehungen.
+Manages the Apache AGE Knowledge Graph within PostgreSQL.
+Provides functions for creating, querying, and traversing
+entities and relationships.
 
-Knotentypen (Vertex Labels):
-  - Project      — Projekte mit Status und Klassifizierung
-  - Technology   — Technologien, Frameworks, Tools
-  - Person       — Personen, Teams, Rollen
-  - Document     — Dokumente, Datensätze (Referenz zu PG/Qdrant)
-  - Rule         — Business Rules, Policies
-  - DataSource   — Datenquellen (Repos, APIs, Dateien)
+Node Types (Vertex Labels):
+  - Project      — Projects with status and classification
+  - Technology   — Technologies, frameworks, tools
+  - Person       — People, teams, roles
+  - Document     — Documents, datasets (reference to PG/Qdrant)
+  - Rule         — Business rules, policies
+  - DataSource   — Data sources (repos, APIs, files)
 
-Beziehungstypen (Edge Labels):
+Relationship Types (Edge Labels):
   - USES         — Project/Person → Technology
   - OWNS         — Person → Project/Document
   - DEPENDS_ON   — Project → Project, Technology → Technology
@@ -21,8 +21,8 @@ Beziehungstypen (Edge Labels):
   - GOVERNS      — Rule → Project/DataSource
   - SOURCED_FROM — Document/DataSource → DataSource
 
-Abhängigkeiten:
-  asyncpg (bereits im MCP-Server vorhanden)
+Dependencies:
+  asyncpg (already included in the MCP server)
 """
 
 import json
