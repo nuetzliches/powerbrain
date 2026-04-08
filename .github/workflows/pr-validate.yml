@@ -8,7 +8,7 @@ jobs:
   unit-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Run unit tests
         run: |
@@ -33,7 +33,7 @@ jobs:
   opa-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download OPA
         run: |
@@ -46,7 +46,7 @@ jobs:
   docker-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build mcp-server image
         run: docker build -f mcp-server/Dockerfile -t pb-mcp-server:pr-test .
