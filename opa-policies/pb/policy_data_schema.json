@@ -19,7 +19,7 @@
             "write_roles", "write_classifications",
             "allowed_purposes", "retention_days", "retention_obligations",
             "fields_to_redact", "pii_actions", "pii_entity_types",
-            "proxy", "summarization", "rules"
+            "audit", "ingestion", "human_oversight", "drift", "proxy", "summarization", "rules"
           ],
           "additionalProperties": false,
           "properties": {
@@ -101,6 +101,115 @@
               "items": { "type": "string" },
               "minItems": 1,
               "description": "Presidio entity types to scan for"
+            },
+            "audit": {
+              "type": "object",
+              "description": "EU AI Act Art. 12 audit-log configuration (hash chain + retention)",
+              "required": ["retention_days", "advisory_lock_id", "export_max_rows", "export_default_rows", "export_formats"],
+              "additionalProperties": false,
+              "properties": {
+                "retention_days": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Audit log retention in days before checkpoint+prune"
+                },
+                "advisory_lock_id": {
+                  "type": "integer",
+                  "description": "pg_advisory_xact_lock id used to serialize audit-chain writes"
+                },
+                "export_max_rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Hard cap on rows returned by export_audit_log"
+                },
+                "export_default_rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Default row limit when export_audit_log is called without limit"
+                },
+                "export_formats": {
+                  "type": "array",
+                  "items": { "type": "string", "enum": ["json", "csv"] },
+                  "minItems": 1,
+                  "description": "Allowed export formats"
+                }
+              }
+            },
+            "human_oversight": {
+              "type": "object",
+              "description": "EU AI Act Art. 14 human oversight configuration",
+              "required": ["requires_approval_matrix", "pending_review_timeout_minutes", "max_pending_per_agent"],
+              "additionalProperties": false,
+              "properties": {
+                "requires_approval_matrix": {
+                  "type": "object",
+                  "description": "Maps classification → list of roles that require human approval",
+                  "additionalProperties": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                },
+                "pending_review_timeout_minutes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "How long a pending review stays open before the pb-worker marks it expired"
+                },
+                "max_pending_per_agent": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Per-agent cap on concurrently pending reviews"
+                }
+              }
+            },
+            "drift": {
+              "type": "object",
+              "description": "EU AI Act Art. 15 embedding drift detection configuration",
+              "required": ["thresholds", "reference_sample_size", "fresh_sample_size"],
+              "additionalProperties": false,
+              "properties": {
+                "thresholds": {
+                  "type": "object",
+                  "description": "Per-collection cosine-distance thresholds; 'default' is required",
+                  "required": ["default"],
+                  "additionalProperties": { "type": "number", "minimum": 0.0, "maximum": 2.0 },
+                  "properties": {
+                    "default": { "type": "number", "minimum": 0.0, "maximum": 2.0 }
+                  }
+                },
+                "reference_sample_size": {
+                  "type": "integer",
+                  "minimum": 10,
+                  "description": "Number of vectors sampled from each collection at deployment to form the baseline centroid"
+                },
+                "fresh_sample_size": {
+                  "type": "integer",
+                  "minimum": 10,
+                  "description": "Number of recent vectors sampled per refresh to compute the fresh centroid"
+                }
+              }
+            },
+            "ingestion": {
+              "type": "object",
+              "description": "EU AI Act Art. 10 data-quality gate configuration",
+              "required": ["min_quality_score", "duplicate_threshold"],
+              "additionalProperties": false,
+              "properties": {
+                "min_quality_score": {
+                  "type": "object",
+                  "description": "Minimum quality_score per source_type; 'default' is required",
+                  "required": ["default"],
+                  "additionalProperties": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+                  "properties": {
+                    "default": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+                  }
+                },
+                "duplicate_threshold": {
+                  "type": "number",
+                  "minimum": 0.0,
+                  "maximum": 1.0,
+                  "description": "Cosine-similarity threshold for duplicate detection on first-chunk embeddings"
+                }
+              }
             },
             "proxy": {
               "type": "object",

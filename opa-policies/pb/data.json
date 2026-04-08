@@ -50,6 +50,45 @@
 
       "pii_entity_types": ["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "IBAN_CODE", "LOCATION"],
 
+      "audit": {
+        "retention_days": 365,
+        "advisory_lock_id": 847291,
+        "export_max_rows": 100000,
+        "export_default_rows": 10000,
+        "export_formats": ["json", "csv"]
+      },
+
+      "ingestion": {
+        "min_quality_score": {
+          "default":   0.6,
+          "code":      0.4,
+          "contracts": 0.8
+        },
+        "duplicate_threshold": 0.95
+      },
+
+      "human_oversight": {
+        "requires_approval_matrix": {
+          "public":       [],
+          "internal":     [],
+          "confidential": ["analyst", "developer"],
+          "restricted":   ["viewer", "analyst", "developer"]
+        },
+        "pending_review_timeout_minutes": 60,
+        "max_pending_per_agent": 20
+      },
+
+      "drift": {
+        "thresholds": {
+          "default":    0.10,
+          "pb_general": 0.08,
+          "pb_code":    0.12,
+          "pb_rules":   0.05
+        },
+        "reference_sample_size": 200,
+        "fresh_sample_size":     200
+      },
+
       "proxy": {
         "allowed_roles": ["analyst", "developer", "admin"],
         "required_tools": ["search_knowledge", "check_policy"],

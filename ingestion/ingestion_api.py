@@ -304,6 +304,37 @@ async def get_or_create_project_salt(project: str | None) -> str:
     return row["salt"] if row else salt
 
 
+async def check_opa_quality_gate(
+    source_type: str, quality_score: float
+) -> dict:
+    """Query OPA pb.ingestion.quality_gate (EU AI Act Art. 10).
+
+    Returns a dict with ``allowed`` (bool), ``min_score`` (float) and
+    ``reason`` (str). On OPA failure we fail-closed (allowed=False) so a
+    broken policy engine cannot silently bypass the quality gate.
+    """
+    input_data = {
+        "source_type":    source_type or "default",
+        "quality_score":  float(quality_score),
+    }
+    try:
+        resp = await http_client.post(
+            f"{OPA_URL}/v1/data/pb/ingestion/quality_gate",
+            json={"input": input_data},
+        )
+        resp.raise_for_status()
+        result = resp.json().get("result") or {}
+        return {
+            "allowed":   bool(result.get("allowed", False)),
+            "min_score": float(result.get("min_score", 0.0)),
+            "reason":    result.get("reason", ""),
+        }
+    except Exception as e:
+        log.warning(f"OPA quality_gate check failed, fail-closed: {e}")
+        return {"allowed": False, "min_score": 0.0,
+                "reason": f"opa_unreachable: {e}"}
+
+
 async def check_opa_privacy(
     classification: str, contains_pii: bool, legal_basis: str | None = None
 ) -> dict:
@@ -524,6 +555,7 @@ async def ingest_text_chunks(
 
     # OPA-Policy einmal pro Dokument abfragen (Klassifizierung ist gleich für alle Chunks)
     opa_result: dict | None = None
+    total_pii_entities = 0
 
     for i, chunk in enumerate(chunks):
         # 1. PII-Scan
@@ -532,6 +564,7 @@ async def ingest_text_chunks(
 
         if scan_result.contains_pii:
             pii_detected = True
+            total_pii_entities += sum(int(c) for c in scan_result.entity_counts.values())
 
             # Track PII entities found
             for entity_type, count in scan_result.entity_counts.items():
@@ -618,6 +651,87 @@ async def ingest_text_chunks(
             "contains_pii": scan_result.contains_pii,
             "chunk_index": i,
         })
+
+    # 4a. Data-Quality Gate (EU AI Act Art. 10) ──────────────────────
+    # Score the post-PII-scan text so pseudonymization does not inflate
+    # the PII-density factor, then ask OPA whether the document passes.
+    try:
+        from quality import compute_quality_score
+        joined_text = "\n\n".join(processed_texts)
+        quality_report = compute_quality_score(
+            joined_text,
+            metadata={
+                "source":         source,
+                "classification": classification,
+                "project":        project,
+                "legal_basis":    metadata.get("legal_basis"),
+                "data_category":  metadata.get("data_category"),
+            },
+            source_type=source_type,
+            pii_entity_count=total_pii_entities,
+        )
+    except Exception as e:
+        log.warning(f"Quality scoring failed, treating as score=0: {e}")
+        from quality import QualityReport
+        quality_report = QualityReport(score=0.0,
+                                       factors={"error": 0.0},
+                                       language="unknown")
+
+    gate = await check_opa_quality_gate(source_type, quality_report.score)
+
+    if not gate["allowed"]:
+        log.warning(
+            f"Quality gate rejected document source={source!r} "
+            f"score={quality_report.score:.3f} min={gate['min_score']:.3f} "
+            f"reason={gate['reason']!r}"
+        )
+        # Audit the rejection and remove the pre-created documents_meta row.
+        if pg_pool:
+            try:
+                await pg_pool.execute(
+                    """
+                    INSERT INTO ingestion_rejections
+                        (source_type, project, classification,
+                         quality_score, min_required, reason,
+                         quality_details, sample_snippet)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    """,
+                    source_type,
+                    project,
+                    classification,
+                    quality_report.score,
+                    gate["min_score"],
+                    gate["reason"] or "quality_gate_denied",
+                    json.dumps(quality_report.to_dict()),
+                    (processed_texts[0][:500] if processed_texts else None),
+                )
+                await pg_pool.execute(
+                    "DELETE FROM documents_meta WHERE id = $1", doc_id,
+                )
+            except Exception as e:
+                log.error(f"Failed to persist ingestion rejection: {e}")
+        return {
+            "status":        "rejected",
+            "reason":        gate["reason"] or "quality_gate_denied",
+            "quality_score": round(quality_report.score, 4),
+            "min_required":  round(gate["min_score"], 4),
+            "details":       quality_report.to_dict(),
+            "chunks_ingested": 0,
+            "pii_detected":    pii_detected,
+        }
+
+    # Passed the gate — persist the score on documents_meta.
+    if pg_pool:
+        try:
+            await pg_pool.execute(
+                "UPDATE documents_meta SET quality_score = $1, "
+                "quality_details = $2 WHERE id = $3",
+                quality_report.score,
+                json.dumps(quality_report.to_dict()),
+                doc_id,
+            )
+        except Exception as e:
+            log.warning(f"Failed to persist quality score: {e}")
 
     # 4b. Batch embedding (cache-aware)
     embeddings: list[list[float]] = []

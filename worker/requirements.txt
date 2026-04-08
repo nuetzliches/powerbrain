@@ -1,0 +1,6 @@
+apscheduler==3.10.4
+asyncpg==0.30.0
+httpx==0.28.1
+prometheus-client==0.21.1
+qdrant-client==1.13.2
+python-dotenv==1.0.1

@@ -46,3 +46,9 @@ scrape_configs:
     static_configs:
       - targets: ['pb-proxy:9092']
     metrics_path: /metrics
+
+  # pb-worker – B-45 accuracy + drift gauges on port 8083
+  - job_name: pb-worker
+    static_configs:
+      - targets: ['pb-worker:8083']
+    metrics_path: /metrics

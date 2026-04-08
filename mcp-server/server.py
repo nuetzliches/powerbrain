@@ -163,6 +163,11 @@ mcp_feedback_avg_rating = Gauge(
     "pb_feedback_avg_rating",
     "Aktueller Durchschnitt des Feedback-Ratings (letzte 24h)",
 )
+
+# Note: B-45 accuracy gauges (pb_accuracy_*) live in worker/metrics.py
+# because the pb-worker container computes them and exposes its own
+# Prometheus /metrics endpoint. Defining them here too would create
+# label-set conflicts when both processes scrape into the same job.
 mcp_rate_limit_rejected = Counter(
     "pb_rate_limit_rejected_total",
     "Requests rejected by rate limiter",
@@ -1110,6 +1115,116 @@ async def list_tools() -> list[Tool]:
                 "required": ["doc_id"]
             }
         ),
+        # ── EU AI Act Art. 11: Compliance Documentation ──────────
+        Tool(
+            name="generate_compliance_doc",
+            description="Generate the EU AI Act Annex IV technical "
+                        "documentation as Markdown (admin only). Aggregates "
+                        "the live transparency report, risk health, "
+                        "accuracy metrics, and the project risk register "
+                        "into a single self-contained document.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "output_mode": {"type": "string",
+                                    "enum": ["inline", "file"],
+                                    "default": "inline",
+                                    "description": "inline returns the full Markdown in the response; file writes to COMPLIANCE_DOC_DIR and returns the path"},
+                },
+                "required": []
+            }
+        ),
+        # ── EU AI Act Art. 14: Human Oversight ───────────────────
+        Tool(
+            name="review_pending",
+            description="List or decide pending human-oversight reviews "
+                        "(EU AI Act Art. 14). Admin only. Without action, "
+                        "returns open pending reviews. With action=approve/"
+                        "deny + review_id, decides a single review.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action":    {"type": "string", "enum": ["list", "approve", "deny"],
+                                  "default": "list"},
+                    "review_id": {"type": "string",
+                                  "description": "UUID of the review to decide (approve/deny only)"},
+                    "reason":    {"type": "string",
+                                  "description": "Optional justification for the decision"},
+                    "limit":     {"type": "integer", "default": 50,
+                                  "description": "Max rows for list action"},
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="get_review_status",
+            description="Poll the status of a pending human-oversight review "
+                        "(EU AI Act Art. 14). Returns the current status and "
+                        "(if approved) the queued tool result when available.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "review_id": {"type": "string",
+                                  "description": "UUID returned by the original tool call"},
+                },
+                "required": ["review_id"]
+            }
+        ),
+        # ── EU AI Act Art. 13: Transparency ──────────────────────
+        Tool(
+            name="get_system_info",
+            description="Return the transparency report (EU AI Act Art. 13): "
+                        "active models, OPA policy snapshot, Qdrant collection "
+                        "stats, PII scanner config, audit-chain integrity. "
+                        "Same content as GET /transparency. Auth required.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        # ── EU AI Act Art. 12: Audit Hash-Chain ──────────────────
+        Tool(
+            name="verify_audit_integrity",
+            description="Verify the tamper-evident hash chain of the audit log "
+                        "(EU AI Act Art. 12). Admin only. Optional id range; "
+                        "omit to verify the full current chain. Returns "
+                        "valid/first_invalid_id/total_checked.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_id": {"type": "integer",
+                                 "description": "First id to verify (default: from chain start or last archive checkpoint)"},
+                    "end_id":   {"type": "integer",
+                                 "description": "Last id to verify (default: current tail)"},
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="export_audit_log",
+            description="Export audit-log entries for compliance review "
+                        "(EU AI Act Art. 12). Admin only. Supports JSON/CSV, "
+                        "filter by time range, agent_id, action. Limited by "
+                        "audit.export_max_rows in OPA data.json.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "format":   {"type": "string", "enum": ["json", "csv"], "default": "json"},
+                    "since":    {"type": "string",
+                                 "description": "ISO-8601 lower bound on created_at (inclusive)"},
+                    "until":    {"type": "string",
+                                 "description": "ISO-8601 upper bound on created_at (exclusive)"},
+                    "agent_id": {"type": "string",
+                                 "description": "Filter by exact agent_id"},
+                    "action":   {"type": "string",
+                                 "description": "Filter by exact action (search, query, ingest, ...)"},
+                    "limit":    {"type": "integer",
+                                 "description": "Max rows (capped by audit.export_max_rows)"},
+                },
+                "required": []
+            }
+        ),
         # ── Bulk Delete: delete_documents ──────────────────────────
         Tool(
             name="delete_documents",
@@ -1203,8 +1318,175 @@ def _build_delete_filter(source_type: str | None, project: str | None,
     return qf, where, params
 
 
+# ── B-42: Human Oversight (Art. 14) — circuit breaker + approval queue
+# Tools that count as "data retrieval" and are gated by the kill-switch
+# and the approval queue. All other tools (verify_audit_integrity,
+# review_pending, get_system_info, …) are operator/oversight endpoints
+# and must keep working when the breaker is engaged so admins can
+# inspect state and flip the switch back.
+_OVERSIGHT_DATA_TOOLS = {
+    "search_knowledge", "query_data", "get_code_context", "get_document",
+}
+
+# Tiny in-process cache (5s TTL) so we do not hit PG on every request.
+_CIRCUIT_BREAKER_CACHE: dict[str, Any] = {"state": None, "fetched_at": 0.0}
+CIRCUIT_BREAKER_CACHE_TTL = 5.0
+
+
+async def _get_circuit_breaker_state() -> dict:
+    """Return ``{"active": bool, "reason": str | None, "set_by": str | None,
+    "set_at": ISO str | None}`` with short-TTL caching."""
+    import time as _time
+    now = _time.time()
+    cached = _CIRCUIT_BREAKER_CACHE["state"]
+    if cached is not None and (now - _CIRCUIT_BREAKER_CACHE["fetched_at"]) < CIRCUIT_BREAKER_CACHE_TTL:
+        return cached
+
+    try:
+        pool = await get_pg_pool()
+        row = await pool.fetchrow(
+            "SELECT active, reason, set_by, set_at "
+            "FROM pb_circuit_breaker_state WHERE id = 1"
+        )
+        if row is None:
+            state = {"active": False, "reason": None, "set_by": None, "set_at": None}
+        else:
+            state = {
+                "active": bool(row["active"]),
+                "reason": row["reason"],
+                "set_by": row["set_by"],
+                "set_at": row["set_at"].isoformat() if row["set_at"] else None,
+            }
+    except Exception as e:
+        log.warning(f"Circuit breaker state fetch failed, fail-open: {e}")
+        state = {"active": False, "reason": None, "set_by": None, "set_at": None}
+
+    _CIRCUIT_BREAKER_CACHE["state"] = state
+    _CIRCUIT_BREAKER_CACHE["fetched_at"] = now
+    return state
+
+
+def _invalidate_circuit_breaker_cache() -> None:
+    _CIRCUIT_BREAKER_CACHE["state"] = None
+    _CIRCUIT_BREAKER_CACHE["fetched_at"] = 0.0
+
+
+async def _set_circuit_breaker(active: bool, reason: str | None,
+                               set_by: str) -> dict:
+    """Update the kill-switch row and invalidate the cache."""
+    pool = await get_pg_pool()
+    await pool.execute(
+        "UPDATE pb_circuit_breaker_state "
+        "SET active = $1, reason = $2, set_by = $3, set_at = now() "
+        "WHERE id = 1",
+        active, reason, set_by,
+    )
+    _invalidate_circuit_breaker_cache()
+    return await _get_circuit_breaker_state()
+
+
+async def _check_oversight_approval(classification: str,
+                                    agent_role: str, tool: str) -> dict:
+    """Query OPA ``pb.oversight.requires_approval`` and ``approval_reason``.
+
+    Returns ``{"required": bool, "reason": str, "timeout_minutes": int}``.
+    On OPA failure we fail-open (required=False) so an OPA outage cannot
+    block everything; the circuit breaker exists for that case.
+    """
+    input_data = {
+        "agent_role":     agent_role,
+        "classification": classification,
+        "tool":           tool,
+    }
+    try:
+        r1, r2, r3 = await asyncio.gather(
+            http.post(f"{OPA_URL}/v1/data/pb/oversight/requires_approval",
+                      json={"input": input_data}, timeout=2.0),
+            http.post(f"{OPA_URL}/v1/data/pb/oversight/approval_reason",
+                      json={"input": input_data}, timeout=2.0),
+            http.get(f"{OPA_URL}/v1/data/pb/oversight/pending_review_timeout_minutes",
+                     timeout=2.0),
+        )
+        for r in (r1, r2, r3):
+            r.raise_for_status()
+        required        = bool(r1.json().get("result", False))
+        reason          = r2.json().get("result", "") or ""
+        timeout_minutes = int(r3.json().get("result", 60) or 60)
+    except Exception as e:
+        log.warning(f"OPA oversight check failed, fail-open: {e}")
+        return {"required": False, "reason": "", "timeout_minutes": 60}
+
+    # Clamp to sane bounds: 1 minute (immediate) to 24 hours (long review)
+    timeout_minutes = max(1, min(1440, timeout_minutes))
+    return {"required": required, "reason": reason, "timeout_minutes": timeout_minutes}
+
+
+async def _create_pending_review(agent_id: str, agent_role: str, tool: str,
+                                 arguments: dict, classification: str,
+                                 reason: str, timeout_minutes: int) -> str:
+    """Insert a pending_reviews row and return its UUID."""
+    pool = await get_pg_pool()
+    row = await pool.fetchrow(
+        """
+        INSERT INTO pending_reviews
+            (agent_id, agent_role, tool, arguments, classification,
+             status, reason, expires_at)
+        VALUES ($1, $2, $3, $4, $5, 'pending', $6,
+                now() + make_interval(mins => $7))
+        RETURNING id::text, expires_at
+        """,
+        agent_id, agent_role, tool, json.dumps(arguments),
+        classification, reason, timeout_minutes,
+    )
+    return row["id"]
+
+
 async def _dispatch(name: str, arguments: dict[str, Any],
                     agent_id: str, agent_role: str) -> list[TextContent]:
+
+    # ── B-42 Circuit Breaker: block data tools when active ──
+    if name in _OVERSIGHT_DATA_TOOLS:
+        cb = await _get_circuit_breaker_state()
+        if cb["active"]:
+            await log_access(agent_id, agent_role, "oversight", "circuit_breaker",
+                             name, "deny",
+                             {"reason": cb.get("reason")})
+            return [TextContent(type="text", text=json.dumps({
+                "error": "circuit_breaker_active",
+                "reason": cb.get("reason") or "human oversight kill-switch engaged",
+                "set_by": cb.get("set_by"),
+                "set_at": cb.get("set_at"),
+            }))]
+
+    # ── B-42 Approval Queue: intercept searches on sensitive data ──
+    if name in _OVERSIGHT_DATA_TOOLS and agent_role != "admin":
+        # Only search_knowledge + get_code_context + get_document carry
+        # an explicit classification filter; query_data is OPA-gated
+        # separately. For search-path we peek at the filters for the
+        # classification hint; default to "internal" when unspecified.
+        classification = (
+            (arguments.get("filters") or {}).get("classification")
+            or arguments.get("classification")
+            or "internal"
+        )
+        approval = await _check_oversight_approval(classification, agent_role, name)
+        if approval["required"]:
+            review_id = await _create_pending_review(
+                agent_id, agent_role, name, arguments,
+                classification, approval["reason"],
+                approval["timeout_minutes"],
+            )
+            await log_access(agent_id, agent_role, "oversight", "pending",
+                             name, "allow",
+                             {"review_id": review_id,
+                              "classification": classification})
+            return [TextContent(type="text", text=json.dumps({
+                "status":     "pending",
+                "review_id":  review_id,
+                "reason":     approval["reason"],
+                "poll_tool":  "get_review_status",
+                "timeout_minutes": approval["timeout_minutes"],
+            }, ensure_ascii=False, indent=2))]
 
     # ── search_knowledge ─────────────────────────────────────
     if name == "search_knowledge":
@@ -1715,40 +1997,85 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         days = arguments.get("days", 30)
         pool = await get_pg_pool()
 
-        # Gesamt-Statistik im Zeitraum
-        stats = await pool.fetchrow("""
-            SELECT
-                COUNT(*)                          AS total_feedback,
-                ROUND(AVG(rating)::numeric, 2)    AS avg_rating,
-                ROUND(100.0 * SUM(CASE WHEN rating >= 4 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1)
-                                                  AS satisfaction_pct
-            FROM search_feedback
-            WHERE created_at > now() - ($1 || ' days')::interval
-        """, str(days))
+        # Run the four independent feedback queries in parallel —
+        # they all hit the same table and indexes but the round-trip
+        # latency was previously summed sequentially.
+        stats, worst, trend_current, trend_previous = await asyncio.gather(
+            pool.fetchrow("""
+                SELECT
+                    COUNT(*)                          AS total_feedback,
+                    ROUND(AVG(rating)::numeric, 2)    AS avg_rating,
+                    ROUND(100.0 * SUM(CASE WHEN rating >= 4 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1)
+                                                      AS satisfaction_pct
+                FROM search_feedback
+                WHERE created_at > now() - ($1 || ' days')::interval
+            """, str(days)),
+            pool.fetch("""
+                SELECT query, ROUND(AVG(rating)::numeric, 2) AS avg_rating, COUNT(*) AS feedback_count
+                FROM search_feedback
+                WHERE created_at > now() - ($1 || ' days')::interval
+                GROUP BY query
+                HAVING COUNT(*) >= 2
+                ORDER BY avg_rating ASC
+                LIMIT 10
+            """, str(days)),
+            pool.fetchrow("""
+                SELECT ROUND(AVG(rating)::numeric, 2) AS avg_rating
+                FROM search_feedback
+                WHERE created_at > now() - ($1 || ' days')::interval
+            """, str(days)),
+            pool.fetchrow("""
+                SELECT ROUND(AVG(rating)::numeric, 2) AS avg_rating
+                FROM search_feedback
+                WHERE created_at BETWEEN now() - ($1 || ' days')::interval * 2
+                              AND now() - ($1 || ' days')::interval
+            """, str(days)),
+        )
 
-        # Top-10 schlecht bewertete Queries
-        worst = await pool.fetch("""
-            SELECT query, ROUND(AVG(rating)::numeric, 2) AS avg_rating, COUNT(*) AS feedback_count
-            FROM search_feedback
-            WHERE created_at > now() - ($1 || ' days')::interval
-            GROUP BY query
-            HAVING COUNT(*) >= 2
-            ORDER BY avg_rating ASC
-            LIMIT 10
-        """, str(days))
+        # B-45: windowed metrics + drift baselines. Both queries are
+        # independent and the optional UndefinedTableError is caught
+        # individually so a missing migration on one side does not
+        # block the other.
+        async def _fetch_windowed() -> list[dict]:
+            try:
+                w_rows = await pool.fetch(
+                    "SELECT window_label, collection, sample_count, "
+                    "       avg_rating, empty_result_rate, avg_rerank_score "
+                    "FROM v_feedback_windowed"
+                )
+            except Exception as e:
+                log.debug(f"v_feedback_windowed not readable: {e}")
+                return []
+            return [{
+                "window":     r["window_label"],
+                "collection": r["collection"],
+                "samples":    int(r["sample_count"] or 0),
+                "avg_rating": float(r["avg_rating"]) if r["avg_rating"] is not None else None,
+                "empty_rate": float(r["empty_result_rate"]) if r["empty_result_rate"] is not None else None,
+                "rerank":     float(r["avg_rerank_score"]) if r["avg_rerank_score"] is not None else None,
+            } for r in w_rows]
 
-        # Trend: Vergleich aktuelle vs. vorherige Periode
-        trend_current = await pool.fetchrow("""
-            SELECT ROUND(AVG(rating)::numeric, 2) AS avg_rating
-            FROM search_feedback
-            WHERE created_at > now() - ($1 || ' days')::interval
-        """, str(days))
-        trend_previous = await pool.fetchrow("""
-            SELECT ROUND(AVG(rating)::numeric, 2) AS avg_rating
-            FROM search_feedback
-            WHERE created_at BETWEEN now() - ($1 || ' days')::interval * 2
-                          AND now() - ($1 || ' days')::interval
-        """, str(days))
+        async def _fetch_drift_baselines() -> list[dict]:
+            try:
+                d_rows = await pool.fetch(
+                    "SELECT DISTINCT ON (collection) "
+                    "       collection, seeded_at, sample_count, embedding_dim "
+                    "FROM embedding_reference_set "
+                    "ORDER BY collection, seeded_at DESC"
+                )
+            except Exception as e:
+                log.debug(f"embedding_reference_set not readable: {e}")
+                return []
+            return [{
+                "collection":    r["collection"],
+                "seeded_at":     r["seeded_at"].isoformat() if r["seeded_at"] else None,
+                "sample_count":  int(r["sample_count"]),
+                "embedding_dim": int(r["embedding_dim"]),
+            } for r in d_rows]
+
+        windowed, drift_status = await asyncio.gather(
+            _fetch_windowed(), _fetch_drift_baselines(),
+        )
 
         result = {
             "period_days": days,
@@ -1764,6 +2091,8 @@ async def _dispatch(name: str, arguments: dict[str, Any],
                 "current_period_avg":  float(trend_current["avg_rating"]) if trend_current["avg_rating"] else None,
                 "previous_period_avg": float(trend_previous["avg_rating"]) if trend_previous["avg_rating"] else None,
             },
+            "windowed": windowed,
+            "drift_baselines": drift_status,
         }
         return [TextContent(type="text",
             text=json.dumps(result, ensure_ascii=False, indent=2))]
@@ -1953,13 +2282,17 @@ async def _dispatch(name: str, arguments: dict[str, Any],
                 pass  # Node may not exist in graph
         result["deleted"]["graph_nodes"] = graph_deleted
 
-        # 6. Anonymize audit log entries for deleted documents
+        # 6. Append a redaction event to the audit log.
+        #    The log is append-only (hash-chain, EU AI Act Art. 12) — we cannot
+        #    mutate historic rows. log_access() already PII-scans context at
+        #    write-time, so prior entries contain masked queries; this row
+        #    documents the Art. 17 erasure action itself.
         if doc_ids:
-            await pool.execute(
-                "UPDATE agent_access_log "
-                "SET request_context = '{\"anonymized\": true, \"reason\": \"bulk_delete\"}'::jsonb "
-                "WHERE resource_id = ANY($1) AND contains_pii = true",
-                doc_ids)
+            await log_access(agent_id, agent_role, "audit", "redaction",
+                             "pii_redaction_event", "allow",
+                             {"reason": "bulk_delete",
+                              "affected_resource_ids": doc_ids,
+                              "count": len(doc_ids)})
 
         if not result["errors"]:
             del result["errors"]
@@ -1971,7 +2304,685 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         return [TextContent(type="text",
             text=json.dumps(result, ensure_ascii=False, indent=2))]
 
+    # ── EU AI Act Art. 14: review_pending ────────────────────
+    elif name == "review_pending":
+        if agent_role != "admin":
+            await log_access(agent_id, agent_role, "oversight", "review",
+                             "review_pending", "deny")
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "review_pending requires admin role"}))]
+
+        action    = arguments.get("action", "list")
+        pool      = await get_pg_pool()
+
+        if action == "list":
+            limit = int(arguments.get("limit", 50))
+            limit = max(1, min(500, limit))
+            rows = await pool.fetch(
+                "SELECT id::text, agent_id, agent_role, tool, arguments, "
+                "       classification, status, reason, created_at, expires_at "
+                "FROM pending_reviews "
+                "WHERE status = 'pending' "
+                "ORDER BY created_at ASC "
+                f"LIMIT {limit}"
+            )
+            out = [{
+                "review_id":      r["id"],
+                "agent_id":       r["agent_id"],
+                "agent_role":     r["agent_role"],
+                "tool":           r["tool"],
+                "arguments":      (r["arguments"] if isinstance(r["arguments"], dict)
+                                   else json.loads(r["arguments"] or "{}")),
+                "classification": r["classification"],
+                "status":         r["status"],
+                "reason":         r["reason"],
+                "created_at":     r["created_at"].isoformat() if r["created_at"] else None,
+                "expires_at":     r["expires_at"].isoformat() if r["expires_at"] else None,
+            } for r in rows]
+            await log_access(agent_id, agent_role, "oversight", "review",
+                             "review_pending.list", "allow",
+                             {"count": len(out)})
+            return [TextContent(type="text", text=json.dumps(
+                {"pending": out, "count": len(out)},
+                ensure_ascii=False, indent=2,
+            ))]
+
+        if action in ("approve", "deny"):
+            review_id = arguments.get("review_id")
+            if not review_id:
+                return [TextContent(type="text", text=json.dumps(
+                    {"error": "review_id is required for approve/deny"}))]
+            new_status = "approved" if action == "approve" else "denied"
+            row = await pool.fetchrow(
+                "UPDATE pending_reviews SET status = $1, "
+                "decision_by = $2, decision_at = now(), reason = $3 "
+                "WHERE id = $4::uuid AND status = 'pending' "
+                "RETURNING id::text, status, tool, agent_id, classification",
+                new_status, agent_id,
+                arguments.get("reason") or "",
+                review_id,
+            )
+            if row is None:
+                return [TextContent(type="text", text=json.dumps(
+                    {"error": "review not found or already decided",
+                     "review_id": review_id}))]
+            await log_access(agent_id, agent_role, "oversight", "review",
+                             f"review_pending.{action}", "allow",
+                             {"review_id": review_id, "status": new_status})
+            return [TextContent(type="text", text=json.dumps({
+                "review_id": row["id"],
+                "status":    row["status"],
+                "tool":      row["tool"],
+                "agent_id":  row["agent_id"],
+                "classification": row["classification"],
+            }, ensure_ascii=False, indent=2))]
+
+        return [TextContent(type="text", text=json.dumps(
+            {"error": f"unknown action: {action}"}))]
+
+    # ── EU AI Act Art. 14: get_review_status ─────────────────
+    elif name == "get_review_status":
+        review_id = arguments.get("review_id")
+        if not review_id:
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "review_id is required"}))]
+
+        pool = await get_pg_pool()
+        row = await pool.fetchrow(
+            "SELECT id::text, agent_id, agent_role, tool, arguments, "
+            "       classification, status, reason, decision_by, decision_at, "
+            "       created_at, expires_at "
+            "FROM pending_reviews WHERE id = $1::uuid",
+            review_id,
+        )
+        if row is None:
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "review not found", "review_id": review_id}))]
+
+        # Agents may only read their own reviews; admins see everything.
+        if agent_role != "admin" and row["agent_id"] != agent_id:
+            await log_access(agent_id, agent_role, "oversight", "review",
+                             "get_review_status", "deny",
+                             {"review_id": review_id,
+                              "reason": "owner_mismatch"})
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "not your review"}))]
+
+        payload = {
+            "review_id":      row["id"],
+            "status":         row["status"],
+            "tool":           row["tool"],
+            "classification": row["classification"],
+            "reason":         row["reason"],
+            "decision_by":    row["decision_by"],
+            "decision_at":    row["decision_at"].isoformat() if row["decision_at"] else None,
+            "created_at":     row["created_at"].isoformat() if row["created_at"] else None,
+            "expires_at":     row["expires_at"].isoformat() if row["expires_at"] else None,
+        }
+        return [TextContent(type="text", text=json.dumps(
+            payload, ensure_ascii=False, indent=2))]
+
+    # ── EU AI Act Art. 11: generate_compliance_doc ────────────
+    elif name == "generate_compliance_doc":
+        if agent_role != "admin":
+            await log_access(agent_id, agent_role, "compliance", "generate",
+                             "generate_compliance_doc", "deny")
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "generate_compliance_doc requires admin role"}))]
+
+        from compliance_doc import generate_annex_iv_doc
+
+        async def _eval_loader() -> dict:
+            # Re-uses the same code path as the get_eval_stats tool by
+            # invoking _dispatch internally — keeps the renderer aligned
+            # with what an admin would see in get_eval_stats.
+            res = await _dispatch("get_eval_stats", {"days": 30},
+                                  agent_id, agent_role)
+            try:
+                return json.loads(res[0].text)
+            except Exception:
+                return {}
+
+        try:
+            output_mode = arguments.get("output_mode", "inline")
+            result = await generate_annex_iv_doc(
+                transparency_loader=_get_transparency_report,
+                health_loader=_build_risk_health_payload,
+                eval_stats_loader=_eval_loader,
+                output_mode=output_mode,
+            )
+        except ValueError as e:
+            return [TextContent(type="text", text=json.dumps(
+                {"error": str(e)}))]
+
+        await log_access(agent_id, agent_role, "compliance", "generate",
+                         "generate_compliance_doc", "allow",
+                         {"output_mode": result.get("output_mode"),
+                          "size_bytes": result.get("size_bytes"),
+                          "report_version": result.get("report_version")})
+        return [TextContent(type="text", text=json.dumps(
+            result, ensure_ascii=False, indent=2))]
+
+    # ── EU AI Act Art. 13: get_system_info ───────────────────
+    elif name == "get_system_info":
+        payload = await _get_transparency_report()
+        await log_access(agent_id, agent_role, "transparency", "report",
+                         "get_system_info", "allow",
+                         {"report_version": payload.get("report_version")})
+        return [TextContent(type="text",
+            text=json.dumps(payload, ensure_ascii=False, indent=2))]
+
+    # ── EU AI Act Art. 12: verify_audit_integrity ─────────────
+    elif name == "verify_audit_integrity":
+        if agent_role != "admin":
+            await log_access(agent_id, agent_role, "audit", "verify",
+                             "verify_audit_integrity", "deny")
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "verify_audit_integrity requires admin role"}))]
+
+        start_id = arguments.get("start_id")
+        end_id   = arguments.get("end_id")
+
+        pool = await get_pg_pool()
+        row = await pool.fetchrow(
+            "SELECT valid, first_invalid_id, total_checked, "
+            "       encode(last_valid_hash, 'hex') AS last_valid_hash "
+            "FROM pb_verify_audit_chain($1, $2)",
+            start_id, end_id,
+        )
+        result = {
+            "valid":            row["valid"],
+            "first_invalid_id": row["first_invalid_id"],
+            "total_checked":    row["total_checked"],
+            "last_valid_hash":  row["last_valid_hash"],
+            "range": {"start_id": start_id, "end_id": end_id},
+        }
+        await log_access(agent_id, agent_role, "audit", "verify",
+                         "verify_audit_integrity", "allow",
+                         {"valid": row["valid"], "total_checked": row["total_checked"]})
+        return [TextContent(type="text",
+            text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+    # ── EU AI Act Art. 12: export_audit_log ───────────────────
+    elif name == "export_audit_log":
+        if agent_role != "admin":
+            await log_access(agent_id, agent_role, "audit", "export",
+                             "export_audit_log", "deny")
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "export_audit_log requires admin role"}))]
+
+        # Read caps from OPA data
+        try:
+            cfg_resp = await http.get(f"{OPA_URL}/v1/data/pb/config/audit")
+            cfg_resp.raise_for_status()
+            audit_cfg = cfg_resp.json().get("result", {}) or {}
+        except Exception as e:
+            log.warning(f"Could not load audit config from OPA, using defaults: {e}")
+            audit_cfg = {}
+        export_max_rows     = int(audit_cfg.get("export_max_rows",     100000))
+        export_default_rows = int(audit_cfg.get("export_default_rows", 10000))
+        export_formats      = audit_cfg.get("export_formats", ["json", "csv"])
+
+        fmt = arguments.get("format", "json")
+        if fmt not in export_formats:
+            return [TextContent(type="text", text=json.dumps(
+                {"error": f"format '{fmt}' not allowed; allowed: {export_formats}"}))]
+
+        requested_limit = int(arguments.get("limit") or export_default_rows)
+        limit = min(max(1, requested_limit), export_max_rows)
+
+        # Build filter
+        where_parts: list[str] = []
+        params: list = []
+        idx = 1
+        if arguments.get("since"):
+            where_parts.append(f"created_at >= ${idx}")
+            params.append(arguments["since"])
+            idx += 1
+        if arguments.get("until"):
+            where_parts.append(f"created_at < ${idx}")
+            params.append(arguments["until"])
+            idx += 1
+        if arguments.get("agent_id"):
+            where_parts.append(f"agent_id = ${idx}")
+            params.append(arguments["agent_id"])
+            idx += 1
+        if arguments.get("action"):
+            where_parts.append(f"action = ${idx}")
+            params.append(arguments["action"])
+            idx += 1
+        where_sql = " AND ".join(where_parts) if where_parts else "TRUE"
+
+        pool = await get_pg_pool()
+        rows = await pool.fetch(
+            f"SELECT id, agent_id, agent_role, resource_type, resource_id, "
+            f"       action, policy_result, policy_reason, "
+            f"       contains_pii, purpose, legal_basis, data_category, "
+            f"       fields_redacted, created_at, "
+            f"       encode(prev_hash, 'hex')  AS prev_hash, "
+            f"       encode(entry_hash, 'hex') AS entry_hash "
+            f"FROM agent_access_log "
+            f"WHERE {where_sql} "
+            f"ORDER BY id ASC "
+            f"LIMIT {limit}",
+            *params,
+        )
+
+        def _row_to_dict(r) -> dict:
+            return {
+                "id":              r["id"],
+                "agent_id":        r["agent_id"],
+                "agent_role":      r["agent_role"],
+                "resource_type":   r["resource_type"],
+                "resource_id":     r["resource_id"],
+                "action":          r["action"],
+                "policy_result":   r["policy_result"],
+                "policy_reason":   r["policy_reason"],
+                "contains_pii":    r["contains_pii"],
+                "purpose":         r["purpose"],
+                "legal_basis":     r["legal_basis"],
+                "data_category":   r["data_category"],
+                "fields_redacted": r["fields_redacted"],
+                "created_at":      r["created_at"].isoformat() if r["created_at"] else None,
+                "prev_hash":       r["prev_hash"],
+                "entry_hash":      r["entry_hash"],
+            }
+
+        if fmt == "json":
+            payload = {
+                "format":  "json",
+                "count":   len(rows),
+                "limit":   limit,
+                "entries": [_row_to_dict(r) for r in rows],
+            }
+            body = json.dumps(payload, ensure_ascii=False, indent=2)
+        else:  # csv
+            import io, csv
+            buf = io.StringIO()
+            fieldnames = [
+                "id", "agent_id", "agent_role", "resource_type", "resource_id",
+                "action", "policy_result", "policy_reason", "contains_pii",
+                "purpose", "legal_basis", "data_category", "fields_redacted",
+                "created_at", "prev_hash", "entry_hash",
+            ]
+            writer = csv.DictWriter(buf, fieldnames=fieldnames)
+            writer.writeheader()
+            for r in rows:
+                d = _row_to_dict(r)
+                d["fields_redacted"] = ";".join(d["fields_redacted"] or [])
+                writer.writerow(d)
+            body = buf.getvalue()
+
+        await log_access(agent_id, agent_role, "audit", "export",
+                         "export_audit_log", "allow",
+                         {"format": fmt, "count": len(rows), "limit": limit})
+        return [TextContent(type="text", text=body)]
+
     return [TextContent(type="text", text=json.dumps({"error": f"Unbekanntes Tool: {name}"}))]
+
+
+# ── B-44: Risk-indicator health payload ──────────────────────
+# Severity ordering used when combining indicators into a single status.
+_RISK_SEVERITY_ORDER = ["ok", "info", "warning", "medium", "high", "critical"]
+
+
+def _worst_severity(a: str, b: str) -> str:
+    """Return the more severe of two severities."""
+    ai = _RISK_SEVERITY_ORDER.index(a) if a in _RISK_SEVERITY_ORDER else 0
+    bi = _RISK_SEVERITY_ORDER.index(b) if b in _RISK_SEVERITY_ORDER else 0
+    return _RISK_SEVERITY_ORDER[max(ai, bi)]
+
+
+async def _check_opa_reachable() -> dict:
+    """R-05: OPA Policy Engine reachability."""
+    try:
+        resp = await http.get(f"{OPA_URL}/health", timeout=2.0)
+        resp.raise_for_status()
+        return {"name": "opa_reachable", "value": True, "severity": "ok",
+                "risk": "R-05"}
+    except Exception as e:
+        return {"name": "opa_reachable", "value": False, "severity": "critical",
+                "risk": "R-05", "detail": str(e)[:200]}
+
+
+async def _check_pii_scanner() -> dict:
+    """R-02, R-07: PII Scanner availability via ingestion /health."""
+    try:
+        resp = await http.get(f"{INGESTION_URL}/health", timeout=2.0)
+        resp.raise_for_status()
+        body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        enabled = body.get("pii_scanner_enabled", True)  # default to enabled if unknown
+        if not enabled:
+            return {"name": "pii_scanner_status", "value": "disabled",
+                    "severity": "high", "risk": "R-02"}
+        return {"name": "pii_scanner_status", "value": "enabled",
+                "severity": "ok", "risk": "R-02"}
+    except Exception as e:
+        return {"name": "pii_scanner_status", "value": "unreachable",
+                "severity": "high", "risk": "R-02", "detail": str(e)[:200]}
+
+
+async def _check_reranker_available() -> dict:
+    """R-04: Reranker availability (medium — graceful fallback exists)."""
+    if not RERANKER_ENABLED:
+        return {"name": "reranker_available", "value": "disabled",
+                "severity": "info", "risk": "R-04"}
+    try:
+        resp = await http.get(f"{RERANKER_URL}/health", timeout=2.0)
+        resp.raise_for_status()
+        return {"name": "reranker_available", "value": True, "severity": "ok",
+                "risk": "R-04"}
+    except Exception as e:
+        return {"name": "reranker_available", "value": False,
+                "severity": "medium", "risk": "R-04", "detail": str(e)[:200]}
+
+
+HEALTH_CHAIN_TAIL_ROWS = int(os.getenv("HEALTH_CHAIN_TAIL_ROWS", "1000"))
+
+
+async def _check_audit_chain() -> dict:
+    """R-03: Audit-log hash chain integrity.
+
+    Uses pb_verify_audit_chain_tail() so a JSON health request stays
+    cheap even when agent_access_log has millions of rows. The full
+    chain is verified by the daily audit_retention_cleanup job.
+    """
+    try:
+        pool = await get_pg_pool()
+        row = await pool.fetchrow(
+            "SELECT valid, first_invalid_id, total_checked "
+            "FROM pb_verify_audit_chain_tail($1)",
+            HEALTH_CHAIN_TAIL_ROWS,
+        )
+        if row is None:
+            return {"name": "audit_chain_integrity", "value": "unknown",
+                    "severity": "warning", "risk": "R-03"}
+        if row["valid"]:
+            return {"name": "audit_chain_integrity", "value": "valid",
+                    "severity": "ok", "risk": "R-03",
+                    "total_checked": row["total_checked"]}
+        return {"name": "audit_chain_integrity", "value": "invalid",
+                "severity": "critical", "risk": "R-03",
+                "first_invalid_id": row["first_invalid_id"],
+                "total_checked": row["total_checked"]}
+    except Exception as e:
+        return {"name": "audit_chain_integrity", "value": "error",
+                "severity": "warning", "risk": "R-03", "detail": str(e)[:200]}
+
+
+async def _check_feedback_score() -> dict:
+    """R-01, R-04: Recent feedback average."""
+    try:
+        pool = await get_pg_pool()
+        avg = await pool.fetchval(
+            "SELECT AVG(rating)::float FROM search_feedback "
+            "WHERE created_at > now() - INTERVAL '24 hours'"
+        )
+        if avg is None:
+            return {"name": "feedback_score", "value": None, "severity": "ok",
+                    "risk": "R-01", "detail": "no feedback in last 24h"}
+        sev = "warning" if avg < 2.5 else "ok"
+        return {"name": "feedback_score", "value": round(float(avg), 2),
+                "severity": sev, "risk": "R-01"}
+    except Exception as e:
+        return {"name": "feedback_score", "value": None, "severity": "info",
+                "risk": "R-01", "detail": str(e)[:200]}
+
+
+async def _check_circuit_breaker_indicator() -> dict:
+    """R-07: Human-oversight kill-switch state.
+
+    Active breaker is a *critical* indicator: it means data retrieval
+    is intentionally suspended and the deployer should know.
+    """
+    try:
+        state = await _get_circuit_breaker_state()
+        if state.get("active"):
+            return {
+                "name": "circuit_breaker_active", "value": True,
+                "severity": "critical", "risk": "R-07",
+                "reason": state.get("reason"),
+                "set_by": state.get("set_by"),
+                "set_at": state.get("set_at"),
+            }
+        return {"name": "circuit_breaker_active", "value": False,
+                "severity": "info", "risk": "R-07"}
+    except Exception as e:
+        return {"name": "circuit_breaker_active", "value": None,
+                "severity": "warning", "risk": "R-07",
+                "detail": str(e)[:200]}
+
+
+async def _build_risk_health_payload() -> dict:
+    """Assemble all risk indicators into a single JSON document."""
+    indicators = await asyncio.gather(
+        _check_opa_reachable(),
+        _check_pii_scanner(),
+        _check_reranker_available(),
+        _check_audit_chain(),
+        _check_feedback_score(),
+        _check_circuit_breaker_indicator(),
+        return_exceptions=True,
+    )
+
+    safe_indicators: list[dict] = []
+    for ind in indicators:
+        if isinstance(ind, Exception):
+            safe_indicators.append({
+                "name": "unknown", "value": None, "severity": "warning",
+                "detail": str(ind)[:200],
+            })
+        else:
+            safe_indicators.append(ind)
+
+    # Combine severities — "ok" if everything is ok, else worst.
+    combined = "ok"
+    for ind in safe_indicators:
+        combined = _worst_severity(combined, ind.get("severity", "ok"))
+
+    return {
+        "service": "mcp-server",
+        "status": combined,
+        "indicators": safe_indicators,
+        "risk_register": "docs/risk-management.md",
+    }
+
+
+# ── B-41: Transparency report (EU AI Act Art. 13) ────────────
+# Deployer-facing information about the system: models, policies,
+# collection stats, PII configuration, audit integrity.
+# Auth required (any valid pb_ key) — not public to the internet.
+_TRANSPARENCY_CACHE: dict[str, Any] = {
+    "payload": None,
+    "version": None,
+    "built_at": 0.0,
+}
+TRANSPARENCY_CACHE_TTL = float(os.getenv("TRANSPARENCY_CACHE_TTL", "60"))
+
+
+def _compute_transparency_version(models: dict, opa_hash: str,
+                                  collections: list) -> str:
+    """Deterministic fingerprint used as cache key and report_version."""
+    import hashlib
+    canonical = json.dumps({
+        "models": models,
+        "opa": opa_hash,
+        "collections": sorted(collections),
+    }, sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+async def _transparency_opa_snapshot() -> tuple[dict, str]:
+    """Fetch the public portion of OPA config and return (snapshot, hash).
+
+    Only exposes non-sensitive meta-info: role list, classification list,
+    pii_entity_types, summarization policy flags, audit retention. Never
+    exposes secrets or the full access matrix.
+    """
+    import hashlib
+    try:
+        resp = await http.get(f"{OPA_URL}/v1/data/pb/config", timeout=2.0)
+        resp.raise_for_status()
+        cfg = resp.json().get("result", {}) or {}
+    except Exception as e:
+        log.warning(f"Transparency: OPA config fetch failed: {e}")
+        cfg = {}
+
+    snapshot = {
+        "roles":                    cfg.get("roles", []),
+        "classifications":          cfg.get("classifications", []),
+        "pii_entity_types":         cfg.get("pii_entity_types", []),
+        "audit_retention_days":     (cfg.get("audit") or {}).get("retention_days"),
+        "summarization":            cfg.get("summarization", {}),
+        "proxy_allowed_roles":      (cfg.get("proxy") or {}).get("allowed_roles", []),
+        "active_policies": [
+            "pb.access", "pb.privacy", "pb.summarization",
+            "pb.proxy", "pb.rules",
+        ],
+    }
+    opa_hash = hashlib.sha256(
+        json.dumps(snapshot, sort_keys=True).encode()
+    ).hexdigest()[:16]
+    return snapshot, opa_hash
+
+
+async def _transparency_qdrant_snapshot() -> list[dict]:
+    """Return basic per-collection stats (name, vectors_count) for the
+    three canonical Powerbrain collections. Collections are queried in
+    parallel via asyncio.gather."""
+    names = ("pb_general", "pb_code", "pb_rules")
+
+    async def _one(name: str) -> dict:
+        try:
+            info = await qdrant.get_collection(collection_name=name)
+            return {
+                "name":    name,
+                "status":  getattr(info, "status", None) and str(info.status),
+                "points":  getattr(info, "points_count", None),
+                "vectors": getattr(info, "vectors_count", None),
+            }
+        except Exception as e:
+            return {"name": name, "status": "unavailable",
+                    "detail": str(e)[:200]}
+
+    return list(await asyncio.gather(*[_one(n) for n in names]))
+
+
+async def _transparency_pii_snapshot() -> dict:
+    """Fetch PII scanner config from ingestion /health."""
+    try:
+        resp = await http.get(f"{INGESTION_URL}/health", timeout=2.0)
+        resp.raise_for_status()
+        body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        return {
+            "scanner_enabled": body.get("pii_scanner_enabled", None),
+            "languages":       body.get("pii_languages"),
+            "entity_types":    body.get("pii_entity_types"),
+        }
+    except Exception as e:
+        return {"scanner_enabled": None, "detail": str(e)[:200]}
+
+
+async def _transparency_audit_snapshot() -> dict:
+    """Short audit-chain integrity status for the transparency report."""
+    try:
+        pool = await get_pg_pool()
+        row = await pool.fetchrow(
+            "SELECT valid, total_checked FROM pb_verify_audit_chain()"
+        )
+        if row is None:
+            return {"valid": None, "total_checked": 0}
+        return {"valid": row["valid"], "total_checked": row["total_checked"]}
+    except Exception as e:
+        return {"valid": None, "detail": str(e)[:200]}
+
+
+async def _build_transparency_payload() -> dict:
+    """Build the full transparency report (no cache).
+
+    The four snapshot helpers are independent — fan them out via
+    asyncio.gather so a cold cache miss takes ~max(opa, qdrant, ing,
+    pg) instead of the sum.
+    """
+    (opa_snapshot, opa_hash), collections, pii, audit = await asyncio.gather(
+        _transparency_opa_snapshot(),
+        _transparency_qdrant_snapshot(),
+        _transparency_pii_snapshot(),
+        _transparency_audit_snapshot(),
+    )
+
+    models = {
+        "embedding": {
+            "name":        EMBEDDING_MODEL,
+            "provider_url": EMBEDDING_PROVIDER_URL,
+        },
+        "llm": {
+            "name":        LLM_MODEL,
+            "provider_url": LLM_PROVIDER_URL,
+        },
+        "reranker": {
+            "backend":     RERANKER_BACKEND,
+            "model":       RERANKER_MODEL_NAME or None,
+            "enabled":     RERANKER_ENABLED,
+        },
+    }
+
+    version = _compute_transparency_version(
+        models, opa_hash, [c["name"] for c in collections]
+    )
+
+    return {
+        "service":        "mcp-server",
+        "report_version": version,
+        "system_purpose": (
+            "Powerbrain feeds AI agents with policy-compliant enterprise "
+            "knowledge via the Model Context Protocol. It is not itself a "
+            "high-risk AI system — see docs/risk-management.md for the "
+            "full risk register."
+        ),
+        "deployment_constraints": [
+            "All data access is mediated by OPA policies",
+            "PII scanning runs at ingestion and on the chat path",
+            "Audit log is append-only with a SHA-256 hash chain",
+            "Summarization of confidential data is mandatory",
+        ],
+        "models":           models,
+        "opa":              opa_snapshot,
+        "collections":      collections,
+        "pii_scanner":      pii,
+        "audit_integrity":  audit,
+        "risk_register":    "docs/risk-management.md",
+    }
+
+
+def _invalidate_transparency_cache() -> None:
+    """Force the next /transparency hit to rebuild the report.
+
+    Call after admin-triggered config changes (model swap, OPA bundle
+    reload, collection drop) so deployers see fresh state immediately
+    instead of waiting up to TRANSPARENCY_CACHE_TTL seconds.
+    """
+    _TRANSPARENCY_CACHE["payload"]  = None
+    _TRANSPARENCY_CACHE["version"]  = None
+    _TRANSPARENCY_CACHE["built_at"] = 0.0
+
+
+async def _get_transparency_report() -> dict:
+    """Return a cached transparency report (60s TTL, or invalidated by
+    version fingerprint changes)."""
+    import time as _time
+    now = _time.time()
+    cached = _TRANSPARENCY_CACHE.get("payload")
+    built  = _TRANSPARENCY_CACHE.get("built_at", 0.0)
+
+    if cached is not None and (now - built) < TRANSPARENCY_CACHE_TTL:
+        return cached
+
+    payload = await _build_transparency_payload()
+    _TRANSPARENCY_CACHE["payload"]  = payload
+    _TRANSPARENCY_CACHE["version"]  = payload["report_version"]
+    _TRANSPARENCY_CACHE["built_at"] = now
+    return payload
 
 
 # ── Startup ──────────────────────────────────────────────────
@@ -2009,8 +3020,85 @@ if __name__ == "__main__":
         await pg_pool.close()
         log.info("Shutdown: PG pool and HTTP client closed")
 
+    def _auth_user(request):
+        """Return the authenticated user from Starlette request.state, if any."""
+        try:
+            user = request.scope.get("user") or getattr(request.state, "user", None)
+            if user is None:
+                return None, None
+            # MCP SDK puts an AuthenticatedUser on scope; adapt defensively.
+            client_id = getattr(user, "username", None) or getattr(user, "client_id", None)
+            scopes = getattr(user, "scopes", None) or []
+            role = scopes[0] if scopes else None
+            return client_id, role
+        except Exception:
+            return None, None
+
+    async def circuit_breaker_get(request):
+        """GET /circuit-breaker — report current kill-switch state.
+
+        Auth-required (any valid pb_ key). Does NOT require admin role so
+        operators can monitor the breaker without elevated credentials.
+        """
+        state = await _get_circuit_breaker_state()
+        return JSONResponse(state)
+
+    async def circuit_breaker_post(request):
+        """POST /circuit-breaker — flip the kill-switch. Admin only.
+
+        Body: {"active": bool, "reason": str}
+        """
+        _, role = _auth_user(request)
+        if role != "admin":
+            return JSONResponse(
+                {"error": "circuit_breaker toggle requires admin role"},
+                status_code=403,
+            )
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        if "active" not in body:
+            return JSONResponse(
+                {"error": "body must contain 'active' (bool)"},
+                status_code=400,
+            )
+        agent_id, _ = _auth_user(request)
+        state = await _set_circuit_breaker(
+            bool(body["active"]),
+            body.get("reason"),
+            agent_id or "unknown",
+        )
+        await log_access(agent_id or "unknown", "admin", "oversight",
+                         "circuit_breaker", "set_circuit_breaker", "allow",
+                         {"active": state["active"], "reason": state.get("reason")})
+        return JSONResponse(state)
+
+    async def transparency_endpoint(request):
+        """GET /transparency — EU AI Act Art. 13 transparency report.
+
+        Auth-required (any valid pb_ key). Not in AUTH_BYPASS_PATHS — the
+        outer RequireAuthMiddleware enforces the Bearer token.
+        """
+        payload = await _get_transparency_report()
+        return JSONResponse(payload)
+
     async def health_check(request):
-        return PlainTextResponse("ok")
+        """Content-negotiated health endpoint.
+
+        - Default: Plain-text "ok" (stable contract for Docker/LB health checks).
+        - With ``Accept: application/json``: structured risk-indicator JSON
+          covering the EU AI Act Art. 9 risk register. See
+          ``docs/risk-management.md`` for the full mapping.
+        """
+        accept = (request.headers.get("accept") or "").lower()
+        wants_json = "application/json" in accept
+        if not wants_json:
+            return PlainTextResponse("ok")
+
+        payload = await _build_risk_health_payload()
+        status_code = 200 if payload["status"] != "critical" else 503
+        return JSONResponse(payload, status_code=status_code)
 
     async def metrics_json(request):
         """Structured JSON metrics for demo-UI consumption."""
@@ -2145,6 +3233,9 @@ if __name__ == "__main__":
         routes=[
             Route("/health", endpoint=health_check),
             Route("/metrics/json", endpoint=metrics_json),
+            Route("/transparency", endpoint=transparency_endpoint),
+            Route("/circuit-breaker", endpoint=circuit_breaker_get, methods=["GET"]),
+            Route("/circuit-breaker", endpoint=circuit_breaker_post, methods=["POST"]),
             # OAuth discovery (at stripped paths AND full RFC 9728 paths)
             Route("/.well-known/oauth-authorization-server", endpoint=well_known_oauth_as),
             Route("/.well-known/oauth-authorization-server/{rest:path}", endpoint=well_known_oauth_as),
