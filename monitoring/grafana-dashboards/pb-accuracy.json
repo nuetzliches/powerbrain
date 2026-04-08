@@ -1,0 +1,166 @@
+{
+  "title": "EU AI Act Accuracy Monitoring",
+  "uid": "pb-accuracy",
+  "tags": ["pb", "eu-ai-act", "art-15", "accuracy", "drift"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "5m",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "collection",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(pb_accuracy_avg_rating, collection)",
+        "includeAll": true,
+        "multi": true,
+        "current": { "selected": true, "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Avg Rating (24h, all collections)",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "avg(pb_accuracy_avg_rating{window=\"24h\"})",
+        "legendFormat": "avg rating"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 5,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": 0   },
+              { "color": "yellow", "value": 2.5 },
+              { "color": "green",  "value": 4.0 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Empty Result Rate (1h)",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "max(pb_accuracy_empty_result_rate{window=\"1h\"})",
+        "legendFormat": "max"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": 0   },
+              { "color": "yellow", "value": 0.3 },
+              { "color": "red",    "value": 0.5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Drifted Collections",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "sum(pb_accuracy_drift_drifted)",
+        "legendFormat": "drifted"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "red",   "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Avg Reranker Score (24h)",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "avg(pb_accuracy_rerank_score{window=\"24h\"})",
+        "legendFormat": "rerank score"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": 0   },
+              { "color": "yellow", "value": 0.3 },
+              { "color": "green",  "value": 0.6 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Avg Rating per Collection (24h)",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "pb_accuracy_avg_rating{window=\"24h\", collection=~\"$collection\"}",
+        "legendFormat": "{{ collection }}"
+      }]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Empty Result Rate per Collection (1h)",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "pb_accuracy_empty_result_rate{window=\"1h\", collection=~\"$collection\"}",
+        "legendFormat": "{{ collection }}"
+      }]
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Embedding Drift Distance",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "pb_accuracy_drift_distance{collection=~\"$collection\"}",
+        "legendFormat": "{{ collection }}"
+      }]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Reranker Score per Collection (24h)",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "pb_accuracy_rerank_score{window=\"24h\", collection=~\"$collection\"}",
+        "legendFormat": "{{ collection }}"
+      }]
+    }
+  ]
+}

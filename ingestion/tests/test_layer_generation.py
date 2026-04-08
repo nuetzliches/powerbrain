@@ -110,6 +110,11 @@ class TestIngestLayerIntegration:
             "retention_days": 365
         })
         monkeypatch.setattr(ingestion_api, "check_opa_privacy", mock_opa_check)
+        # Mock quality gate to allow (B-43)
+        monkeypatch.setattr(
+            ingestion_api, "check_opa_quality_gate",
+            AsyncMock(return_value={"allowed": True, "min_score": 0.0, "reason": ""}),
+        )
 
         await ingest_text_chunks(
             chunks=["hello world"],
@@ -149,6 +154,11 @@ class TestIngestLayerIntegration:
             "retention_days": 365
         })
         monkeypatch.setattr(ingestion_api, "check_opa_privacy", mock_opa_check)
+        # Mock quality gate to allow (B-43)
+        monkeypatch.setattr(
+            ingestion_api, "check_opa_quality_gate",
+            AsyncMock(return_value={"allowed": True, "min_score": 0.0, "reason": ""}),
+        )
 
         await ingest_text_chunks(
             chunks=["hello world"],

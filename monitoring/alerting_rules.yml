@@ -90,3 +90,41 @@ groups:
           severity: warning
         annotations:
           summary: "Reranker Latenz p95 über 1 Sekunde"
+
+      # ── B-45: Accuracy Monitoring (EU AI Act Art. 15) ──────
+
+      - alert: QualityDrift
+        expr: avg_over_time(pb_accuracy_avg_rating{window="24h"}[1h]) < 2.5
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Avg feedback rating below 2.5 for {{ $labels.collection }}"
+          description: "Rolling-1h avg of pb_accuracy_avg_rating[24h]: {{ $value }}"
+
+      - alert: HighEmptyResultRate
+        expr: pb_accuracy_empty_result_rate{window="1h"} > 0.5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 50% of recent searches returned no results ({{ $labels.collection }})"
+          description: "empty_result_rate: {{ $value | humanizePercentage }}"
+
+      - alert: RerankerScoreDrift
+        expr: pb_accuracy_rerank_score{window="24h"} < 0.3
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Average reranker score below 0.3 for {{ $labels.collection }}"
+          description: "rerank_score 24h: {{ $value }}"
+
+      - alert: EmbeddingDriftDetected
+        expr: pb_accuracy_drift_drifted == 1
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Embedding drift detected on {{ $labels.collection }}"
+          description: "Cosine distance from baseline exceeds threshold; investigate model or data shift"
