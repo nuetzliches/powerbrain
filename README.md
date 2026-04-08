@@ -133,10 +133,10 @@ curl http://localhost:8090/v1/chat/completions \
 
 ## 🤝 Contributing
 
-Powerbrain is open source (MIT). Contributions welcome — whether it's a new OPA policy, a better reranker model, or documentation improvements.
+Powerbrain is open source ([Apache 2.0](LICENSE)). Contributions welcome — whether it's a new OPA policy, a better reranker model, or documentation improvements.
 
 *Open source. Closed data.* 🔐
 
 ## 📄 License
 
-All original code: **MIT**. Dependencies under their respective licenses.
+[Apache License 2.0](LICENSE). Dependencies under their respective licenses.
