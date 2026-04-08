@@ -1,0 +1,61 @@
+name: PR Validate
+
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run unit tests
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/app" -w /app python:3.12-slim bash -c "
+            pip install --no-cache-dir -q \
+              -r requirements-dev.txt \
+              -r mcp-server/requirements.txt \
+              -r ingestion/requirements.txt \
+              -r pb-proxy/requirements.txt \
+              fastapi uvicorn pydantic prometheus-client pyyaml python-dotenv &&
+            PYTHONPATH=.:mcp-server:ingestion:reranker:pb-proxy \
+            python -m pytest \
+              shared/tests \
+              mcp-server/tests \
+              ingestion/tests \
+              reranker/tests \
+              pb-proxy/tests \
+              -m 'not integration' \
+              --tb=short -q
+          "
+
+  opa-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download OPA
+        run: |
+          curl -sSL -o opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+          chmod +x opa
+
+      - name: Run OPA policy tests
+        run: ./opa test opa-policies/pb/ -v
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build mcp-server image
+        run: docker build -f mcp-server/Dockerfile -t pb-mcp-server:pr-test .
+
+      - name: Build ingestion image
+        run: docker build -f ingestion/Dockerfile -t pb-ingestion:pr-test .
+
+      - name: Build reranker image
+        run: docker build -f reranker/Dockerfile -t pb-reranker:pr-test .
+
+      - name: Build pb-proxy image
+        run: docker build -f pb-proxy/Dockerfile -t pb-proxy:pr-test .

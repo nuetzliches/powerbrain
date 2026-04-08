@@ -471,6 +471,9 @@ Tasks to complete before open-sourcing the repository:
 - [x] **Audit secrets and internal URLs** — Grepped for internal domains, runner names, personal paths. Parameterized `build-images.sh`, sanitized doc paths. `.forgejo/` workflows contain Forgejo-specific references but are kept for internal CI use.
 - [x] **Review `.env.example`** — No real credentials or internal hostnames
 - [x] **Add LICENSE file** — Apache 2.0
-- [ ] **Move `.forgejo/` workflows to internal infra repo** — `build-images.yml` and `pr-validate.yml` use Forgejo-specific runner names and internal registry. Move to dedicated internal CI repo before open-sourcing.
-- [ ] **Add generic GitHub Actions CI** — Replace Forgejo-specific workflows with GitHub Actions equivalents for the public repo
-- [ ] **Enable branch protection on `master`** — Requires GitHub Pro or public repo. Settings: require PR, require status checks (`unit-tests`, `opa-tests`, `docker-build`), disable direct push
+- [x] **Keep `.forgejo/` workflows in repo (coexistence model)** — `.forgejo/workflows/` stays in the public repo for internal Forgejo CI. GitHub ignores this directory. `.github/workflows/` handles public CI. Both coexist without conflict. See [Deployment Guide → CI/CD](#cicd--dual-workflow-setup) for details.
+- [x] **Add GitHub Actions CI** — `.github/workflows/pr-validate.yml` with same 3 jobs (unit-tests, opa-tests, docker-build) using `ubuntu-latest` and `actions/checkout@v4`
+- [x] **Enable branch protection on `master`** — GitHub Ruleset: require PR, require status checks (`unit-tests`, `opa-tests`, `docker-build`), no direct push
+- [x] **Add CONTRIBUTING.md** — Contributor guide with dev setup, test commands, code conventions
+- [x] **Set repo description + topics** — Description, topics (mcp, rag, opa, gdpr, etc.)
+- [x] **Switch to public** — `gh repo edit --visibility public`
