@@ -2,21 +2,11 @@
 
 Open tasks, prioritized. Last updated: 2026-04-09.
 
-Remaining open items: B-10 (OPAL), B-11 (Policy UI), B-20 (PipelineStep cleanup).
+Remaining open item: B-11 (Policy UI).
 
 ---
 
 ## Backlog — Policy Management Roadmap
-
-### B-10: OPAL Integration (Option B)
-**Priority:** Low (after B-01)
-**Effort:** ~2–3 days
-
-OPAL for realtime policy + data sync instead of OPA bundle polling.
-
-- [ ] OPAL server + client as Docker services
-- [ ] Git watcher on Forgejo `pb-policies` repo
-- [ ] WebSocket-based push on policy changes
 
 ### B-11: Policy Management Web UI (Option C)
 **Priority:** Low (after B-01, optional after B-10)
@@ -122,6 +112,9 @@ New `boost_corrections` parameter in `rerank_options`. Boosts documents with `me
 
 ### ✅ B-20: PipelineStep mock cleanup (2026-04-09)
 Cleaned up `except ImportError` fallback in `pb-proxy/proxy.py`. Stub now matches `shared/telemetry.PipelineStep` signature including `to_dict()` method.
+
+### ✅ B-10: OPAL Integration (2026-04-09)
+opal-server + opal-client as Docker Compose profile (`--profile opal`). Watches a git repo for policy changes and pushes to OPA in real-time via WebSocket. Configurable via `OPAL_POLICY_REPO_URL`. Replaces the commented-out OPA bundle polling.
 
 See also `docs/KNOWN_ISSUES.md` for all resolved issues (sprints 1–5).
 See `docs/plans/` for completed feature implementations.

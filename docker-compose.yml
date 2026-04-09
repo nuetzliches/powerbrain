@@ -110,12 +110,8 @@ services:
       - "--addr=0.0.0.0:8181"
       - "--set=decision_logs.console=true"
       - "/policies"
-      # Enable bundle polling after setup:
-      # - "--set=services.forgejo.url=${FORGEJO_URL:-http://forgejo.local:3000}"
-      # - "--set=services.forgejo.credentials.bearer.token=${FORGEJO_TOKEN}"
-      # - "--set=bundles.pb.service=forgejo"
-      # - "--set=bundles.pb.resource=/api/v1/repos/pb-org/pb-policies/raw/bundle.tar.gz"
-      # - "--set=bundles.pb.polling.min_delay_seconds=10"
+      # For real-time policy sync, use the OPAL profile instead:
+      # docker compose --profile opal up -d
     networks:
       - pb-net
     restart: unless-stopped
@@ -124,6 +120,45 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+
+  # ── OPAL — Real-Time Policy Sync (optional) ──────────────
+  # Watches a git repo (Forgejo/GitHub) for policy changes and pushes
+  # them to OPA in real-time via WebSocket. Activate with:
+  #   docker compose --profile opal up -d
+  # Requires OPAL_POLICY_REPO_URL in .env.
+  opal-server:
+    image: permitio/opal-server:latest
+    container_name: pb-opal-server
+    profiles: ["opal"]
+    ports:
+      - "7002:7002"
+    environment:
+      OPAL_POLICY_REPO_URL: ${OPAL_POLICY_REPO_URL:-}
+      OPAL_POLICY_REPO_SSH_KEY: ""
+      OPAL_POLICY_REPO_BRANCH: ${OPAL_POLICY_REPO_BRANCH:-main}
+      OPAL_POLICY_REPO_POLLING_INTERVAL: ${OPAL_POLL_INTERVAL:-30}
+      OPAL_DATA_CONFIG_SOURCES: '{"config":{"entries":[]}}'
+      OPAL_LOG_FORMAT_INCLUDE_PID: "true"
+    networks:
+      - pb-net
+    restart: unless-stopped
+
+  opal-client:
+    image: permitio/opal-client:latest
+    container_name: pb-opal-client
+    profiles: ["opal"]
+    environment:
+      OPAL_SERVER_URL: http://opal-server:7002
+      OPAL_OPA_URL: http://opa:8181
+      OPAL_LOG_FORMAT_INCLUDE_PID: "true"
+    depends_on:
+      opa:
+        condition: service_healthy
+      opal-server:
+        condition: service_started
+    networks:
+      - pb-net
+    restart: unless-stopped
 
   # ── Ollama (embeddings + LLM, local) ──────────────────────
   # Only needed when no external provider is configured.

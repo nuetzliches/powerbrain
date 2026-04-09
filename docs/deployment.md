@@ -264,6 +264,55 @@ docker compose --profile proxy --profile tls up -d
 docker compose --profile proxy --profile seed up -d
 ```
 
+## OPAL — Real-Time Policy Sync
+
+By default, OPA loads policies from a static volume mount at container start. Changes to `opa-policies/` require an OPA container restart to take effect.
+
+For production environments that need real-time policy updates, Powerbrain includes an optional [OPAL](https://www.opal.ac/) (Open Policy Administration Layer) integration. OPAL watches a git repository for policy changes and pushes them to OPA in real-time via WebSocket.
+
+### Activation
+
+```bash
+# Set the policy repo URL in .env
+OPAL_POLICY_REPO_URL=http://forgejo.local:3000/pb-org/pb-policies
+
+# Start with the opal profile
+docker compose --profile opal up -d
+```
+
+This starts two additional containers:
+- **opal-server** (port 7002) — watches the git repo, publishes updates
+- **opal-client** — receives updates from opal-server, pushes to OPA
+
+### How it works
+
+1. opal-server polls the configured git repo (default: every 30 seconds)
+2. When a change is detected (e.g., updated `data.json` or new Rego rules), opal-server notifies all connected clients
+3. opal-client fetches the updated policies and pushes them to OPA's Data and Policy APIs
+4. OPA consumers (mcp-server, proxy) pick up the changes on their next query
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPAL_POLICY_REPO_URL` | *(required)* | Git repo URL containing OPA policies |
+| `OPAL_POLICY_REPO_BRANCH` | `main` | Branch to watch |
+| `OPAL_POLL_INTERVAL` | `30` | Polling interval in seconds |
+
+### Combining with other profiles
+
+```bash
+# OPAL + TLS
+docker compose --profile opal --profile tls up -d
+
+# OPAL + Proxy + TLS
+docker compose --profile opal --profile proxy --profile tls up -d
+```
+
+### Without OPAL
+
+If you don't need real-time sync, the default setup (static volume mount) continues to work. Policy updates via the `manage_policies` MCP tool (B-12) write directly to OPA's Data API and take effect immediately, but are not persisted to disk — they reset on OPA container restart.
+
 ## Environment Variables Reference
 
 | Variable | Default | Description |
