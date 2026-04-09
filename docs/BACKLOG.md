@@ -58,12 +58,6 @@ The ingestion pipeline scans and pseudonymizes the `source` text (which is embed
 
 ## Backlog — Technical Debt
 
-### B-20: Clean up PipelineStep mock in proxy.py
-**Priority:** Low
-**Effort:** ~0.5 day
-
-The `except ImportError` fallback defines its own `PipelineStep`, which can diverge from the original in `shared/telemetry.py`.
-
 ### B-21: ~~Forgejo Workflows → internal infra repo~~
 **Done** — `.forgejo/` stays in the repo (coexistence model). GitHub ignores the directory.
 
@@ -125,6 +119,9 @@ Admin-only tool with list/read/update actions for OPA policy data sections. JSON
 
 ### ✅ B-13: boost_corrections in reranking (2026-04-09)
 New `boost_corrections` parameter in `rerank_options`. Boosts documents with `metadata.isCorrection: true` by a configurable score. Analogous to existing `boost_same_author`.
+
+### ✅ B-20: PipelineStep mock cleanup (2026-04-09)
+Cleaned up `except ImportError` fallback in `pb-proxy/proxy.py`. Stub now matches `shared/telemetry.PipelineStep` signature including `to_dict()` method.
 
 See also `docs/KNOWN_ISSUES.md` for all resolved issues (sprints 1–5).
 See `docs/plans/` for completed feature implementations.
