@@ -543,9 +543,10 @@ def _apply_heuristic_boosts(
     match_project = options.get("match_project", "")
     match_author = options.get("match_author", "")
     match_files = set(options.get("match_files", []))
-    boost_project = float(options.get("boost_same_project", 0.0))
-    boost_author = float(options.get("boost_same_author", 0.0))
-    boost_files = float(options.get("boost_file_overlap", 0.0))
+    boost_project     = float(options.get("boost_same_project", 0.0))
+    boost_author      = float(options.get("boost_same_author", 0.0))
+    boost_files       = float(options.get("boost_file_overlap", 0.0))
+    boost_corrections = float(options.get("boost_corrections", 0.0))
 
     for doc in results:
         meta = doc.metadata
@@ -559,6 +560,8 @@ def _apply_heuristic_boosts(
             if doc_files & match_files:
                 overlap_ratio = len(doc_files & match_files) / len(match_files)
                 bonus += boost_files * overlap_ratio
+        if boost_corrections and meta.get("isCorrection"):
+            bonus += boost_corrections
         doc.rerank_score += bonus
     return results
 
@@ -1037,6 +1040,8 @@ async def list_tools() -> list[Tool]:
                             "match_author":       {"type": "string"},
                             "boost_file_overlap": {"type": "number", "default": 0},
                             "match_files":        {"type": "array", "items": {"type": "string"}},
+                            "boost_corrections":  {"type": "number", "default": 0,
+                                                   "description": "Score boost for user-corrected documents (isCorrection metadata)"},
                         },
                     },
                 },

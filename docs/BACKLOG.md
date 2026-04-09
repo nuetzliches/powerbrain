@@ -2,6 +2,8 @@
 
 Open tasks, prioritized. Last updated: 2026-04-09.
 
+Remaining open items: B-10 (OPAL), B-11 (Policy UI), B-20 (PipelineStep cleanup).
+
 ---
 
 ## Backlog — Policy Management Roadmap
@@ -27,37 +29,6 @@ Lightweight web frontend for policy-data management.
 - [ ] OPA dry-run / policy preview
 - [ ] Commit to Forgejo (versioning + audit trail)
 - [ ] Role-based access (admin only)
-
-### B-12: MCP tool `manage_policies` (CRUD)
-**Priority:** Medium
-**Effort:** ~1 day
-
-MCP tool for reading/writing policy data via the OPA Data API.
-
-- [ ] `manage_policies` tool: read/update policy data sections
-- [ ] JSON Schema validation before write access
-- [ ] OPA admin-only access control
-
----
-
-## Backlog — Reranking
-
-### B-13: boost_corrections — prefer correction documents in reranking
-**Priority:** Low
-**Effort:** ~0.5 day
-
-timecockpit-mcp stores user-corrected timesheet descriptions as documents with
-`metadata.isCorrection: true` in the KB (source_type `timesheet`). These represent
-validated, high-quality texts and should be preferred in similarity searches.
-
-New reranking parameter `boost_corrections` (analogous to `boost_same_author`):
-- Heuristic boost on documents with `metadata.isCorrection == true`
-- Recommended default boost: 0.1–0.2
-- Configurable via `rerank_options` in the `search_knowledge` call
-
-- [ ] Implement `boost_corrections` parameter in the reranking pipeline
-- [ ] Consider `isCorrection` metadata field in scoring
-- [ ] Tests: correction document is ranked higher than identical text without the flag
 
 ---
 
@@ -142,6 +113,18 @@ Windowed feedback metrics view `v_feedback_windowed` (1h/24h/7d). Embedding drif
 
 ### ✅ pb-worker: Maintenance Container (2026-04-08)
 `worker/scheduler.py` with APScheduler. 4 jobs: `accuracy_metrics_refresh` (5 min), `audit_retention_cleanup` (daily 03:00), `gdpr_retention_cleanup` (daily 02:00), `pending_review_timeout` (hourly). Docker service `pb-worker` (internal port 8083, no external).
+
+### ✅ B-30: graph_query PII masking (2026-04-09)
+PII-scan graph_query/graph_mutate results via `/scan` endpoint. Recursive walker masks firstname, lastname, email, phone, name. Graceful degradation on scanner failure.
+
+### ✅ B-31: Metadata PII redaction (2026-04-09)
+Redact PII-sensitive metadata keys in search_knowledge/get_code_context based on configurable mapping (`pii_metadata_fields` in pii_config.yaml) + OPA `fields_to_redact` policy. Fail-closed on OPA failure.
+
+### ✅ B-12: manage_policies MCP tool (2026-04-09)
+Admin-only tool with list/read/update actions for OPA policy data sections. JSON Schema validation before writes, cache invalidation, audit logging. `jsonschema` dependency added.
+
+### ✅ B-13: boost_corrections in reranking (2026-04-09)
+New `boost_corrections` parameter in `rerank_options`. Boosts documents with `metadata.isCorrection: true` by a configurable score. Analogous to existing `boost_same_author`.
 
 See also `docs/KNOWN_ISSUES.md` for all resolved issues (sprints 1–5).
 See `docs/plans/` for completed feature implementations.
