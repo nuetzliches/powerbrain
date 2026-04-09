@@ -154,6 +154,35 @@ def _load_pii_metadata_fields() -> dict[str, str]:
 
 PII_METADATA_FIELDS: dict[str, str] = _load_pii_metadata_fields()
 
+# ── Policy data schema (B-12) ───────────────────────────────
+import jsonschema as _jsonschema
+
+
+def _load_policy_schema() -> dict:
+    """Load the policy data JSON Schema for manage_policies validation."""
+    for path in (
+        os.getenv("POLICY_SCHEMA_PATH", ""),
+        "/app/policy_data_schema.json",                     # Docker default
+        os.path.join(os.path.dirname(__file__), "..", "opa-policies", "pb", "policy_data_schema.json"),
+    ):
+        if path and os.path.isfile(path):
+            try:
+                with open(path) as f:
+                    return json.load(f)
+            except Exception as exc:
+                logging.getLogger("pb-mcp").warning("policy_data_schema.json load failed: %s", exc)
+                return {}
+    return {}
+
+
+_POLICY_SCHEMA: dict = _load_policy_schema()
+_POLICY_SECTION_PROPS: dict[str, dict] = (
+    _POLICY_SCHEMA
+    .get("properties", {}).get("pb", {})
+    .get("properties", {}).get("config", {})
+    .get("properties", {})
+) if _POLICY_SCHEMA else {}
+
 # ── Prometheus metrics ───────────────────────────────────────
 mcp_requests_total = Counter(
     "pb_mcp_requests_total",
@@ -170,6 +199,11 @@ mcp_policy_decisions_total = Counter(
     "pb_mcp_policy_decisions_total",
     "OPA policy decisions",
     ["result"],
+)
+mcp_policy_updates_total = Counter(
+    "pb_mcp_policy_updates_total",
+    "Policy data updates via manage_policies",
+    ["section"],
 )
 mcp_search_results_count = Histogram(
     "pb_mcp_search_results_count",
@@ -1368,6 +1402,23 @@ async def list_tools() -> list[Tool]:
                 "required": ["confirm"]
             }
         ),
+        Tool(
+            name="manage_policies",
+            description="Read or update OPA policy data sections. Admin only. "
+                        "Use action 'list' to see available sections, 'read' to get a section, "
+                        "'update' to modify a section (validates against JSON Schema before write).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action":  {"type": "string", "enum": ["list", "read", "update"],
+                                "description": "Operation: list sections, read one, or update one"},
+                    "section": {"type": "string",
+                                "description": "Config section name (required for read/update)"},
+                    "data":    {"description": "New value for the section (required for update)"},
+                },
+                "required": ["action"]
+            }
+        ),
     ]
 
 
@@ -1800,6 +1851,98 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         return [TextContent(type="text",
             text=json.dumps({"rows": [json.loads(r["data"]) for r in rows], "count": len(rows)},
                             ensure_ascii=False, indent=2))]
+
+    # ── manage_policies (B-12) ──────────────────────────────
+    elif name == "manage_policies":
+        if agent_role != "admin":
+            await log_access(agent_id, agent_role, "policy", "manage_policies",
+                             "manage_policies", "deny")
+            return [TextContent(type="text",
+                text=json.dumps({"error": "manage_policies requires admin role"}))]
+
+        action = arguments["action"]
+
+        if action == "list":
+            sections = {}
+            for name_s, schema in _POLICY_SECTION_PROPS.items():
+                sections[name_s] = schema.get("description", "")
+            await log_access(agent_id, agent_role, "policy", "config",
+                             "manage_policies.list", "allow")
+            return [TextContent(type="text",
+                text=json.dumps({"sections": sections}, ensure_ascii=False, indent=2))]
+
+        section = arguments.get("section", "")
+        if not section or section not in _POLICY_SECTION_PROPS:
+            valid = sorted(_POLICY_SECTION_PROPS.keys())
+            return [TextContent(type="text",
+                text=json.dumps({"error": f"Unknown section: {section!r}",
+                                 "valid_sections": valid}))]
+
+        if action == "read":
+            try:
+                resp = await http.get(f"{OPA_URL}/v1/data/pb/config/{section}")
+                resp.raise_for_status()
+                value = resp.json().get("result")
+            except Exception as exc:
+                return [TextContent(type="text",
+                    text=json.dumps({"error": f"Failed to read section: {exc}"}))]
+            await log_access(agent_id, agent_role, "policy", section,
+                             "manage_policies.read", "allow")
+            return [TextContent(type="text",
+                text=json.dumps({"section": section, "data": value},
+                                ensure_ascii=False, indent=2))]
+
+        if action == "update":
+            new_data = arguments.get("data")
+            if new_data is None:
+                return [TextContent(type="text",
+                    text=json.dumps({"error": "Missing 'data' for update action"}))]
+
+            # Validate against per-section JSON Schema
+            section_schema = _POLICY_SECTION_PROPS.get(section, {})
+            if section_schema:
+                try:
+                    _jsonschema.validate(instance=new_data, schema=section_schema)
+                except _jsonschema.ValidationError as ve:
+                    return [TextContent(type="text",
+                        text=json.dumps({"error": "Schema validation failed",
+                                         "detail": ve.message,
+                                         "path": list(ve.absolute_path)}))]
+
+            # Read current value for audit context
+            try:
+                old_resp = await http.get(f"{OPA_URL}/v1/data/pb/config/{section}")
+                old_resp.raise_for_status()
+                old_value = old_resp.json().get("result")
+            except Exception:
+                old_value = None
+
+            # Write to OPA Data API
+            try:
+                put_resp = await http.put(
+                    f"{OPA_URL}/v1/data/pb/config/{section}",
+                    json=new_data,
+                )
+                put_resp.raise_for_status()
+            except Exception as exc:
+                return [TextContent(type="text",
+                    text=json.dumps({"error": f"Failed to write to OPA: {exc}"}))]
+
+            # Invalidate caches
+            with _opa_cache_lock:
+                _opa_cache.clear()
+                _fields_to_redact_cache.clear()
+
+            mcp_policy_updates_total.labels(section=section).inc()
+            await log_access(agent_id, agent_role, "policy", section,
+                             "manage_policies.update", "allow",
+                             {"old_value": old_value, "new_value": new_data})
+            return [TextContent(type="text",
+                text=json.dumps({"status": "updated", "section": section},
+                                ensure_ascii=False, indent=2))]
+
+        return [TextContent(type="text",
+            text=json.dumps({"error": f"Unknown action: {action!r}"}))]
 
     # ── get_rules ────────────────────────────────────────────
     elif name == "get_rules":

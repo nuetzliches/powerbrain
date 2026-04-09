@@ -236,8 +236,10 @@ services:
       PG_POOL_MIN: ${PG_POOL_MIN:-2}
       PG_POOL_MAX: ${PG_POOL_MAX:-10}
       PII_CONFIG_PATH: /app/ingestion/pii_config.yaml
+      POLICY_SCHEMA_PATH: /app/policy_data_schema.json
     volumes:
       - ./ingestion/pii_config.yaml:/app/ingestion/pii_config.yaml:ro
+      - ./opa-policies/pb/policy_data_schema.json:/app/policy_data_schema.json:ro
     depends_on:
       qdrant:
         condition: service_healthy
