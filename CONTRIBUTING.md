@@ -6,6 +6,7 @@ Thanks for your interest in contributing! Powerbrain is an open-source context e
 
 ### Prerequisites
 
+- Python 3.12+
 - Docker + Docker Compose
 - Git
 
