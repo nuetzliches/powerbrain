@@ -1,48 +1,6 @@
 # Powerbrain Backlog
 
-Open tasks, prioritized. Last updated: 2026-04-09.
-
-Remaining open item: B-11 (Policy UI).
-
----
-
-## Backlog — Policy Management Roadmap
-
-### B-11: Policy Management Web UI (Option C)
-**Priority:** Low (after B-01, optional after B-10)
-**Effort:** ~4–5 days
-
-Lightweight web frontend for policy-data management.
-
-- [ ] Policy-data editor (JSON forms)
-- [ ] JSON Schema validation in the frontend
-- [ ] OPA dry-run / policy preview
-- [ ] Commit to Forgejo (versioning + audit trail)
-- [ ] Role-based access (admin only)
-
----
-
-## Backlog — PII & Data Protection
-
-### B-30: graph_query returns unscanned cleartext names
-**Priority:** Medium
-**Effort:** ~0.5–1 day
-
-`graph_query` returns knowledge graph nodes from Apache AGE that were created with cleartext names at import time (user nodes with `firstname`, `lastname`, `email`). This data was not pseudonymized by the PII ingestion pipeline. Powerbrain is declared as `pii_status: scanned`, which strictly speaking does not apply to `graph_query`.
-
-**Options:**
-- [ ] A: Change Powerbrain to `pii_status: mixed` and declare `graph_query` as unscanned
-- [ ] B: Pseudonymize graph node properties at import time (analogous to Qdrant dual storage)
-- [ ] C: Pseudonymize `graph_query` results in the MCP server before returning them
-
-### B-31: Ingestion does not pseudonymize metadata
-**Priority:** Medium
-**Effort:** ~1 day
-
-The ingestion pipeline scans and pseudonymizes the `source` text (which is embedded), but the `metadata` object remains unchanged. Import scripts write cleartext names there (`userName`, `customerName`, `authorEmail`). This metadata ends up unscanned in the Qdrant payload and PostgreSQL and is returned with `search_knowledge` results.
-
-- [ ] Extend PII scan to configurable metadata fields
-- [ ] Or: filter metadata fields containing PII on output (OPA `fields_to_redact`)
+Last updated: 2026-04-09. All backlog items completed or closed.
 
 ---
 
@@ -115,6 +73,9 @@ Cleaned up `except ImportError` fallback in `pb-proxy/proxy.py`. Stub now matche
 
 ### ✅ B-10: OPAL Integration (2026-04-09)
 opal-server + opal-client as Docker Compose profile (`--profile opal`). Watches a git repo for policy changes and pushes to OPA in real-time via WebSocket. Configurable via `OPAL_POLICY_REPO_URL`. Replaces the commented-out OPA bundle polling.
+
+### ⏭️ B-11: Policy Management Web UI — Won't Do (2026-04-09)
+MCP is the single access channel by design. The `manage_policies` MCP tool (B-12) covers the use case. A dedicated web UI would duplicate functionality and expand the attack surface without sufficient benefit.
 
 See also `docs/KNOWN_ISSUES.md` for all resolved issues (sprints 1–5).
 See `docs/plans/` for completed feature implementations.
