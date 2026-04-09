@@ -13,7 +13,7 @@ Agent/Skill
     │ MCP
     ▼
 ┌─────────────────────────────────────────────────┐
-│  MCP Server (FastAPI)                           │
+│  MCP Server (FastAPI, 23 tools)                  │
 │  ├─ OPA Policy Check (every request)            │
 │  ├─ Qdrant Vector Search (oversampled)          │
 │  ├─ Reranker (Cross-Encoder, Top-N)             │
@@ -42,15 +42,23 @@ powerbrain/
 ├── .env.example           ← Environment variables
 ├── shared/
 │   ├── __init__.py
-│   ├── llm_provider.py    ← OpenAI-compat LLM provider abstraction
-│   ├── telemetry.py       ← OTel init, trace_operation, MetricsAggregator
+│   ├── config.py           ← read_secret(), build_postgres_url(), pool sizes
+│   ├── llm_provider.py     ← OpenAI-compat LLM provider abstraction
+│   ├── telemetry.py        ← OTel init, trace_operation, MetricsAggregator
 │   ├── rerank_provider.py  ← Configurable reranker backend (Powerbrain/TEI/Cohere)
+│   ├── drift_check.py      ← Embedding drift detection (Art. 15)
+│   ├── embedding_cache.py  ← In-process TTL cache for embeddings
 │   └── tests/
 │       ├── test_llm_provider.py
-│       └── test_rerank_provider.py
+│       ├── test_rerank_provider.py
+│       ├── test_telemetry.py
+│       ├── test_embedding_cache.py
+│       └── test_drift_check.py
 ├── mcp-server/
-│   ├── server.py          ← MCP Server (10 tools)
+│   ├── server.py          ← MCP Server (23 tools)
 │   ├── graph_service.py   ← Knowledge Graph (Apache AGE)
+│   ├── compliance_doc.py  ← EU AI Act Annex IV generator
+│   ├── policy_admin_page.py ← (reserved for future UI)
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── reranker/
@@ -67,7 +75,11 @@ powerbrain/
 │   ├── 001_schema.sql     ← Base schema
 │   ├── 002_privacy.sql    ← Privacy extensions
 │   ├── 003_knowledge_graph.sql ← Apache AGE graph setup
-│   └── 007_pii_vault.sql  ← Sealed Vault (PII originals + mappings)
+│   ├── 007_pii_vault.sql  ← Sealed Vault (PII originals + mappings)
+│   ├── 014_audit_hashchain.sql ← Tamper-resistant audit log (Art. 12)
+│   ├── 015_human_oversight.sql ← Circuit breaker + approval queue (Art. 14)
+│   ├── 016_data_quality.sql    ← Quality scoring (Art. 10)
+│   └── 017_accuracy_monitoring.sql ← Drift detection (Art. 15)
 ├── opa-policies/pb/
 │   ├── data.json           ← Policy data (configurable without Rego knowledge)
 │   ├── policy_data_schema.json ← JSON Schema for data.json validation
@@ -75,7 +87,9 @@ powerbrain/
 │   ├── rules.rego          ← Business rules (logic only)
 │   ├── privacy.rego        ← GDPR policies (logic only)
 │   ├── summarization.rego  ← Context summarization policies (logic only)
-│   └── proxy.rego          ← Proxy policies (logic only)
+│   ├── proxy.rego          ← Proxy policies (logic only)
+│   ├── oversight.rego      ← Human oversight policies (Art. 14)
+│   └── ingestion.rego      ← Data quality gate policies (Art. 10)
 ├── caddy/
 │   └── Caddyfile           ← Reverse proxy config (optional TLS profile)
 ├── secrets/
@@ -96,6 +110,15 @@ powerbrain/
 │   ├── config.py          ← Configuration
 │   ├── litellm_config.yaml← LLM provider config (+ provider_keys section)
 │   ├── mcp_servers.yaml   ← MCP server connections (name, URL, auth)
+│   ├── Dockerfile
+│   └── requirements.txt
+├── worker/
+│   ├── scheduler.py       ← APScheduler setup + job registration
+│   ├── jobs/
+│   │   ├── accuracy_metrics.py  ← Art. 15 drift + feedback refresh
+│   │   ├── audit_retention.py   ← Art. 12 checkpoint + prune
+│   │   ├── gdpr_retention.py    ← GDPR retention cleanup
+│   │   └── pending_review_timeout.py ← Art. 14 review expiry
 │   ├── Dockerfile
 │   └── requirements.txt
 └── docs/
@@ -127,6 +150,9 @@ powerbrain/
 | grafana       | 3001  | Grafana                            | Dashboards + visualization       |
 | tempo         | 4317  | Grafana Tempo                      | Distributed tracing              |
 | pb-proxy      | 8090  | Python, FastAPI, LiteLLM, MCP SDK    | AI Provider Proxy (optional)     |
+| pb-worker     | —     | Python, APScheduler                  | Maintenance jobs (internal only) |
+| opal-server   | 7002  | OPAL (optional, `opal` profile)      | Policy sync from git repo        |
+| opal-client   | —     | OPAL (optional, `opal` profile)      | Pushes updates to OPA            |
 
 ## Key Concepts
 
@@ -177,19 +203,30 @@ Access to originals requires:
 
 Art. 17 deletion: delete vault mapping → pseudonyms become irreversible.
 
-### MCP Tools (12)
-- `search_knowledge` — Semantic search (Qdrant + reranking); supports `summarize` and `summary_detail` parameters; optional PII originals via vault token
+### MCP Tools (23)
+- `search_knowledge` — Semantic search (Qdrant + reranking); supports `summarize`, `summary_detail`, `rerank_options` (incl. `boost_corrections`); optional PII originals via vault token; metadata PII redaction
 - `query_data` — Structured queries (PostgreSQL)
 - `get_rules` — Business rules for a context
 - `check_policy` — OPA policy evaluation
 - `ingest_data` — Ingest new data
 - `get_classification` — Classification lookup
 - `list_datasets` — List available datasets
-- `get_code_context` — Code search (Qdrant + reranking); supports `summarize` and `summary_detail` parameters
-- `graph_query` — Knowledge graph queries (nodes, relationships, paths)
-- `graph_mutate` — Knowledge graph mutations (developer/admin only)
+- `get_code_context` — Code search (Qdrant + reranking); supports `summarize` and `summary_detail`; metadata PII redaction
+- `graph_query` — Knowledge graph queries (nodes, relationships, paths); PII-masked output
+- `graph_mutate` — Knowledge graph mutations (developer/admin only); PII-masked output
 - `get_document` — Retrieve document by ID at specific context layer (L0/L1/L2) for progressive loading
-- `delete_documents` — Bulk-delete documents by filter (source_type, project, or all) for import workflows; deletes from Qdrant, PostgreSQL, Vault (cascade), and Knowledge Graph
+- `delete_documents` — Bulk-delete documents by filter (source_type, project, or all); deletes from Qdrant, PostgreSQL, Vault (cascade), and Knowledge Graph
+- `submit_feedback` — Rate search result quality (1–5 stars)
+- `get_eval_stats` — Retrieval quality statistics with windowed metrics
+- `create_snapshot` — Knowledge versioning snapshot (admin only)
+- `list_snapshots` — List available snapshots
+- `manage_policies` — Read/update OPA policy data sections at runtime (admin only, JSON Schema validated)
+- `generate_compliance_doc` — EU AI Act Annex IV technical documentation (admin only)
+- `verify_audit_integrity` — Verify tamper-evident audit hash chain (admin only)
+- `export_audit_log` — Export audit log entries as JSON/CSV (admin only)
+- `get_system_info` — Transparency report (Art. 13) for deployers
+- `review_pending` — List/approve/deny pending human oversight reviews (admin only)
+- `get_review_status` — Poll status of a pending review
 
 ### Privacy (GDPR)
 - **PII Scanner** (Microsoft Presidio) at ingestion — configurable via `ingestion/pii_config.yaml` (entity types, custom recognizers, confidence, languages)
@@ -206,6 +243,9 @@ Sensitive values can be provided as Docker Secrets files in `./secrets/*.txt`:
 - `pg_password.txt` — PostgreSQL password
 - `vault_hmac_secret.txt` — Vault HMAC signing key
 - `forgejo_token.txt` — Forgejo API token
+- `github_pat.txt` — GitHub PAT (AI Proxy provider key)
+- `anthropic_api_key.txt` — Anthropic API key (AI Proxy provider key)
+- `mcp_auth_token.txt` — Token for pb-proxy → mcp-server auth
 
 Services read from `/run/secrets/<name>` with env var fallback for backward compatibility.
 The `_read_secret()` helper checks `<ENV_VAR>_FILE` first, then falls back to `<ENV_VAR>`.
@@ -406,6 +446,11 @@ All 4 services (mcp-server, proxy, reranker, ingestion) share a common telemetry
 21. ✅ **PII Scan Observability & Strict Defaults** — `PII_SCAN_FORCED` defaults to `true` (fail-closed). Telemetry step `pii_pseudonymize` includes `mode`, `entities_found`, `entity_types`, `fail_mode`. OPA policy `pb.proxy.pii_scan_forced` defaults to `true`, admin can override via `pii_scan_forced_override: false`
 22. ✅ **Reranker Provider Abstraction** — Configurable reranker backend via `RERANKER_BACKEND` env var (`powerbrain`/`tei`/`cohere`). Strategy pattern in `shared/rerank_provider.py`, transparent format translation, graceful fallback preserved
 23. ✅ **Data-Driven OPA Policies** — All business data (access matrix, purposes, retention, field redaction, pricing/workflow/compliance rules, PII entity types, proxy config) extracted from Rego into `opa-policies/pb/data.json`. Rego files contain only logic, data is configurable via JSON without Rego knowledge. JSON Schema validation (`policy_data_schema.json`). Full OPA test coverage: 85 tests across all 5 policy packages.
+24. ✅ **Graph Query PII Masking (B-30)** — `graph_query` and `graph_mutate` results PII-scanned via ingestion `/scan` endpoint before returning. Recursive walker masks firstname, lastname, email, phone, name. Graceful degradation on scanner failure.
+25. ✅ **Metadata PII Redaction (B-31)** — `search_knowledge` and `get_code_context` redact PII-sensitive metadata keys based on configurable mapping (`pii_metadata_fields` in `pii_config.yaml`) + OPA `fields_to_redact` policy. Fail-closed on OPA failure.
+26. ✅ **Policy Management Tool (B-12)** — `manage_policies` MCP tool with list/read/update actions for OPA policy data sections at runtime. JSON Schema validation before writes, cache invalidation, audit logging with old+new values.
+27. ✅ **Correction Boost in Reranking (B-13)** — New `boost_corrections` parameter in `rerank_options`. Documents with `metadata.isCorrection: true` receive a configurable score boost in the heuristic post-rerank phase.
+28. ✅ **OPAL Integration (B-10)** — opal-server + opal-client as Docker Compose profile (`--profile opal`). Watches a git repo for policy changes and pushes to OPA in real-time via WebSocket. Configurable via `OPAL_POLICY_REPO_URL`.
 
 Details on all features: see `docs/architecture.md`
 
