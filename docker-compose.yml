@@ -235,6 +235,9 @@ services:
       OPA_CACHE_ENABLED: ${OPA_CACHE_ENABLED:-true}
       PG_POOL_MIN: ${PG_POOL_MIN:-2}
       PG_POOL_MAX: ${PG_POOL_MAX:-10}
+      PII_CONFIG_PATH: /app/ingestion/pii_config.yaml
+    volumes:
+      - ./ingestion/pii_config.yaml:/app/ingestion/pii_config.yaml:ro
     depends_on:
       qdrant:
         condition: service_healthy

@@ -33,10 +33,10 @@
       },
 
       "fields_to_redact": {
-        "default":              ["email", "phone", "iban", "birthdate", "address"],
-        "reporting":            ["email", "phone", "address", "iban", "birthdate"],
+        "default":              ["email", "phone", "iban", "birthdate", "address", "person"],
+        "reporting":            ["email", "phone", "address", "iban", "birthdate", "person"],
         "support":              ["iban", "birthdate", "address"],
-        "product_improvement":  ["email", "phone", "iban", "birthdate", "address"],
+        "product_improvement":  ["email", "phone", "iban", "birthdate", "address", "person"],
         "billing":              ["birthdate"],
         "contract_fulfillment": []
       },

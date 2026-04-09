@@ -1,6 +1,6 @@
 # Powerbrain Backlog
 
-Open tasks, prioritized. Last updated: 2026-04-08.
+Open tasks, prioritized. Last updated: 2026-04-09.
 
 ---
 
@@ -85,112 +85,6 @@ The ingestion pipeline scans and pseudonymizes the `source` text (which is embed
 
 ---
 
-## Backlog — EU AI Act Compliance (August 2026)
-
-Requirements from Art. 9–15 EU AI Act for high-risk AI systems.
-Powerbrain itself is not a high-risk system, but deployers in regulated industries
-(finance, healthcare, HR) need these capabilities from their context infrastructure.
-
-### B-40: Tamper-Resistant Audit Logs (Art. 12 Record-Keeping)
-**Priority:** High
-**Effort:** ~2 days
-**EU AI Act:** Art. 12 — automatic, tamper-resistant logging
-
-Current state: audit log in PostgreSQL exists (`init-db/001_schema.sql`),
-but no cryptographic integrity protection.
-
-- [ ] Hash chain for audit log entries (SHA-256, each entry references the previous entry's hash)
-- [ ] Append-only constraint on the audit table (no UPDATE/DELETE via RLS)
-- [ ] Integrity verification: MCP tool or CLI command to verify the hash chain
-- [ ] Configurable log retention with policy (`data.json`: `audit_retention_days`)
-- [ ] Export function for audit logs (JSON/CSV) for external archival
-
-### B-41: Transparency Report / Model Card Endpoint (Art. 13 Transparency)
-**Priority:** High
-**Effort:** ~1.5 days
-**EU AI Act:** Art. 13 — understandable information about system behavior for deployers
-
-- [ ] `GET /transparency` endpoint on the MCP server: machine-readable report (JSON)
-  - System purpose and operational limits
-  - Models in use (embedding, reranker, summarization) with versions
-  - Active OPA policies and classification levels
-  - PII processing status and pseudonymization method
-  - Data sources and last update
-- [ ] MCP tool `get_system_info` for agents
-- [ ] Versioning of the report (new snapshot on config changes)
-
-### B-42: Human Oversight Controls (Art. 14 Human Oversight)
-**Priority:** High
-**Effort:** ~2–3 days
-**EU AI Act:** Art. 14 — human oversight for risk minimization
-
-Powerbrain currently has no mechanism for human intervention.
-
-- [ ] Approval queue: OPA policy can set results to `pending_review` instead of delivering directly
-  - New classification `requires_approval` in `data.json`
-  - Deployer decides via policy which data/actions need review
-- [ ] MCP tool `review_pending`: display + approve/reject of pending results
-- [ ] Kill switch: `POST /circuit-breaker` — deactivates all data delivery immediately
-  - Persistent state (survives restart)
-  - Admin role only
-  - Audit log entry on activation/deactivation
-- [ ] Rate-based auto alert: on unusually high access to `confidential`/`restricted` data
-
-### B-43: Data Quality Validation at Ingestion (Art. 10 Data Governance)
-**Priority:** Medium
-**Effort:** ~1.5 days
-**EU AI Act:** Art. 10 — data must be relevant, representative, error-free, and complete
-
-- [ ] Schema validation: check required fields per `source_type` (JSON Schema)
-- [ ] Duplicate detection: embedding similarity check against existing documents (configurable threshold)
-- [ ] Quality score per document (length, language detected, PII ratio, encoding errors)
-- [ ] Ingestion report: summary per batch (accepted/rejected/warnings)
-- [ ] OPA policy `pb.ingestion.quality_gate`: configurable minimum score
-
-### B-44: Risk Management Documentation (Art. 9 Risk Management)
-**Priority:** Medium
-**Effort:** ~1 day
-**EU AI Act:** Art. 9 — documented, ongoing risk management across the entire lifecycle
-
-- [ ] `docs/risk-management.md` — template for deployers:
-  - Identified risks of the context pipeline (hallucination from wrong context, PII leaks, policy bypass)
-  - Mitigation measures (OPA policies, PII vault, reranking quality)
-  - Residual risks and recommended deployer measures
-- [ ] Automated risk indicator on `/health` endpoint:
-  - OPA policy age (stale policies = risk)
-  - PII scanner status (disabled = risk)
-  - Reranker availability (down = quality risk)
-  - Audit log integrity (hash chain status)
-
-### B-45: Accuracy Monitoring and Drift Detection (Art. 15 Accuracy/Robustness)
-**Priority:** Medium
-**Effort:** ~2 days
-**EU AI Act:** Art. 15 — accuracy, robustness, and cybersecurity across the entire lifecycle
-
-Current state: `submit_feedback` + `get_eval_stats` exist, but no systematic monitoring.
-
-- [ ] Automated quality metrics per time window (sliding):
-  - Average feedback score
-  - Share of searches without relevant results (empty results / low reranker scores)
-  - Reranker score distribution (drift indicator)
-- [ ] Alerting on quality drift: Prometheus alert when avg_score drops below threshold
-- [ ] Embedding drift check: periodic comparison of new embeddings against a reference set
-- [ ] Dashboard panel in Grafana: retrieval quality over time
-
-### B-46: Technical Documentation Generator (Art. 11 Annex IV)
-**Priority:** Low
-**Effort:** ~1.5 days
-**EU AI Act:** Art. 11 + Annex IV — detailed technical documentation
-
-- [ ] CLI command / MCP tool `generate_compliance_doc`:
-  - Automatically collects: active OPA policies, model versions, collection stats, PII config
-  - Generates Annex-IV-compliant template (Markdown/PDF)
-  - Sections: system purpose, data sources, training/embedding models, risk assessment, monitoring metrics
-- [ ] Versioned output in `docs/compliance/` with date
-- [ ] Diff view on changes (what has changed since the last version)
-
----
-
 ## Backlog — Technical Debt
 
 ### B-20: Clean up PipelineStep mock in proxy.py
@@ -224,6 +118,30 @@ Apache License 2.0 added.
 
 ### ✅ B-03: Reranker Provider Integration Test (2026-03-27)
 `mcp-server/tests/test_reranker_integration.py` — 7 tests for provider switching (powerbrain/tei/cohere), graceful fallback on timeout/connection error/500.
+
+### ✅ B-40: Tamper-Resistant Audit Logs — Art. 12 (2026-04-08)
+SHA-256 hash chain on `agent_access_log` via BEFORE INSERT trigger (`014_audit_hashchain.sql`). Advisory-lock serialization, `pb_verify_audit_chain()`, checkpoint-and-prune for GDPR retention, `pb_verify_audit_chain_tail()` for lightweight health checks. MCP tools `verify_audit_integrity` + `export_audit_log` (admin-only). Backfill for existing rows.
+
+### ✅ B-41: Transparency Report Endpoint — Art. 13 (2026-04-08)
+`GET /transparency` (auth-required, cached). Reports system purpose, model versions, OPA policies, Qdrant stats, PII config, audit chain integrity. MCP tool `get_system_info`.
+
+### ✅ B-42: Human Oversight Controls — Art. 14 (2026-04-08)
+Circuit breaker (`POST/GET /circuit-breaker`, persistent single-row table, 5s cache). Approval queue (`pending_reviews` table, OPA `pb.oversight.requires_approval`). MCP tools `review_pending` + `get_review_status`. Timeout job in pb-worker. Prometheus alerts `HighConfidentialAccessRate` + `PendingReviewExpired`. Migration `015_human_oversight.sql`.
+
+### ✅ B-43: Data Quality Validation — Art. 10 (2026-04-08)
+Quality score (0.0–1.0) from 5 weighted factors in `ingestion/quality.py`. Duplicate detection via cosine similarity. OPA policy `pb.ingestion.quality_gate` with per-source-type thresholds. Rejection log table. Migration `016_data_quality.sql`.
+
+### ✅ B-44: Risk Management Documentation — Art. 9 (2026-04-08)
+`docs/risk-management.md` with concrete risk register (7+ risks). Content-negotiated `/health`: plain "ok" default, structured risk-indicator JSON via `Accept: application/json`.
+
+### ✅ B-45: Accuracy Monitoring + Drift Detection — Art. 15 (2026-04-08)
+Windowed feedback metrics view `v_feedback_windowed` (1h/24h/7d). Embedding drift via `shared/drift_check.py` (cosine centroid distance, per-collection thresholds). pb-worker job refreshes metrics every 5 min. Reference set in `embedding_reference_set` table. Prometheus alerts `QualityDrift`, `HighEmptyResultRate`, `RerankerScoreDrift`. Migration `017_accuracy_monitoring.sql`.
+
+### ✅ B-46: Technical Documentation Generator — Art. 11 / Annex IV (2026-04-08)
+`mcp-server/compliance_doc.py` generates Annex-IV-compliant Markdown. MCP tool `generate_compliance_doc` (admin-only, `output_mode: inline | file`).
+
+### ✅ pb-worker: Maintenance Container (2026-04-08)
+`worker/scheduler.py` with APScheduler. 4 jobs: `accuracy_metrics_refresh` (5 min), `audit_retention_cleanup` (daily 03:00), `gdpr_retention_cleanup` (daily 02:00), `pending_review_timeout` (hourly). Docker service `pb-worker` (internal port 8083, no external).
 
 See also `docs/KNOWN_ISSUES.md` for all resolved issues (sprints 1–5).
 See `docs/plans/` for completed feature implementations.
