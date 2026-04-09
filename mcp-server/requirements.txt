@@ -14,3 +14,4 @@ opentelemetry-instrumentation-httpx>=0.48b0
 opentelemetry-instrumentation-fastapi>=0.41b0
 tenacity>=9.0
 cachetools>=5.3
+jsonschema>=4.0

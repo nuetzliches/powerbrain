@@ -132,6 +132,57 @@ _opa_cache_lock = __import__("threading").Lock()
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("pb-mcp")
 
+# ── PII metadata field mapping (B-31) ───────────────────────
+import yaml as _yaml
+
+def _load_pii_metadata_fields() -> dict[str, str]:
+    """Load metadata-key → OPA redaction-field mapping from pii_config.yaml."""
+    for path in (
+        os.getenv("PII_CONFIG_PATH", ""),
+        "/app/ingestion/pii_config.yaml",          # Docker default
+        os.path.join(os.path.dirname(__file__), "..", "ingestion", "pii_config.yaml"),
+    ):
+        if path and os.path.isfile(path):
+            try:
+                with open(path) as f:
+                    cfg = _yaml.safe_load(f)
+                return cfg.get("pii_metadata_fields") or {}
+            except Exception as exc:
+                logging.getLogger("pb-mcp").warning("pii_config.yaml load failed: %s", exc)
+                return {}
+    return {}
+
+PII_METADATA_FIELDS: dict[str, str] = _load_pii_metadata_fields()
+
+# ── Policy data schema (B-12) ───────────────────────────────
+import jsonschema as _jsonschema
+
+
+def _load_policy_schema() -> dict:
+    """Load the policy data JSON Schema for manage_policies validation."""
+    for path in (
+        os.getenv("POLICY_SCHEMA_PATH", ""),
+        "/app/policy_data_schema.json",                     # Docker default
+        os.path.join(os.path.dirname(__file__), "..", "opa-policies", "pb", "policy_data_schema.json"),
+    ):
+        if path and os.path.isfile(path):
+            try:
+                with open(path) as f:
+                    return json.load(f)
+            except Exception as exc:
+                logging.getLogger("pb-mcp").warning("policy_data_schema.json load failed: %s", exc)
+                return {}
+    return {}
+
+
+_POLICY_SCHEMA: dict = _load_policy_schema()
+_POLICY_SECTION_PROPS: dict[str, dict] = (
+    _POLICY_SCHEMA
+    .get("properties", {}).get("pb", {})
+    .get("properties", {}).get("config", {})
+    .get("properties", {})
+) if _POLICY_SCHEMA else {}
+
 # ── Prometheus metrics ───────────────────────────────────────
 mcp_requests_total = Counter(
     "pb_mcp_requests_total",
@@ -148,6 +199,11 @@ mcp_policy_decisions_total = Counter(
     "pb_mcp_policy_decisions_total",
     "OPA policy decisions",
     ["result"],
+)
+mcp_policy_updates_total = Counter(
+    "pb_mcp_policy_updates_total",
+    "Policy data updates via manage_policies",
+    ["section"],
 )
 mcp_search_results_count = Histogram(
     "pb_mcp_search_results_count",
@@ -487,9 +543,10 @@ def _apply_heuristic_boosts(
     match_project = options.get("match_project", "")
     match_author = options.get("match_author", "")
     match_files = set(options.get("match_files", []))
-    boost_project = float(options.get("boost_same_project", 0.0))
-    boost_author = float(options.get("boost_same_author", 0.0))
-    boost_files = float(options.get("boost_file_overlap", 0.0))
+    boost_project     = float(options.get("boost_same_project", 0.0))
+    boost_author      = float(options.get("boost_same_author", 0.0))
+    boost_files       = float(options.get("boost_file_overlap", 0.0))
+    boost_corrections = float(options.get("boost_corrections", 0.0))
 
     for doc in results:
         meta = doc.metadata
@@ -503,6 +560,8 @@ def _apply_heuristic_boosts(
             if doc_files & match_files:
                 overlap_ratio = len(doc_files & match_files) / len(match_files)
                 bonus += boost_files * overlap_ratio
+        if boost_corrections and meta.get("isCorrection"):
+            bonus += boost_corrections
         doc.rerank_score += bonus
     return results
 
@@ -740,6 +799,7 @@ def redact_fields(text: str, pii_entities: list[dict], fields_to_redact: set[str
         "iban": "IBAN_CODE",
         "birthdate": "DATE_OF_BIRTH",
         "address": "LOCATION",
+        "person": "PERSON",
     }
     entities_to_redact = {
         field_to_entity[f] for f in fields_to_redact if f in field_to_entity
@@ -758,6 +818,106 @@ def redact_fields(text: str, pii_entities: list[dict], fields_to_redact: set[str
             if 0 <= start < end <= len(result):
                 result = result[:start] + f"<{entity['type']}>" + result[end:]
     return result
+
+
+# ── B-30: PII masking for graph query results ──────────────
+
+_GRAPH_PII_KEYS = frozenset({"firstname", "lastname", "email", "phone", "name"})
+
+
+async def _mask_graph_pii(data: Any) -> Any:
+    """Recursively mask PII in graph query result dicts.
+
+    Walks dicts/lists, finds string values whose key (lower-cased)
+    is in _GRAPH_PII_KEYS, and replaces them with PII-scanner output.
+    On scanner failure, returns data unchanged (graceful degradation).
+    """
+    if isinstance(data, list):
+        return [await _mask_graph_pii(item) for item in data]
+    if not isinstance(data, dict):
+        return data
+
+    # Collect PII-candidate key/value pairs from this dict level
+    candidates: list[tuple[str, str]] = []
+    for key, value in data.items():
+        if isinstance(value, str) and key.lower() in _GRAPH_PII_KEYS and value:
+            candidates.append((key, value))
+
+    # Recurse into nested dicts/lists
+    result = {}
+    for key, value in data.items():
+        if isinstance(value, (dict, list)):
+            result[key] = await _mask_graph_pii(value)
+        else:
+            result[key] = value
+
+    if not candidates:
+        return result
+
+    # Batch all candidate values into a single scan call
+    delim = "\n---PII_DELIM---\n"
+    combined = delim.join(v for _, v in candidates)
+    try:
+        resp = await http.post(f"{INGESTION_URL}/scan", json={"text": combined})
+        resp.raise_for_status()
+        scan = resp.json()
+        if scan.get("contains_pii"):
+            masked_parts = scan["masked_text"].split(delim)
+            for i, (key, _original) in enumerate(candidates):
+                if i < len(masked_parts):
+                    result[key] = masked_parts[i]
+    except Exception as exc:
+        log.warning("PII scan for graph results failed, returning unmasked: %s", exc)
+
+    return result
+
+
+# ── B-31: Metadata PII redaction for search results ────────
+
+_fields_to_redact_cache: _TTLCache[str, set[str]] = _TTLCache(maxsize=32, ttl=OPA_CACHE_TTL)
+
+
+async def _get_fields_to_redact(purpose: str) -> set[str]:
+    """Get the set of fields to redact for a purpose from OPA (cached)."""
+    cache_key = f"redact:{purpose or 'default'}"
+    with _opa_cache_lock:
+        cached = _fields_to_redact_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        resp = await http.post(
+            f"{OPA_URL}/v1/data/pb/privacy/fields_to_redact",
+            json={"input": {"purpose": purpose or "default"}},
+        )
+        resp.raise_for_status()
+        fields = set(resp.json().get("result", []))
+    except Exception as exc:
+        log.warning("OPA fields_to_redact query failed, using default: %s", exc)
+        fields = set(["email", "phone", "iban", "birthdate", "address", "person"])
+
+    with _opa_cache_lock:
+        _fields_to_redact_cache[cache_key] = fields
+    return fields
+
+
+async def _redact_metadata_pii(metadata: dict, purpose: str) -> dict:
+    """Redact PII-sensitive metadata keys based on OPA fields_to_redact policy.
+
+    Checks each metadata key against PII_METADATA_FIELDS mapping.
+    If the mapped redaction category is in the fields_to_redact set,
+    replaces the value with a <REDACTED> placeholder.
+    """
+    if not PII_METADATA_FIELDS:
+        return metadata
+
+    redact_fields_set = await _get_fields_to_redact(purpose)
+    redacted = dict(metadata)
+    for key, value in metadata.items():
+        category = PII_METADATA_FIELDS.get(key)
+        if category and category in redact_fields_set and value:
+            redacted[key] = "<REDACTED>"
+    return redacted
 
 
 async def vault_lookup(
@@ -880,6 +1040,8 @@ async def list_tools() -> list[Tool]:
                             "match_author":       {"type": "string"},
                             "boost_file_overlap": {"type": "number", "default": 0},
                             "match_files":        {"type": "array", "items": {"type": "string"}},
+                            "boost_corrections":  {"type": "number", "default": 0,
+                                                   "description": "Score boost for user-corrected documents (isCorrection metadata)"},
                         },
                     },
                 },
@@ -1245,6 +1407,23 @@ async def list_tools() -> list[Tool]:
                 "required": ["confirm"]
             }
         ),
+        Tool(
+            name="manage_policies",
+            description="Read or update OPA policy data sections. Admin only. "
+                        "Use action 'list' to see available sections, 'read' to get a section, "
+                        "'update' to modify a section (validates against JSON Schema before write).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action":  {"type": "string", "enum": ["list", "read", "update"],
+                                "description": "Operation: list sections, read one, or update one"},
+                    "section": {"type": "string",
+                                "description": "Config section name (required for read/update)"},
+                    "data":    {"description": "New value for the section (required for update)"},
+                },
+                "required": ["action"]
+            }
+        ),
     ]
 
 
@@ -1529,6 +1708,13 @@ async def _dispatch(name: str, arguments: dict[str, Any],
                                         rerank_options=rerank_opts)
         mcp_search_results_count.labels(collection=collection).observe(len(reranked))
 
+        # B-31: redact PII-sensitive metadata fields based on purpose policy
+        if PII_METADATA_FIELDS:
+            for item in reranked:
+                if item.get("metadata"):
+                    item["metadata"] = await _redact_metadata_pii(
+                        item["metadata"], purpose)
+
         pool = await get_pg_pool()
         await check_feedback_warning(query, pool)
 
@@ -1671,6 +1857,98 @@ async def _dispatch(name: str, arguments: dict[str, Any],
             text=json.dumps({"rows": [json.loads(r["data"]) for r in rows], "count": len(rows)},
                             ensure_ascii=False, indent=2))]
 
+    # ── manage_policies (B-12) ──────────────────────────────
+    elif name == "manage_policies":
+        if agent_role != "admin":
+            await log_access(agent_id, agent_role, "policy", "manage_policies",
+                             "manage_policies", "deny")
+            return [TextContent(type="text",
+                text=json.dumps({"error": "manage_policies requires admin role"}))]
+
+        action = arguments["action"]
+
+        if action == "list":
+            sections = {}
+            for name_s, schema in _POLICY_SECTION_PROPS.items():
+                sections[name_s] = schema.get("description", "")
+            await log_access(agent_id, agent_role, "policy", "config",
+                             "manage_policies.list", "allow")
+            return [TextContent(type="text",
+                text=json.dumps({"sections": sections}, ensure_ascii=False, indent=2))]
+
+        section = arguments.get("section", "")
+        if not section or section not in _POLICY_SECTION_PROPS:
+            valid = sorted(_POLICY_SECTION_PROPS.keys())
+            return [TextContent(type="text",
+                text=json.dumps({"error": f"Unknown section: {section!r}",
+                                 "valid_sections": valid}))]
+
+        if action == "read":
+            try:
+                resp = await http.get(f"{OPA_URL}/v1/data/pb/config/{section}")
+                resp.raise_for_status()
+                value = resp.json().get("result")
+            except Exception as exc:
+                return [TextContent(type="text",
+                    text=json.dumps({"error": f"Failed to read section: {exc}"}))]
+            await log_access(agent_id, agent_role, "policy", section,
+                             "manage_policies.read", "allow")
+            return [TextContent(type="text",
+                text=json.dumps({"section": section, "data": value},
+                                ensure_ascii=False, indent=2))]
+
+        if action == "update":
+            new_data = arguments.get("data")
+            if new_data is None:
+                return [TextContent(type="text",
+                    text=json.dumps({"error": "Missing 'data' for update action"}))]
+
+            # Validate against per-section JSON Schema
+            section_schema = _POLICY_SECTION_PROPS.get(section, {})
+            if section_schema:
+                try:
+                    _jsonschema.validate(instance=new_data, schema=section_schema)
+                except _jsonschema.ValidationError as ve:
+                    return [TextContent(type="text",
+                        text=json.dumps({"error": "Schema validation failed",
+                                         "detail": ve.message,
+                                         "path": list(ve.absolute_path)}))]
+
+            # Read current value for audit context
+            try:
+                old_resp = await http.get(f"{OPA_URL}/v1/data/pb/config/{section}")
+                old_resp.raise_for_status()
+                old_value = old_resp.json().get("result")
+            except Exception:
+                old_value = None
+
+            # Write to OPA Data API
+            try:
+                put_resp = await http.put(
+                    f"{OPA_URL}/v1/data/pb/config/{section}",
+                    json=new_data,
+                )
+                put_resp.raise_for_status()
+            except Exception as exc:
+                return [TextContent(type="text",
+                    text=json.dumps({"error": f"Failed to write to OPA: {exc}"}))]
+
+            # Invalidate caches
+            with _opa_cache_lock:
+                _opa_cache.clear()
+                _fields_to_redact_cache.clear()
+
+            mcp_policy_updates_total.labels(section=section).inc()
+            await log_access(agent_id, agent_role, "policy", section,
+                             "manage_policies.update", "allow",
+                             {"old_value": old_value, "new_value": new_data})
+            return [TextContent(type="text",
+                text=json.dumps({"status": "updated", "section": section},
+                                ensure_ascii=False, indent=2))]
+
+        return [TextContent(type="text",
+            text=json.dumps({"error": f"Unknown action: {action!r}"}))]
+
     # ── get_rules ────────────────────────────────────────────
     elif name == "get_rules":
         category = arguments["category"]
@@ -1800,6 +2078,15 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         ]
 
         reranked = await rerank_results(query, code_results, top_n=top_k)
+
+        # B-31: redact PII-sensitive metadata fields
+        if PII_METADATA_FIELDS:
+            purpose = arguments.get("purpose", "")
+            for item in reranked:
+                if item.get("metadata"):
+                    item["metadata"] = await _redact_metadata_pii(
+                        item["metadata"], purpose)
+
         await log_access(agent_id, agent_role, "code", "pb_code", "search", "allow", {
             "query": query, "qdrant_results": len(results.points),
             "after_policy": len(code_results), "after_rerank": len(reranked),
@@ -1917,6 +2204,10 @@ async def _dispatch(name: str, arguments: dict[str, Any],
             log.error(f"Graph query failed: {e}")
             data = {"error": str(e)}
 
+        # B-30: mask PII in graph results before returning
+        if "error" not in data:
+            data = await _mask_graph_pii(data)
+
         await log_access(agent_id, agent_role, "graph", action, "graph_query", "allow")
         return [TextContent(type="text",
             text=json.dumps(data, ensure_ascii=False, indent=2, default=str))]
@@ -1954,6 +2245,10 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         except Exception as e:
             log.error(f"Graph mutation failed: {e}")
             data = {"error": str(e)}
+
+        # B-30: mask PII in graph mutation results before returning
+        if "error" not in data:
+            data = await _mask_graph_pii(data)
 
         await log_access(agent_id, agent_role, "graph", action, "graph_mutate", "allow")
         return [TextContent(type="text",

@@ -37,18 +37,23 @@ import config
 from middleware import ProxyAuthMiddleware
 
 # Try to import telemetry - fallback if not available (for tests)
+_shared_parent = os.path.join(os.path.dirname(__file__), "..")
+if _shared_parent not in sys.path:
+    sys.path.insert(0, _shared_parent)
+
 try:
-    shared_path = os.path.join(os.path.dirname(__file__), "..", "shared")
-    if shared_path not in sys.path:
-        sys.path.insert(0, shared_path)
     from shared.telemetry import (
         init_telemetry, setup_auto_instrumentation, trace_operation,
         request_telemetry_context, get_current_telemetry,
         MetricsAggregator, PipelineStep, TELEMETRY_IN_RESPONSE,
     )
 except ImportError:
-    # Mock for tests
+    # Lightweight stubs when shared/ is not on the path (e.g. isolated test runs).
+    # PipelineStep is imported from shared directly — no duplicate definition.
     from contextlib import nullcontext
+    from dataclasses import dataclass, field
+    from typing import Any
+
     def init_telemetry(service_name):
         return None
     def setup_auto_instrumentation(app):
@@ -60,18 +65,31 @@ except ImportError:
     def get_current_telemetry():
         return None
     class MetricsAggregator:
-        def __init__(self, service_name): 
+        def __init__(self, service_name):
             self.service_name = service_name
-        def snapshot(self): 
+        def snapshot(self):
             return {"service": self.service_name, "uptime_seconds": 0, "raw_metrics": {}}
-        def histogram_percentiles(self, *args, **kwargs): 
+        def histogram_percentiles(self, *args, **kwargs):
             return {"p50_ms": 0, "p95_ms": 0, "p99_ms": 0}
     TELEMETRY_IN_RESPONSE = False
-    from dataclasses import dataclass, field
+
     @dataclass
     class PipelineStep:
-        name: str; service: str; duration_ms: float; status: str
-        metadata: dict = field(default_factory=dict)
+        """Fallback stub matching shared.telemetry.PipelineStep."""
+        name: str
+        service: str
+        duration_ms: float
+        status: str
+        metadata: dict[str, Any] = field(default_factory=dict)
+
+        def to_dict(self) -> dict[str, Any]:
+            d: dict[str, Any] = {
+                "name": self.name, "service": self.service,
+                "duration_ms": self.duration_ms, "status": self.status,
+            }
+            if self.metadata:
+                d.update(self.metadata)
+            return d
 from tool_injection import ToolInjector
 from agent_loop import AgentLoop, AgentLoopResult
 from anthropic_format import (

@@ -56,7 +56,7 @@ Agent / Skill
 
 🔀 **AI Provider Proxy** — Optional gateway between your AI consumers and their LLM providers. Transparently injects Powerbrain tools into every LLM request and executes tool calls automatically. Your teams use any LLM they prefer (100+ providers via LiteLLM); Powerbrain ensures they always query policy-checked enterprise context. Activate with `docker compose --profile proxy up`.
 
-## 🇪🇺 EU AI Act Compliance Toolkit
+## ⚖️ EU AI Act Compliance Toolkit
 
 Powerbrain is **not itself a high-risk AI system**, but Deployers who operate one in regulated sectors (finance, healthcare, HR) need infrastructure that delivers the Art. 9–15 capabilities. Powerbrain ships them as executable building blocks, not PDFs:
 

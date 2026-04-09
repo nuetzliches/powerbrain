@@ -226,6 +226,30 @@ class TestHeuristicBoosts:
         result = await rerank_results("query", docs, top_n=1, rerank_options=None)
         assert result[0]["rerank_score"] == pytest.approx(0.95)
 
+    def test_boost_corrections(self, reranked_docs):
+        from server import _apply_heuristic_boosts
+        # Mark doc "a" as a correction
+        reranked_docs[0].metadata["isCorrection"] = True
+        options = {"boost_corrections": 0.15}
+        results = _apply_heuristic_boosts(reranked_docs, options)
+        assert results[0].rerank_score == pytest.approx(0.95)  # 0.80 + 0.15
+        assert results[1].rerank_score == pytest.approx(0.85)  # not a correction
+
+    def test_boost_corrections_no_effect_without_flag(self, reranked_docs):
+        from server import _apply_heuristic_boosts
+        # Neither doc has isCorrection
+        options = {"boost_corrections": 0.15}
+        results = _apply_heuristic_boosts(reranked_docs, options)
+        assert results[0].rerank_score == pytest.approx(0.80)
+        assert results[1].rerank_score == pytest.approx(0.85)
+
+    def test_boost_corrections_zero_default(self, reranked_docs):
+        from server import _apply_heuristic_boosts
+        reranked_docs[0].metadata["isCorrection"] = True
+        options = {}  # boost_corrections defaults to 0.0
+        results = _apply_heuristic_boosts(reranked_docs, options)
+        assert results[0].rerank_score == pytest.approx(0.80)  # no boost applied
+
     async def test_graceful_fallback_skips_boosts(self, _patch_http, monkeypatch):
         monkeypatch.setattr(server, "RERANKER_ENABLED", True)
         _patch_http.post.side_effect = Exception("Reranker down")

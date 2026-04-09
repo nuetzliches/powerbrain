@@ -73,6 +73,21 @@ test_redact_contract_fulfillment_empty if {
     count(fields) == 0
 }
 
+test_redact_default_includes_person if {
+    fields := privacy.fields_to_redact with input as {"purpose": "default"}
+    "person" in fields
+}
+
+test_redact_reporting_includes_person if {
+    fields := privacy.fields_to_redact with input as {"purpose": "reporting"}
+    "person" in fields
+}
+
+test_redact_support_excludes_person if {
+    fields := privacy.fields_to_redact with input as {"purpose": "support"}
+    not "person" in fields
+}
+
 # ── PII Action ────────────────────────────────────────────────
 
 test_pii_action_public_mask if {

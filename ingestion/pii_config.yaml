@@ -43,3 +43,15 @@ custom_recognizers:
       - name: de_social_security
         regex: '\b\d{2}\s?\d{6}\s?[A-Z]\s?\d{3}\b'
         score: 0.6
+
+# Metadata fields that may contain PII.
+# Maps Qdrant payload / metadata key name → OPA fields_to_redact category.
+# Used by the MCP server to redact metadata before returning search results.
+pii_metadata_fields:
+  userName: person
+  customerName: person
+  authorName: person
+  authorEmail: email
+  contactEmail: email
+  contactPhone: phone
+  recipientAddress: address
