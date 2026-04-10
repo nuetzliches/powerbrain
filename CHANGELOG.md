@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-04-10
 
 ### Added
 
@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Full pipeline: PII scan, OPA quality gate, embedding, context layers
   - Cascade deletion of removed files (Qdrant, PG, vault, graph)
   - Config: `ingestion/repos.yaml` (example provided)
-  - 59 new unit tests
+  - 59 new unit tests, 2 new OPA tests (111 total)
 
 ## [0.3.1] - 2026-04-10
 
@@ -107,6 +107,7 @@ Initial public release of the Powerbrain Context Engine.
 - CI workflows (GitHub Actions + Forgejo for internal use)
 - Comprehensive documentation (architecture, deployment, scalability, GDPR, ADRs)
 
+[0.4.0]: https://github.com/nuetzliches/powerbrain/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/nuetzliches/powerbrain/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/nuetzliches/powerbrain/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nuetzliches/powerbrain/compare/v0.1.0...v0.2.0
