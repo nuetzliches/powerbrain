@@ -31,6 +31,7 @@ declare -A IMAGES=(
   [ingestion]="ingestion/Dockerfile:."
   [reranker]="reranker/Dockerfile:."
   [pb-proxy]="pb-proxy/Dockerfile:."
+  [worker]="worker/Dockerfile:."
 )
 
 # ── Detect changes ──────────────────────────────────────────
@@ -45,7 +46,7 @@ fi
 # If nothing service-relevant changed, rebuild all (safety net)
 rebuild_all=false
 has_service_change=false
-for svc in mcp-server ingestion reranker pb-proxy shared init-db opa-policies; do
+for svc in mcp-server ingestion reranker pb-proxy worker shared init-db opa-policies; do
   if echo "$changed" | grep -q "^${svc}/"; then
     has_service_change=true
     break
