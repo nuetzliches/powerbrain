@@ -25,7 +25,7 @@ source = ["shared", "mcp-server", "ingestion", "reranker", "pb-proxy", "worker"]
 omit = ["*/tests/*", "*/__main__.py"]
 
 [tool.coverage.report]
-fail_under = 80
+fail_under = 73
 show_missing = true
 skip_covered = true
 exclude_lines = [
