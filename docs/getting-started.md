@@ -25,7 +25,28 @@ This will:
 - Create Qdrant vector collections
 - Verify everything is healthy
 
-## 2. Connect Your Agent
+## 2. Authentication
+
+Every MCP request requires an API key with the `pb_` prefix.
+
+**For local development**, a default key is pre-seeded:
+
+```
+pb_dev_localonly_do_not_use_in_production
+```
+
+This key has `admin` role and is only for local testing.
+
+**To create production keys**, use the CLI tool:
+
+```bash
+docker exec pb-mcp-server python manage_keys.py create \
+  --agent-id my-agent --role analyst --description "My first agent"
+```
+
+The key is shown once and cannot be retrieved later. Available roles: `viewer`, `analyst`, `developer`, `admin`.
+
+## 3. Connect Your Agent
 
 Add Powerbrain to your MCP client configuration:
 
@@ -34,15 +55,18 @@ Add Powerbrain to your MCP client configuration:
   "mcpServers": {
     "powerbrain": {
       "type": "http",
-      "url": "http://localhost:8080/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer pb_dev_localonly_do_not_use_in_production"
+      }
     }
   }
 }
 ```
 
-This works with Claude Desktop, Claude Code, OpenCode, or any MCP-compatible client.
+This works with Claude Desktop, Claude Code, OpenCode, or any MCP-compatible client. Replace the dev key with your production key when deploying.
 
-## 3. Ingest Data
+## 4. Ingest Data
 
 Use the `ingest_data` tool to add content to the knowledge base:
 
@@ -63,7 +87,7 @@ The ingestion pipeline will:
 5. Create context layer abstracts (L0/L1)
 6. Store in Qdrant + PostgreSQL
 
-## 4. Search
+## 5. Search
 
 Use `search_knowledge` to find relevant context:
 
@@ -117,7 +141,7 @@ Arguments:
   layer: "L2"
 ```
 
-## 5. Understand Policies
+## 6. Understand Policies
 
 Powerbrain checks OPA policies on every request. The default configuration:
 
@@ -140,7 +164,7 @@ Arguments:
 
 Policies are defined in `opa-policies/pb/data.json` and can be modified at runtime via the `manage_policies` tool (admin only).
 
-## 6. Knowledge Graph
+## 7. Knowledge Graph
 
 Query relationships between entities:
 
