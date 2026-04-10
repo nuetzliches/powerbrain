@@ -22,16 +22,15 @@ cd "$REPO_DIR"
 
 SHORT_SHA=$(git rev-parse --short HEAD)
 
-# ── Image Map ───────────────────────────────────────────────
-# service-name -> "Dockerfile:build-context" (relative to repo root)
-# mcp-server/ingestion need repo root for shared/ access
-# reranker/pb-proxy use their own directory as context
-declare -A IMAGES=(
-  [mcp-server]="mcp-server/Dockerfile:."
-  [ingestion]="ingestion/Dockerfile:."
-  [reranker]="reranker/Dockerfile:."
-  [pb-proxy]="pb-proxy/Dockerfile:."
-  [worker]="worker/Dockerfile:."
+# ── Image List ──────────────────────────────────────────────
+# Each entry: "service-name:Dockerfile:build-context"
+# mcp-server/ingestion/worker need repo root for shared/ access
+IMAGES=(
+  "mcp-server:mcp-server/Dockerfile:."
+  "ingestion:ingestion/Dockerfile:."
+  "reranker:reranker/Dockerfile:."
+  "pb-proxy:pb-proxy/Dockerfile:."
+  "worker:worker/Dockerfile:."
 )
 
 # ── Detect changes ──────────────────────────────────────────
@@ -64,9 +63,10 @@ fi
 
 # ── Build & Push ────────────────────────────────────────────
 built=0
-for service in "${!IMAGES[@]}"; do
-  entry="${IMAGES[$service]}"
-  dockerfile="${entry%%:*}"
+for entry in "${IMAGES[@]}"; do
+  service="${entry%%:*}"
+  rest="${entry#*:}"
+  dockerfile="${rest%%:*}"
 
   # Skip if not changed (unless rebuild_all)
   if [ "$rebuild_all" = false ]; then
@@ -77,7 +77,7 @@ for service in "${!IMAGES[@]}"; do
   fi
 
   image="${REGISTRY}/${ORG}/${REPO}/${service}"
-  context="${entry#*:}"
+  context="${rest#*:}"
   log "Building ${image} (context: ${context})..."
 
   docker build \
