@@ -4,3 +4,6 @@ pytest-mock>=3.14
 respx>=0.22
 coverage>=7.0
 pytest-cov>=6.0
+pip-audit>=2.7
+bandit>=1.8
+locust>=2.20
