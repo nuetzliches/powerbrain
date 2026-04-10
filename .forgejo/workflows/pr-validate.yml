@@ -71,3 +71,6 @@ jobs:
 
       - name: Build pb-proxy image
         run: docker build -f workspace/pb-proxy/Dockerfile -t pb-proxy:pr-test workspace
+
+      - name: Build worker image
+        run: docker build -f workspace/worker/Dockerfile -t pb-worker:pr-test workspace
