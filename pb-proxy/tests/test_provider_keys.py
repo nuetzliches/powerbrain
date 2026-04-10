@@ -1,105 +1,11 @@
 """
-Tests for provider key configuration loading and provider extraction.
+Tests for provider key resolution, extraction, and integration.
+
+Note: load_provider_key_config() tests are in test_proxy_config.py.
+This file covers _extract_provider, _resolve_provider_key, and integration.
 """
-import tempfile
-import os
 import pytest
-import yaml
-from config import load_provider_key_config
 from proxy import _extract_provider
-
-
-class TestLoadProviderKeyConfig:
-    """Tests for load_provider_key_config() function."""
-    
-    def test_loads_valid_config(self):
-        """Should load provider_keys section from YAML."""
-        config_data = {
-            "provider_keys": {
-                "anthropic": "central",
-                "openai": "hybrid", 
-                "github": "user"
-            }
-        }
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            yaml.safe_dump(config_data, f)
-            f.flush()
-            
-            result = load_provider_key_config(f.name)
-            
-        os.unlink(f.name)
-        
-        expected = {
-            "anthropic": "central",
-            "openai": "hybrid",
-            "github": "user"
-        }
-        assert result == expected
-    
-    def test_missing_file_returns_empty_dict(self):
-        """Should return empty dict when config file doesn't exist."""
-        result = load_provider_key_config("/nonexistent/path.yaml")
-        assert result == {}
-    
-    def test_invalid_key_source_falls_back_to_central(self):
-        """Should use 'central' for invalid key_source values."""
-        config_data = {
-            "provider_keys": {
-                "anthropic": "invalid_source",
-                "openai": "hybrid",
-                "github": "another_invalid"
-            }
-        }
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            yaml.safe_dump(config_data, f)
-            f.flush()
-            
-            result = load_provider_key_config(f.name)
-            
-        os.unlink(f.name)
-        
-        expected = {
-            "anthropic": "central",  # invalid_source → central
-            "openai": "hybrid",      # valid
-            "github": "central"      # another_invalid → central
-        }
-        assert result == expected
-    
-    def test_no_provider_keys_section_returns_empty_dict(self):
-        """Should return empty dict when provider_keys section is missing."""
-        config_data = {
-            "other_section": {
-                "key": "value"
-            }
-        }
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            yaml.safe_dump(config_data, f)
-            f.flush()
-            
-            result = load_provider_key_config(f.name)
-            
-        os.unlink(f.name)
-        
-        assert result == {}
-    
-    def test_empty_provider_keys_section_returns_empty_dict(self):
-        """Should return empty dict when provider_keys section is None or empty."""
-        config_data = {
-            "provider_keys": None
-        }
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            yaml.safe_dump(config_data, f)
-            f.flush()
-            
-            result = load_provider_key_config(f.name)
-            
-        os.unlink(f.name)
-        
-        assert result == {}
 
 
 class TestExtractProvider:

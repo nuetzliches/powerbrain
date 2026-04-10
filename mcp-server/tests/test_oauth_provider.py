@@ -11,12 +11,14 @@ from mcp.shared.auth import OAuthClientInformationFull
 from oauth_provider import (
     PowerbrainOAuthProvider,
     CombinedTokenVerifier,
+    PendingLogin,
     PbAccessToken,
     PbRefreshToken,
     PbAuthorizationCode,
     ACCESS_TOKEN_TTL,
     REFRESH_TOKEN_TTL,
     CODE_TTL,
+    PENDING_LOGIN_TTL,
 )
 
 
@@ -394,3 +396,99 @@ class TestCombinedVerifier:
 
         result = await combined.verify_token("unknown_token")
         assert result is None
+
+
+# ── Cleanup ───────────────────────────────────────────────
+
+
+class TestCleanup:
+    async def test_removes_expired_pending_logins(self):
+        prov, pool, _ = _provider()
+        pool.fetchval.return_value = None  # no refresh tokens to delete
+        # Add an expired pending login
+        prov._pending_logins["old"] = PendingLogin(
+            client=_make_client(), params=_make_params(),
+            created_at=time.time() - PENDING_LOGIN_TTL - 10,
+        )
+        prov._pending_logins["fresh"] = PendingLogin(
+            client=_make_client(), params=_make_params(),
+        )
+        await prov._cleanup()
+        assert "old" not in prov._pending_logins
+        assert "fresh" in prov._pending_logins
+
+    async def test_removes_expired_auth_codes(self):
+        prov, pool, _ = _provider()
+        pool.fetchval.return_value = None
+        prov._auth_codes["expired"] = PbAuthorizationCode(
+            code="expired", client_id="c", redirect_uri="https://x.com/cb",
+            redirect_uri_provided_explicitly=True, code_challenge="ch",
+            scopes=[], expires_at=time.time() - 10, api_key="pb_k",
+        )
+        prov._auth_codes["valid"] = PbAuthorizationCode(
+            code="valid", client_id="c", redirect_uri="https://x.com/cb",
+            redirect_uri_provided_explicitly=True, code_challenge="ch",
+            scopes=[], expires_at=time.time() + CODE_TTL, api_key="pb_k",
+        )
+        await prov._cleanup()
+        assert "expired" not in prov._auth_codes
+        assert "valid" in prov._auth_codes
+
+    async def test_removes_expired_access_tokens(self):
+        prov, pool, _ = _provider()
+        pool.fetchval.return_value = None
+        prov._access_tokens["old"] = PbAccessToken(
+            token="old", client_id="c", scopes=[],
+            expires_at=int(time.time() - 10), api_key="pb_k",
+        )
+        prov._access_tokens["current"] = PbAccessToken(
+            token="current", client_id="c", scopes=[],
+            expires_at=int(time.time() + 3600), api_key="pb_k",
+        )
+        await prov._cleanup()
+        assert "old" not in prov._access_tokens
+        assert "current" in prov._access_tokens
+
+
+# ── Client Registration ───────────────────────────────────
+
+
+class TestGetClient:
+    async def test_get_existing_client(self):
+        prov, pool, _ = _provider()
+        client = _make_client("test-client")
+        pool.fetchrow.return_value = {"client_info": client.model_dump_json()}
+
+        result = await prov.get_client("test-client")
+        assert result is not None
+        assert result.client_id == "test-client"
+
+    async def test_get_missing_client(self):
+        prov, pool, _ = _provider()
+        pool.fetchrow.return_value = None
+
+        result = await prov.get_client("nonexistent")
+        assert result is None
+
+
+class TestRegisterClient:
+    async def test_register_new_client(self):
+        prov, pool, _ = _provider()
+        client = _make_client("new-client")
+        await prov.register_client(client)
+        pool.execute.assert_called_once()
+        call_sql = pool.execute.call_args[0][0]
+        assert "INSERT INTO oauth_clients" in call_sql
+
+    async def test_register_upserts_on_conflict(self):
+        prov, pool, _ = _provider()
+        client = _make_client("existing")
+        await prov.register_client(client)
+        call_sql = pool.execute.call_args[0][0]
+        assert "ON CONFLICT" in call_sql
+
+    async def test_register_db_error_raises(self):
+        prov, pool, _ = _provider()
+        pool.execute.side_effect = RuntimeError("connection lost")
+        with pytest.raises(RuntimeError):
+            await prov.register_client(_make_client())
