@@ -19,3 +19,17 @@ addopts = "--import-mode=importlib"
 markers = [
     "integration: requires running services (deselect with -m 'not integration')",
 ]
+
+[tool.coverage.run]
+source = ["shared", "mcp-server", "ingestion", "reranker", "pb-proxy", "worker"]
+omit = ["*/tests/*", "*/__main__.py"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ ==",
+]
