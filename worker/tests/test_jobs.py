@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from worker import scheduler as scheduler_mod
@@ -85,6 +86,12 @@ class TestAuditRetention:
         assert summary.get("skipped") is True
         ctx.pg_pool.fetchrow.assert_not_called()
 
+    async def test_db_exception_propagates(self):
+        ctx = _ctx()
+        ctx.pg_pool.fetchrow.side_effect = RuntimeError("connection lost")
+        with pytest.raises(RuntimeError, match="connection lost"):
+            await audit_retention.run(ctx)
+
 
 # ── pending_review_timeout ─────────────────────────────────
 
@@ -109,6 +116,15 @@ class TestPendingReviewTimeout:
         assert summary["expired_count"] == 2
         assert sorted(summary["agents_affected"]) == ["a1", "a2"]
         assert "search_knowledge" in summary["tools"]
+
+    async def test_grace_minutes_passed_to_query(self):
+        ctx = _ctx(pending_review_grace_minutes=30)
+        ctx.pg_pool.fetch.return_value = []
+        summary = await pending_review_timeout.run(ctx)
+        assert summary["grace_minutes"] == 30
+        # Verify grace value was passed as $1 to the query
+        call_args = ctx.pg_pool.fetch.call_args
+        assert call_args[0][1] == 30
 
 
 # ── accuracy_metrics ───────────────────────────────────────
@@ -247,29 +263,159 @@ class TestAccuracyMetrics:
         assert summary["drift"] == []
         assert sorted(summary["skipped"]) == ["pb_code", "pb_general", "pb_rules"]
 
+    async def test_load_drift_config_opa_failure_uses_fallback(self):
+        """When OPA is unreachable, _load_drift_config returns defaults."""
+        ctx = _ctx()
+        ctx.http_client.get.side_effect = httpx.ConnectError("connection refused")
+
+        from shared.drift_check import DEFAULT_THRESHOLDS
+        cfg = await accuracy_metrics._load_drift_config(ctx)
+        assert cfg["thresholds"] == dict(DEFAULT_THRESHOLDS)
+        assert cfg["reference_sample_size"] == 200
+        assert cfg["fresh_sample_size"] == 200
+
+    async def test_load_drift_config_opa_timeout_uses_fallback(self):
+        """Timeout from OPA also returns fallback defaults."""
+        ctx = _ctx()
+        ctx.http_client.get.side_effect = httpx.TimeoutException("timed out")
+
+        cfg = await accuracy_metrics._load_drift_config(ctx)
+        assert "thresholds" in cfg
+        assert cfg["reference_sample_size"] == 200
+
+    async def test_load_drift_config_empty_result_uses_fallback(self):
+        """OPA returns 200 but empty result → fallback."""
+        ctx = _ctx()
+        ctx.http_client.get.return_value = _make_response({"result": {}})
+
+        cfg = await accuracy_metrics._load_drift_config(ctx)
+        assert cfg["reference_sample_size"] == 200
+
+    async def test_sample_collection_vectors_qdrant_error(self):
+        """Qdrant failure returns empty list instead of raising."""
+        ctx = _ctx()
+        ctx.http_client.post.side_effect = httpx.ConnectError("qdrant down")
+
+        vectors = await accuracy_metrics._sample_collection_vectors(
+            ctx, "pb_general", 10,
+        )
+        assert vectors == []
+
+    async def test_sample_collection_vectors_multi_named(self):
+        """Points with multi-named vectors pick first key alphabetically."""
+        ctx = _ctx()
+        resp = _make_response({
+            "result": {
+                "points": [
+                    {"id": 0, "vector": {"zebra": [9.0, 9.0], "alpha": [1.0, 2.0]}},
+                    {"id": 1, "vector": {"zebra": [8.0, 8.0], "alpha": [3.0, 4.0]}},
+                ]
+            }
+        })
+        ctx.http_client.post.return_value = resp
+
+        vectors = await accuracy_metrics._sample_collection_vectors(
+            ctx, "pb_general", 10,
+        )
+        # Should pick "alpha" (sorted first)
+        assert vectors == [[1.0, 2.0], [3.0, 4.0]]
+
+    async def test_ensure_baseline_exists_no_insert(self):
+        """When baseline already exists, no INSERT is executed."""
+        ctx = _ctx()
+        existing = MagicMock()
+        existing.__getitem__ = lambda s, k: {
+            "id": 42, "sample_count": 200,
+            "embedding_dim": 768, "centroid": [0.1] * 768,
+        }[k]
+        ctx.pg_pool.fetchrow.return_value = existing
+
+        result = await accuracy_metrics._ensure_reference_baseline(
+            ctx, "pb_general", 200,
+        )
+        assert result["id"] == 42
+        ctx.pg_pool.execute.assert_not_called()
+
+    async def test_ensure_baseline_no_vectors_returns_none(self):
+        """Empty collection → baseline returns None, no INSERT."""
+        ctx = _ctx()
+        ctx.pg_pool.fetchrow.return_value = None  # no existing baseline
+        ctx.http_client.post.return_value = self._make_qdrant_response(0)
+
+        result = await accuracy_metrics._ensure_reference_baseline(
+            ctx, "pb_general", 200,
+        )
+        assert result is None
+        ctx.pg_pool.execute.assert_not_called()
+
 
 # ── gdpr_retention ─────────────────────────────────────────
 
 class TestGdprRetention:
+    def _fake_proc(self, returncode=0, stdout=b"", stderr=b""):
+        async def _communicate():
+            return (stdout, stderr)
+        proc = MagicMock()
+        proc.communicate = _communicate
+        proc.returncode = returncode
+        return proc
+
     async def test_subprocess_returncode_propagated(self, monkeypatch):
         ctx = _ctx()
-
-        async def _fake_communicate():
-            return (b"deleted: 0", b"")
-
-        fake_proc = MagicMock()
-        fake_proc.communicate = _fake_communicate
-        fake_proc.returncode = 0
-
-        async def _fake_create(*args, **kwargs):
-            return fake_proc
+        proc = self._fake_proc(returncode=0, stdout=b"deleted: 0")
 
         import asyncio
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+        monkeypatch.setattr(asyncio, "create_subprocess_exec",
+                            AsyncMock(return_value=proc))
 
         result = await gdpr_retention.run(ctx)
         assert result["exit_code"] == 0
         assert "deleted: 0" in result["stdout"]
+
+    async def test_nonzero_exit_code(self, monkeypatch):
+        ctx = _ctx()
+        proc = self._fake_proc(returncode=1, stderr=b"error: table locked")
+
+        import asyncio
+        monkeypatch.setattr(asyncio, "create_subprocess_exec",
+                            AsyncMock(return_value=proc))
+
+        result = await gdpr_retention.run(ctx)
+        assert result["exit_code"] == 1
+        assert "table locked" in result["stderr"]
+
+    async def test_stderr_captured(self, monkeypatch):
+        ctx = _ctx()
+        proc = self._fake_proc(returncode=0, stdout=b"ok",
+                               stderr=b"WARN: low disk space")
+
+        import asyncio
+        monkeypatch.setattr(asyncio, "create_subprocess_exec",
+                            AsyncMock(return_value=proc))
+
+        result = await gdpr_retention.run(ctx)
+        assert "low disk space" in result["stderr"]
+
+    async def test_file_not_found_returns_skipped(self, monkeypatch):
+        ctx = _ctx()
+
+        import asyncio
+        monkeypatch.setattr(asyncio, "create_subprocess_exec",
+                            AsyncMock(side_effect=FileNotFoundError("python")))
+
+        result = await gdpr_retention.run(ctx)
+        assert result["skipped"] is True
+
+    async def test_generic_exception_returns_error(self, monkeypatch):
+        ctx = _ctx()
+
+        import asyncio
+        monkeypatch.setattr(asyncio, "create_subprocess_exec",
+                            AsyncMock(side_effect=OSError("permission denied")))
+
+        result = await gdpr_retention.run(ctx)
+        assert "error" in result
+        assert "permission denied" in result["error"]
 
 
 # ── scheduler registration ────────────────────────────────
@@ -303,3 +449,20 @@ class TestSchedulerRegistration:
             raise RuntimeError("boom")
         # Must not propagate
         await scheduler_mod._run_with_logging("failing-job", _failing, ctx)
+
+    async def test_run_with_logging_completes_on_success(self):
+        ctx = _ctx()
+        async def _ok(_ctx):
+            return {"status": "done"}
+        # Must not raise
+        await scheduler_mod._run_with_logging("ok-job", _ok, ctx)
+
+    def test_job_trigger_types(self):
+        from apscheduler.triggers.interval import IntervalTrigger
+        from apscheduler.triggers.cron import CronTrigger
+
+        trigger_map = {s["id"]: type(s["trigger"]) for s in scheduler_mod.JOB_SPECS}
+        assert trigger_map["accuracy_metrics_refresh"] is IntervalTrigger
+        assert trigger_map["pending_review_timeout"] is IntervalTrigger
+        assert trigger_map["gdpr_retention_cleanup"] is CronTrigger
+        assert trigger_map["audit_retention_cleanup"] is CronTrigger
