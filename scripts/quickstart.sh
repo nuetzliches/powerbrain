@@ -87,6 +87,15 @@ for col in pb_general pb_code pb_rules; do
     fi
 done
 
+# ── Seed demo data (optional) ───────────────────────────────
+if [ "${SKIP_SEED:-}" != "1" ]; then
+    info "Seeding demo data (20 documents) ..."
+    docker compose --profile seed up seed --exit-code-from seed 2>/dev/null || {
+        warn "Seed container not available or failed. Skipping demo data."
+        warn "You can seed later: docker compose --profile seed up seed"
+    }
+fi
+
 # ── Verify ──────────────────────────────────────────────────
 info "Verifying setup ..."
 echo ""
@@ -115,4 +124,6 @@ echo "  Next steps:"
 echo "    - Read the Getting Started guide: docs/getting-started.md"
 echo "    - See all MCP tools:              docs/mcp-tools.md"
 echo "    - Deploy with TLS:                docs/deployment.md"
+echo ""
+echo "  To skip demo data seeding: SKIP_SEED=1 ./scripts/quickstart.sh"
 echo ""
