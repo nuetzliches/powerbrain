@@ -104,20 +104,23 @@ curl -s http://localhost:6333/healthz  # Qdrant
 curl -s http://localhost:8181/health   # OPA
 ```
 
-Connect your agent:
+Connect your agent (a default dev key is pre-seeded for local use):
 
 ```json
 {
   "mcpServers": {
     "powerbrain": {
       "type": "http",
-      "url": "http://localhost:8080/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer pb_dev_localonly_do_not_use_in_production"
+      }
     }
   }
 }
 ```
 
-That's it. Your agent now has access to `search_knowledge`, `query_data`, `graph_query`, `generate_compliance_doc`, and 19 more tools — see [MCP Tool Reference](docs/mcp-tools.md).
+That's it. Your agent now has access to `search_knowledge`, `query_data`, `graph_query`, `generate_compliance_doc`, and 19 more tools — see [MCP Tool Reference](docs/mcp-tools.md). For production keys, see the [Getting Started guide](docs/getting-started.md#2-authentication).
 
 ### Optional: AI Provider Proxy
 
