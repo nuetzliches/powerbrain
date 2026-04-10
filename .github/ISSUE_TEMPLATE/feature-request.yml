@@ -1,0 +1,70 @@
+name: Feature Request
+description: Suggest a new feature or improvement for Powerbrain
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Related Component
+      description: Which part of Powerbrain does this relate to?
+      options:
+        - MCP Server
+        - Ingestion Pipeline
+        - Reranker
+        - AI Provider Proxy (pb-proxy)
+        - Worker (pb-worker)
+        - OPA Policies
+        - PostgreSQL / Database Schema
+        - Qdrant / Vector Search
+        - Shared Libraries
+        - Docker / Deployment
+        - Monitoring (Prometheus/Grafana/Tempo)
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Use Case
+      description: "Describe the problem you are trying to solve or the use case this feature would support. Focus on the 'why', not the 'how'."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: "Describe your proposed solution. Include API changes, new MCP tools, OPA policy changes, or configuration options if applicable."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Describe any alternative solutions or workarounds you have considered.
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Impact Areas
+      description: Check all areas this feature would affect.
+      options:
+        - label: MCP tool interface (new or changed tools)
+        - label: OPA policies (new or changed rules)
+        - label: Database schema (new migrations)
+        - label: Docker / deployment configuration
+        - label: API (new or changed endpoints)
+        - label: GDPR / privacy behavior
+        - label: EU AI Act compliance
+        - label: Performance / scalability
+        - label: Documentation
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any additional context, mockups, references, or links.
