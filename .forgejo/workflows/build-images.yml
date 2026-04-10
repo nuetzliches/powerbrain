@@ -8,6 +8,7 @@ on:
       - 'ingestion/**'
       - 'reranker/**'
       - 'pb-proxy/**'
+      - 'worker/**'
       - 'shared/**'
       - 'init-db/**'
       - 'opa-policies/**'
@@ -49,8 +50,8 @@ jobs:
           fi
 
           cd "${DEPLOY_DIR}"
-          docker compose pull mcp-server ingestion reranker pb-proxy
-          docker compose up -d mcp-server ingestion reranker pb-proxy
+          docker compose pull mcp-server ingestion reranker pb-proxy pb-worker
+          docker compose up -d mcp-server ingestion reranker pb-proxy pb-worker
 
           echo "✅ Powerbrain services restarted"
 
