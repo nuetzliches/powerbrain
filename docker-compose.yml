@@ -303,6 +303,9 @@ services:
     secrets:
       - pg_password
       - forgejo_token
+      - github_pat
+    volumes:
+      - ./ingestion/repos.yaml:/app/ingestion/repos.yaml:ro
     environment:
       QDRANT_URL:    http://qdrant:6333
       POSTGRES_HOST: postgres
@@ -317,6 +320,7 @@ services:
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       FORGEJO_URL:   ${FORGEJO_URL:-http://forgejo.local:3000}
       FORGEJO_TOKEN_FILE: /run/secrets/forgejo_token
+      GITHUB_PAT_FILE: /run/secrets/github_pat
       RERANKER_URL:  ${RERANKER_URL:-http://reranker:8082}
       LLM_PROVIDER_URL: ${LLM_PROVIDER_URL:-http://ollama:11434}
       LLM_MODEL: ${LLM_MODEL:-qwen2.5:3b}
@@ -354,6 +358,7 @@ services:
       - "8083"
     secrets:
       - pg_password
+      - github_pat
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
@@ -362,6 +367,9 @@ services:
       POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
       OPA_URL:       http://opa:8181
       QDRANT_URL:    http://qdrant:6333
+      INGESTION_URL: http://ingestion:8081
+      GITHUB_PAT_FILE: /run/secrets/github_pat
+      REPO_SYNC_INTERVAL_MINUTES: ${REPO_SYNC_INTERVAL_MINUTES:-5}
       AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-365}
       PENDING_REVIEW_GRACE_MINUTES: ${PENDING_REVIEW_GRACE_MINUTES:-0}
       PG_POOL_MIN: ${PG_POOL_MIN:-1}
@@ -372,6 +380,8 @@ services:
       postgres:
         condition: service_healthy
       opa:
+        condition: service_started
+      ingestion:
         condition: service_started
     networks:
       - pb-net
