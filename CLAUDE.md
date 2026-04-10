@@ -121,7 +121,19 @@ powerbrain/
 │   │   └── pending_review_timeout.py ← Art. 14 review expiry
 │   ├── Dockerfile
 │   └── requirements.txt
+├── scripts/
+│   ├── quickstart.sh          ← Automated first-time setup
+│   ├── build-images.sh        ← Docker image build script
+│   └── seed_*.py              ← Test data seeding scripts
+├── tests/
+│   ├── integration/           ← E2E smoke tests (gated behind RUN_INTEGRATION_TESTS=1)
+│   └── load/
+│       ├── locustfile.py      ← Locust load test for MCP search pipeline
+│       └── README.md          ← Load test instructions
+├── SECURITY.md                ← Vulnerability reporting policy
 └── docs/
+    ├── getting-started.md          ← Step-by-step tutorial for newcomers
+    ├── mcp-tools.md                ← All 23 MCP tools with parameters and access roles
     ├── what-is-powerbrain.md       ← Detailed overview and positioning
     ├── deployment.md               ← Dev, prod, TLS, Docker Secrets guide
     ├── architecture.md             ← Technical deep-dive (components, GDPR)
@@ -325,10 +337,14 @@ Configuration: `pb-proxy/litellm_config.yaml` for aliases + `provider_keys`, `pb
 
 ### First Start
 ```bash
+# Automated (recommended):
+./scripts/quickstart.sh
+
+# Or manually:
 cp .env.example .env
 # Edit .env: PG_PASSWORD (and optionally FORGEJO_URL, FORGEJO_TOKEN)
 
-docker compose up -d
+docker compose --profile local-llm --profile local-reranker up -d
 
 # Pull embedding model
 docker exec pb-ollama ollama pull nomic-embed-text
@@ -388,12 +404,21 @@ Tests are gated behind `RUN_INTEGRATION_TESTS=1` and take ~90s (plus stack start
 The `docker_stack` fixture calls `docker compose down -v` before and after the test session.
 
 ### CI / PR Validation
-PR workflow (`.forgejo/workflows/pr-validate.yml`) runs on every PR to `master`:
-- **unit-tests** — All service tests in `python:3.12-slim` container (`-m "not integration"`)
+PR workflow (`.github/workflows/pr-validate.yml`) runs on every PR to `master`:
+- **unit-tests** — All service tests in `python:3.12-slim` container (`-m "not integration"`), coverage threshold 80% (`--cov-fail-under=80`)
 - **opa-tests** — OPA policy tests (`opa test opa-policies/pb/`)
-- **docker-build** — Build all 4 images (no push)
+- **docker-build** — Build all 5 images (no push)
+- **security-scan** — `pip-audit` (dependency vulnerabilities) + `bandit` (static analysis), non-blocking
 
-All three jobs must pass before merge. Branch protection requires PR — no direct pushes to master.
+All jobs must pass before merge. Branch protection requires PR — no direct pushes to master.
+
+### Load Tests
+Locust-based load tests for the MCP search pipeline (not in CI, local only):
+```bash
+pip install locust
+locust -f tests/load/locustfile.py --host=http://localhost:8080
+# Web UI at http://localhost:8089
+```
 
 Run tests locally (same as CI):
 ```bash
@@ -404,7 +429,11 @@ docker run --rm -v "$(pwd):/app" -w /app python:3.12-slim bash -c "
     -r pb-proxy/requirements.txt \
     fastapi uvicorn pydantic prometheus-client pyyaml python-dotenv &&
   PYTHONPATH=.:mcp-server:ingestion:reranker:pb-proxy \
-  python -m pytest -m 'not integration' --tb=short -q
+  python -m pytest -m 'not integration' --tb=short -q \
+    --cov=shared --cov=mcp-server --cov=ingestion \
+    --cov=reranker --cov=pb-proxy --cov=worker \
+    --cov-report=term-missing:skip-covered \
+    --cov-fail-under=80
 "
 ```
 
@@ -511,14 +540,23 @@ Implementation plans and design specs are stored centrally:
 
 ## Pre-Public Checklist
 
-Tasks to complete before open-sourcing the repository:
+Tasks completed for open-sourcing the repository:
 
-- [x] **Audit secrets and internal URLs** — Grepped for internal domains, runner names, personal paths. Parameterized `build-images.sh`, sanitized doc paths. `.forgejo/` workflows contain Forgejo-specific references but are kept for internal CI use.
+- [x] **Audit secrets and internal URLs** — Parameterized `build-images.sh`, sanitized doc paths
 - [x] **Review `.env.example`** — No real credentials or internal hostnames
 - [x] **Add LICENSE file** — Apache 2.0
-- [x] **Keep `.forgejo/` workflows in repo (coexistence model)** — `.forgejo/workflows/` stays in the public repo for internal Forgejo CI. GitHub ignores this directory. `.github/workflows/` handles public CI. Both coexist without conflict. See [Deployment Guide → CI/CD](#cicd--dual-workflow-setup) for details.
-- [x] **Add GitHub Actions CI** — `.github/workflows/pr-validate.yml` with same 3 jobs (unit-tests, opa-tests, docker-build) using `ubuntu-latest` and `actions/checkout@v4`
-- [x] **Enable branch protection on `master`** — GitHub Ruleset: require PR, require status checks (`unit-tests`, `opa-tests`, `docker-build`), no direct push
-- [x] **Add CONTRIBUTING.md** — Contributor guide with dev setup, test commands, code conventions
+- [x] **Dual CI** — `.forgejo/` (internal) + `.github/` (public) coexist
+- [x] **GitHub Actions CI** — `.github/workflows/pr-validate.yml` with 4 jobs (unit-tests, opa-tests, docker-build, security-scan)
+- [x] **Branch protection on `master`** — Require PR + status checks
+- [x] **CONTRIBUTING.md** — Contributor guide with dev setup, test commands, code conventions
+- [x] **SECURITY.md** — Vulnerability reporting policy via GitHub Security Advisories
+- [x] **GitHub Templates** — Issue templates (bug report, feature request) + PR template
+- [x] **README badges** — CI status, License, Docker, MCP
+- [x] **Quick Start script** — `scripts/quickstart.sh` for automated first-time setup
+- [x] **Getting Started guide** — `docs/getting-started.md` — tutorial for newcomers
+- [x] **MCP Tool Reference** — `docs/mcp-tools.md` — all 23 tools documented
+- [x] **Coverage threshold** — 80% minimum enforced in CI (`--cov-fail-under=80`)
+- [x] **Security scanning** — `pip-audit` + `bandit` in CI (non-blocking)
+- [x] **Load tests** — Locust-based load test for search pipeline (`tests/load/`)
 - [x] **Set repo description + topics** — Description, topics (mcp, rag, opa, gdpr, etc.)
 - [x] **Switch to public** — `gh repo edit --visibility public`
