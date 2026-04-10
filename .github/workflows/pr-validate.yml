@@ -26,6 +26,7 @@ jobs:
               ingestion/tests \
               reranker/tests \
               pb-proxy/tests \
+              worker/tests \
               -m 'not integration' \
               --tb=short -q
           "

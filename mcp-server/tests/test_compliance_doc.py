@@ -241,7 +241,7 @@ class TestGenerateAnnexIvDoc:
         assert "path" in result
         assert "markdown" not in result
         assert os.path.exists(result["path"])
-        body = open(result["path"]).read()
+        body = open(result["path"], encoding="utf-8").read()
         assert body.startswith("# EU AI Act Annex IV")
         assert result["size_bytes"] == len(body.encode("utf-8"))
 
