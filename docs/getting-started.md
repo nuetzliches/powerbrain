@@ -186,6 +186,40 @@ Arguments:
   node_id: "<node_id>"
 ```
 
+## 8. Sync a GitHub Repository
+
+Instead of ingesting documents manually, you can sync an entire GitHub repository:
+
+1. Copy the config template:
+   ```bash
+   cp ingestion/repos.yaml.example ingestion/repos.yaml
+   ```
+
+2. Add your repository:
+   ```yaml
+   repos:
+     - name: "my-docs"
+       url: "https://github.com/your-org/your-repo"
+       branch: "main"
+       collection: "pb_general"
+       project: "my-docs"
+       classification: "internal"
+       auth: "pat"
+       include: ["docs/**", "*.md"]
+   ```
+
+3. Ensure your GitHub PAT is configured:
+   ```bash
+   echo "ghp_your_token_here" > secrets/github_pat.txt
+   ```
+
+4. Trigger the sync:
+   ```bash
+   curl -X POST http://localhost:8081/sync/my-docs
+   ```
+
+The adapter syncs incrementally — only changed files are re-processed. The pb-worker automatically polls for updates every 5 minutes.
+
 ## Next Steps
 
 - **[MCP Tool Reference](mcp-tools.md)** — All 23 tools with parameters

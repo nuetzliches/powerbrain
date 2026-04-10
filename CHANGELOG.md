@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- GitHub Adapter: first source adapter for knowledge base ingestion from GitHub repositories (#39)
+  - Incremental sync via commit SHA tracking (`repo_sync_state` table)
+  - Configurable include/exclude path patterns, default binary/noise skip rules
+  - PAT + GitHub App authentication (JWT → installation token)
+  - Polling via pb-worker (configurable interval) + `POST /sync/{repo}` endpoint
+  - Full pipeline: PII scan, OPA quality gate, embedding, context layers
+  - Cascade deletion of removed files (Qdrant, PG, vault, graph)
+  - Config: `ingestion/repos.yaml` (example provided)
+  - 59 new unit tests
+
 ## [0.3.1] - 2026-04-10
 
 ### Added

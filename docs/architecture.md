@@ -91,6 +91,31 @@ Any Git server for policy and schema repositories. Configured via `FORGEJO_URL` 
 - `pb-docs` — Technical documentation
 - `pb-ingestion-config` — ETL templates
 
+### 2.8 GitHub Adapter (Source Adapter)
+
+First implementation of the source adapter framework (`ingestion/adapters/`). Syncs GitHub repository contents into the knowledge base.
+
+**Architecture:**
+```
+repos.yaml → GitAdapter → GitHubProvider (REST API)
+                ↓
+         NormalizedDocument
+                ↓
+    POST /ingest (standard pipeline: PII → OPA → embed → Qdrant)
+```
+
+**Sync flow:**
+1. pb-worker triggers `POST /sync` on ingestion service (configurable interval)
+2. Sync service loads `repo_sync_state` from PostgreSQL (last commit SHA)
+3. If first sync: fetch full tree via GitHub Trees API
+4. If incremental: compare commits, process only changed files
+5. Removed files: cascade-delete from Qdrant, PG, vault, knowledge graph
+6. Update sync state with new SHA
+
+**Auth:** PAT (Docker Secret) or GitHub App (JWT → installation token). **Config:** `ingestion/repos.yaml` with per-repo settings (branch, collection, classification, include/exclude patterns).
+
+The adapter framework is extensible — future providers (GitLab, Bitbucket) implement the same `SourceAdapter` interface.
+
 ## 3. Search Pipeline
 
 ```

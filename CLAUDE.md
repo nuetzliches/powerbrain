@@ -69,6 +69,13 @@ powerbrain/
 │   ├── pii_scanner.py     ← PII detection (Presidio)
 │   ├── pii_config.yaml    ← PII scanner config (entity types, custom recognizers)
 │   ├── retention_cleanup.py ← GDPR retention cleanup jobs
+│   ├── sync_service.py    ← Repository sync orchestration (incremental)
+│   ├── repos.yaml.example ← Repository sync configuration template
+│   ├── adapters/
+│   │   ├── base.py        ← NormalizedDocument, SourceAdapter ABC
+│   │   ├── git_adapter.py ← Git adapter (include/exclude, skip patterns)
+│   │   └── providers/
+│   │       └── github.py  ← GitHub REST API (PAT + GitHub App auth)
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── init-db/
@@ -79,7 +86,8 @@ powerbrain/
 │   ├── 014_audit_hashchain.sql ← Tamper-resistant audit log (Art. 12)
 │   ├── 015_human_oversight.sql ← Circuit breaker + approval queue (Art. 14)
 │   ├── 016_data_quality.sql    ← Quality scoring (Art. 10)
-│   └── 017_accuracy_monitoring.sql ← Drift detection (Art. 15)
+│   ├── 017_accuracy_monitoring.sql ← Drift detection (Art. 15)
+│   └── 018_repo_sync_state.sql    ← Repository sync state tracking
 ├── opa-policies/pb/
 │   ├── data.json           ← Policy data (configurable without Rego knowledge)
 │   ├── policy_data_schema.json ← JSON Schema for data.json validation
@@ -118,7 +126,8 @@ powerbrain/
 │   │   ├── accuracy_metrics.py  ← Art. 15 drift + feedback refresh
 │   │   ├── audit_retention.py   ← Art. 12 checkpoint + prune
 │   │   ├── gdpr_retention.py    ← GDPR retention cleanup
-│   │   └── pending_review_timeout.py ← Art. 14 review expiry
+│   │   ├── pending_review_timeout.py ← Art. 14 review expiry
+│   │   └── repo_sync.py        ← GitHub/Git repository sync trigger
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── scripts/
@@ -269,6 +278,24 @@ No separate git container — uses any existing Git server (Forgejo, GitHub, Git
 - `pb-docs` + project repos → Ingestion pipeline
 
 Configured via `FORGEJO_URL` / `OPAL_POLICY_REPO_URL`. The env var names use "Forgejo" for historical reasons but accept any Git server URL.
+
+### GitHub Adapter (Repository Sync)
+Syncs GitHub repository contents into the knowledge base as a data source.
+
+**Configuration:** `ingestion/repos.yaml` (see `repos.yaml.example`). Each entry: name, URL, branch, collection, project, classification, auth mode, include/exclude patterns.
+
+**Sync modes:**
+- **Polling** — pb-worker job every N minutes (configurable via `REPO_SYNC_INTERVAL_MINUTES`, default 5)
+- **Manual** — `POST /sync/{repo_name}` on ingestion service (port 8081)
+- **External webhook** — Tools like [Hookaido](https://github.com/nuetzliches/hookaido) can call the sync endpoint on push events
+
+**Auth:** PAT (via `secrets/github_pat.txt`) or GitHub App (JWT + installation token, requires `app_id`, `installation_id`, `private_key_path` in repos.yaml).
+
+**Incremental sync:** Tracks last commit SHA in `repo_sync_state` table. First sync fetches full tree, subsequent syncs use compare API (only changed files). Modified files: delete old → re-ingest new. Removed files: cascade-delete (Qdrant, PG, vault, graph).
+
+**Pipeline:** All content flows through standard ingestion: chunking → PII scan → OPA policy → quality gate (`github` source_type, threshold 0.3) → embedding → context layers (L0/L1/L2).
+
+**Default skip patterns:** Binary files, `.git/`, `node_modules/`, `vendor/`, `__pycache__/`, lock files. Additional filtering via include/exclude globs in config.
 
 ### LLM Provider Abstraction
 Embedding and Summarization use the OpenAI-compatible API (`/v1/embeddings`, `/v1/chat/completions`).
@@ -482,6 +509,7 @@ All 4 services (mcp-server, proxy, reranker, ingestion) share a common telemetry
 26. ✅ **Policy Management Tool (B-12)** — `manage_policies` MCP tool with list/read/update actions for OPA policy data sections at runtime. JSON Schema validation before writes, cache invalidation, audit logging with old+new values.
 27. ✅ **Correction Boost in Reranking (B-13)** — New `boost_corrections` parameter in `rerank_options`. Documents with `metadata.isCorrection: true` receive a configurable score boost in the heuristic post-rerank phase.
 28. ✅ **OPAL Integration (B-10)** — opal-server + opal-client as Docker Compose profile (`--profile opal`). Watches a git repo for policy changes and pushes to OPA in real-time via WebSocket. Configurable via `OPAL_POLICY_REPO_URL`.
+29. ✅ **GitHub Adapter** — First source adapter. Syncs GitHub repos into KB with incremental updates (commit SHA tracking). Configurable include/exclude patterns, PAT + GitHub App auth. Polling via pb-worker + `POST /sync/{repo}` endpoint for manual/webhook triggers. All content flows through full pipeline (PII, OPA, quality gate, embedding). Removed files cascade-delete across Qdrant, PG, vault, graph. Config: `ingestion/repos.yaml`.
 
 Details on all features: see `docs/architecture.md`
 
