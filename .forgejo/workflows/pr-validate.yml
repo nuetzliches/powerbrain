@@ -21,6 +21,7 @@ jobs:
               -r mcp-server/requirements.txt \
               -r ingestion/requirements.txt \
               -r pb-proxy/requirements.txt \
+              -r worker/requirements.txt \
               fastapi uvicorn pydantic prometheus-client pyyaml python-dotenv &&
             PYTHONPATH=.:mcp-server:ingestion:reranker:pb-proxy \
             python -m pytest \
