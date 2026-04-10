@@ -8,18 +8,9 @@ import os
 import logging
 import yaml
 
+from shared.config import read_secret as _read_secret
+
 log = logging.getLogger("pb-proxy")
-
-
-def _read_secret(env_var: str, default: str = "") -> str:
-    """Read from Docker Secret file if available, else fall back to env var."""
-    file_path = os.getenv(f"{env_var}_FILE")
-    if file_path:
-        try:
-            return open(file_path).read().strip()
-        except FileNotFoundError:
-            log.warning("Secret file %s not found, falling back to env var", file_path)
-    return os.getenv(env_var, default)
 
 
 # ── Service ──────────────────────────────────────────────────

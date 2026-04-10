@@ -28,7 +28,10 @@ jobs:
               pb-proxy/tests \
               worker/tests \
               -m 'not integration' \
-              --tb=short -q
+              --tb=short -q \
+              --cov=shared --cov=mcp-server --cov=ingestion \
+              --cov=reranker --cov=pb-proxy --cov=worker \
+              --cov-report=term-missing:skip-covered
           "
 
   opa-tests:
