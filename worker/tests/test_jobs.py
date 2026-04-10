@@ -428,6 +428,7 @@ class TestSchedulerRegistration:
             "pending_review_timeout",
             "gdpr_retention_cleanup",
             "audit_retention_cleanup",
+            "repo_sync",
         }
 
     def test_register_jobs_attaches_all(self):
@@ -441,6 +442,7 @@ class TestSchedulerRegistration:
             "pending_review_timeout",
             "gdpr_retention_cleanup",
             "audit_retention_cleanup",
+            "repo_sync",
         }
 
     async def test_run_with_logging_swallows_exceptions(self):
