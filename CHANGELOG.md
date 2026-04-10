@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-04-10
+
+### Added
+
+- README badges (CI, License, Docker, MCP) and corrected tool count (16 → 23)
+- GitHub Issue Templates (bug report, feature request) and PR template
+- SECURITY.md with vulnerability reporting policy
+- SUPPORT.md pointing to Discussions, Issues, and Docs
+- `scripts/quickstart.sh` for automated first-time setup with optional demo data seeding
+- `docs/getting-started.md` — step-by-step tutorial with authentication guide
+- `docs/mcp-tools.md` — all 23 MCP tools with parameters and access roles
+- `docker-compose.ghcr.yml` — compose override for pre-built GHCR images
+- `.github/workflows/release.yml` — automated GHCR image publishing and GitHub Releases on tag push
+- `.github/dependabot.yml` — weekly dependency updates for pip, Docker, and GitHub Actions
+- `.pre-commit-config.yaml` with ruff linter and formatter
+- Locust load test for MCP search pipeline (`tests/load/`)
+- CI security scanning: `pip-audit` (dependency vulnerabilities) + `bandit` (static analysis)
+- CI coverage threshold enforcement (`--cov-fail-under=73`)
+
+### Changed
+
+- CLAUDE.md updated with new files, CI changes, and expanded pre-public checklist
+- Quick Start in README references `quickstart.sh` and includes health verification step
+- MCP client config examples now include Bearer token authentication
+
 ## [0.3.0] - 2026-04-09
 
 ### Added
@@ -68,6 +93,7 @@ Initial public release of the Powerbrain Context Engine.
 - CI workflows for Forgejo and GitHub Actions
 - Comprehensive documentation (architecture, deployment, scalability, GDPR, ADRs)
 
+[0.3.1]: https://github.com/nuetzliches/powerbrain/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/nuetzliches/powerbrain/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nuetzliches/powerbrain/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/nuetzliches/powerbrain/releases/tag/v0.1.0
