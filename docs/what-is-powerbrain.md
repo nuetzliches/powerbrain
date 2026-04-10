@@ -23,7 +23,7 @@ Powerbrain is a self-hosted context delivery layer. It doesn't replace your AI a
 ```
 Agent → MCP → Powerbrain → Policy Check → Context Delivery
                               ↕
-                    Qdrant · PostgreSQL · OPA · Ollama
+                    Qdrant · PostgreSQL · OPA · Ollama/vLLM/TEI
 ```
 
 ## Core Features
@@ -54,7 +54,7 @@ Agents can request summaries instead of raw chunks. OPA policies control this pe
 - **Enforced** — Confidential data is only returned as summaries (raw chunks stripped)
 - **Denied** — Viewers don't get summarization access
 
-Powered by Ollama with configurable models. Falls back to raw chunks if summarization fails.
+Powered by any OpenAI-compatible LLM (Ollama, vLLM, or external) with configurable models. Falls back to raw chunks if summarization fails.
 
 ### 🔌 MCP-Native Interface
 
@@ -77,7 +77,7 @@ Works with any MCP-compatible agent — Claude, OpenCode, or custom implementati
 
 ### 🏠 Self-Hosted & GDPR-Native
 
-Everything runs on your infrastructure as Docker containers. No external API calls for embeddings (Ollama), search (Qdrant), policies (OPA), or summarization (Ollama). Optional TLS via Caddy reverse proxy profile.
+Everything runs on your infrastructure as Docker containers. No external API calls required for embeddings, search (Qdrant), policies (OPA), or summarization — all can run locally via Ollama, vLLM, or TEI. Optional TLS via Caddy reverse proxy profile.
 
 ### 🔀 AI Provider Proxy
 
@@ -109,7 +109,7 @@ Agent / Skill
 └─────────────────────────────────────────────────┘
     │           │           │           │
     ▼           ▼           ▼           ▼
- Qdrant    PostgreSQL     OPA       Ollama
+ Qdrant    PostgreSQL     OPA       Ollama/vLLM/TEI
  (vectors)  (data+graph   (policies) (embeddings
              +vault+audit)            +summarization)
 ```

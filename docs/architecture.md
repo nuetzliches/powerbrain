@@ -4,8 +4,8 @@
 
 - **Separation of Concerns**: Each component has exactly one responsibility
 - **MCP-First**: The MCP server is the sole access point for agents
-- **GitOps for Rules**: Business rules as Rego code in Forgejo, versioned and reviewable
-- **Local Embeddings**: Ollama in its own container, no data leaves the infrastructure
+- **GitOps for Rules**: Business rules as Rego code in any Git repository, versioned and reviewable
+- **Local Embeddings**: Any OpenAI-compatible provider (Ollama, vLLM, TEI), no data leaves the infrastructure
 - **Graceful Degradation**: Every optional service (reranker) can fail without blocking the system
 
 ## 2. Components
@@ -36,7 +36,7 @@ Three policy packages:
 - `pb.rules` — Business rules (pricing, workflow, compliance)
 - `pb.privacy` — GDPR: purpose binding, PII handling, retention periods, right to erasure
 
-Policies are polled as a bundle from the Forgejo repo `pb-policies`.
+Policies are polled as a bundle from a Git repository (e.g., `pb-policies`). Any Git server works (Forgejo, GitHub, GitLab, etc.).
 
 ### 2.4 Knowledge Graph (Apache AGE)
 
@@ -70,13 +70,22 @@ The reranker backend is configurable via `RERANKER_BACKEND` (default: `powerbrai
 
 **GDPR note:** External backends (`cohere`, remote `tei`) send document content outside your infrastructure. Ensure compliance with data processing agreements. See `docs/gdpr-external-ai-services.md`.
 
-### 2.6 Ollama
+### 2.6 Embedding & LLM Provider
 
-Hosts the embedding model `nomic-embed-text` (768d) locally. GPU support optional. For higher accuracy: `mxbai-embed-large` (1024d) — requires adjustment of the Qdrant collection dimension.
+Any OpenAI-compatible endpoint for embeddings and summarization. Configured via `EMBEDDING_PROVIDER_URL` and `LLM_PROVIDER_URL`. Options:
 
-### 2.7 Forgejo (external)
+| Provider | Use Case | Profile |
+|---|---|---|
+| Ollama (default) | Local CPU inference | `--profile local-llm` |
+| vLLM | GPU-accelerated, production | `--profile gpu` |
+| HuggingFace TEI | GPU embeddings | `--profile gpu` |
+| Any OpenAI-compatible | External or custom | Set provider URL |
 
-Existing instance in the network. Repositories:
+Default model: `nomic-embed-text` (768d). For higher accuracy: `mxbai-embed-large` (1024d) — requires adjustment of the Qdrant collection dimension.
+
+### 2.7 Git Server (external, optional)
+
+Any Git server for policy and schema repositories. Configured via `FORGEJO_URL` / `OPAL_POLICY_REPO_URL`. Supports Forgejo, GitHub, GitLab, Gitea, Bitbucket, etc. Repositories:
 - `pb-policies` — OPA Rego files
 - `pb-schemas` — JSON schemas for datasets
 - `pb-docs` — Technical documentation
@@ -85,7 +94,7 @@ Existing instance in the network. Repositories:
 ## 3. Search Pipeline
 
 ```
-Query → Embedding (Ollama) → Qdrant (top_k × 5)
+Query → Embedding (configurable provider) → Qdrant (top_k × 5)
   → OPA Policy Filter → Reranker (configurable backend) → Top-K Results
 ```
 
@@ -252,7 +261,7 @@ Goal: knowledge state reconstructable at any point in time. Important for compli
 ### 7.2 Snapshot Service (`ingestion/snapshot_service.py`)
 
 Functions:
-- `create_snapshot(name, description)` — Creates Qdrant snapshots for all collections via the native API (`POST /collections/{name}/snapshots`), stores PG row counts and the current Forgejo policy commit hash in `knowledge_snapshots`
+- `create_snapshot(name, description)` — Creates Qdrant snapshots for all collections via the native API (`POST /collections/{name}/snapshots`), stores PG row counts and the current Git policy commit hash in `knowledge_snapshots`
 - `list_snapshots(limit)` — All snapshots with metadata from PostgreSQL
 - `cleanup_old_snapshots(keep_last_n=10)` — Deletes Qdrant snapshots + PG entries beyond the keep limit
 

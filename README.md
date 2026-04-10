@@ -35,7 +35,7 @@ Agent / Skill
 └─────────────────────────────────────────────────┘
     │           │           │           │
     ▼           ▼           ▼           ▼
- Qdrant    PostgreSQL     OPA       Ollama
+ Qdrant    PostgreSQL     OPA       Ollama/vLLM/TEI
  (vectors)  (data+vault)  (policies) (embeddings+LLM)
                 │
                 ▼
@@ -53,7 +53,7 @@ Agent / Skill
 
 🎯 **Relevance Pipeline** — 3-stage search: Qdrant oversampling (5x candidates) → OPA policy filtering → Cross-Encoder reranking. Graceful degradation: if the reranker is down, results fall back to vector ordering.
 
-📝 **Context Summarization** — Agents can request summaries instead of raw chunks. OPA policies can enforce summarization for sensitive data (confidential = summary only, no raw text), control detail levels, or deny summarization entirely. Powered by Ollama.
+📝 **Context Summarization** — Agents can request summaries instead of raw chunks. OPA policies can enforce summarization for sensitive data (confidential = summary only, no raw text), control detail levels, or deny summarization entirely. Powered by any OpenAI-compatible LLM (Ollama, vLLM, or external).
 
 🔌 **MCP-Native Interface** — 23 tools accessible through the Model Context Protocol. Works with any MCP-compatible agent (Claude, OpenCode, custom). One endpoint, one protocol.
 
@@ -142,12 +142,12 @@ curl http://localhost:8090/v1/chat/completions \
 
 ```
 1. Agent calls search_knowledge("GDPR deletion policy", summarize=true)
-2. Powerbrain embeds the query via Ollama (nomic-embed-text)
+2. Powerbrain embeds the query (nomic-embed-text via configurable provider)
 3. Qdrant returns 50 candidates (10 × 5 oversampling)
 4. OPA filters by agent role + data classification → 30 remain
 5. Cross-Encoder reranks by query-document relevance → top 10
 6. OPA summarization policy: allowed? required? detail level?
-7. Ollama summarizes the chunks (if applicable)
+7. LLM summarizes the chunks (if applicable)
 8. Response: results + summary + policy transparency
 ```
 

@@ -20,7 +20,7 @@ cd powerbrain
 
 This will:
 - Create `.env` and secrets if missing
-- Start all core services (MCP server, Qdrant, PostgreSQL, OPA, Ollama, Reranker)
+- Start all core services (MCP server, Qdrant, PostgreSQL, OPA, Ollama for local embeddings/LLM, Reranker)
 - Pull the embedding model
 - Create Qdrant vector collections
 - Verify everything is healthy

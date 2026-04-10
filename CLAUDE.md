@@ -153,11 +153,11 @@ powerbrain/
 | qdrant        | 6333  | Qdrant                             | Vector database                  |
 | postgres      | 5432  | PostgreSQL 16 + Apache AGE         | Structured data + graph + audit  |
 | opa           | 8181  | Open Policy Agent                  | Policy engine + access control   |
-| ollama        | 11434 | Ollama                             | Local embeddings + summarization |
+| ollama        | 11434 | Ollama (optional, `local-llm`)     | Local embeddings + summarization |
 | vllm          | 8000  | vLLM (optional, `gpu` profile)     | Production LLM serving           |
 | tei           | 8010  | HF TEI (optional, `gpu` profile)   | Production embedding serving     |
 | caddy         | 80/443| Caddy 2 (optional, `tls` profile)  | TLS reverse proxy                |
-| forgejo       | 3000  | Forgejo (external, not in Compose) | Git repos, policies, schemas     |
+| git server    | —     | Any Git server (external, optional)| Git repos, policies, schemas     |
 | prometheus    | 9090  | Prometheus                         | Metrics collection               |
 | grafana       | 3001  | Grafana                            | Dashboards + visualization       |
 | tempo         | 4317  | Grafana Tempo                      | Distributed tracing              |
@@ -262,11 +262,13 @@ Sensitive values can be provided as Docker Secrets files in `./secrets/*.txt`:
 Services read from `/run/secrets/<name>` with env var fallback for backward compatibility.
 The `_read_secret()` helper checks `<ENV_VAR>_FILE` first, then falls back to `<ENV_VAR>`.
 
-### Forgejo Integration
-No separate git container — uses existing Forgejo:
-- `pb-policies` repo → OPA bundle polling
+### Git Server Integration
+No separate git container — uses any existing Git server (Forgejo, GitHub, GitLab, Gitea, etc.):
+- `pb-policies` repo → OPA bundle polling (via OPAL or direct)
 - `pb-schemas` repo → JSON schema validation
 - `pb-docs` + project repos → Ingestion pipeline
+
+Configured via `FORGEJO_URL` / `OPAL_POLICY_REPO_URL`. The env var names use "Forgejo" for historical reasons but accept any Git server URL.
 
 ### LLM Provider Abstraction
 Embedding and Summarization use the OpenAI-compatible API (`/v1/embeddings`, `/v1/chat/completions`).
@@ -332,8 +334,8 @@ Configuration: `pb-proxy/litellm_config.yaml` for aliases + `provider_keys`, `pb
 
 ### Prerequisites
 - Docker + Docker Compose
-- Access to existing Forgejo server (optional)
-- Forgejo API token with `read:repository` permission (optional)
+- Access to a Git server for policy repos (optional, any: Forgejo, GitHub, GitLab, etc.)
+- Git server API token with `read:repository` permission (optional)
 
 ### First Start
 ```bash
@@ -342,7 +344,7 @@ Configuration: `pb-proxy/litellm_config.yaml` for aliases + `provider_keys`, `pb
 
 # Or manually:
 cp .env.example .env
-# Edit .env: PG_PASSWORD (and optionally FORGEJO_URL, FORGEJO_TOKEN)
+# Edit .env: PG_PASSWORD (and optionally FORGEJO_URL for Git server integration)
 
 docker compose --profile local-llm --profile local-reranker up -d
 
@@ -511,7 +513,7 @@ All project-specific identifiers use the `pb` (Powerbrain) prefix consistently:
 | Prometheus metrics | `pb_<service>_` | `pb_mcp_requests_total`, `pb_reranker_duration_seconds` |
 | Qdrant collections | `pb_<type>` | `pb_general`, `pb_code`, `pb_rules` |
 | Logger names | `pb-<component>` | `pb-mcp`, `pb-ingestion`, `pb-graph` |
-| Forgejo org/repos | `pb-org/pb-<name>` | `pb-org/pb-policies`, `pb-org/pb-schemas` |
+| Git repos | `pb-<name>` | `pb-policies`, `pb-schemas` (any Git server) |
 
 ### Plans and Specs
 
@@ -531,7 +533,7 @@ Implementation plans and design specs are stored centrally:
 | Summarization | qwen2.5:3b (Ollama) | llama3.2:3b | Small, fast, good instruction following |
 | Policy Engine | OPA (Rego) | Cerbos, GoRules | CNCF standard, battle-tested |
 | PII Scanner | Presidio | spaCy NER | Broad entity detection + extensible |
-| Git Server | Forgejo (external) | Gitea | Already available, API-compatible |
+| Git Server | Any (Forgejo default) | — | Supports Forgejo, GitHub, GitLab, Gitea, Bitbucket |
 | Relational DB | PostgreSQL 16 | MySQL, SQLite | JSONB, GIN index, extensions |
 | PII Storage | Sealed Vault (Dual) | Destructive masking, full encryption | Reversible, searchable, GDPR-compliant |
 | TLS | Caddy (optional profile) | Nginx, Traefik | Zero-config HTTPS, simple Caddyfile |
