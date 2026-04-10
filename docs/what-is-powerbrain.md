@@ -58,22 +58,20 @@ Powered by any OpenAI-compatible LLM (Ollama, vLLM, or external) with configurab
 
 ### 🔌 MCP-Native Interface
 
-10 tools accessible through a single MCP endpoint:
+23 tools accessible through a single MCP endpoint:
 
-| Tool | Purpose |
-|------|---------|
-| `search_knowledge` | Semantic search with optional summarization |
-| `get_code_context` | Code-specific search with reranking |
-| `query_data` | Structured PostgreSQL queries |
-| `graph_query` | Knowledge graph traversal (Apache AGE) |
-| `graph_mutate` | Graph modifications (developer/admin only) |
-| `check_policy` | OPA policy evaluation |
-| `get_rules` | Business rules for a context |
-| `ingest_data` | Data ingestion |
-| `get_classification` | Data classification lookup |
-| `list_datasets` | Available datasets |
+| Category | Tools |
+|----------|-------|
+| **Search & Retrieval** | `search_knowledge`, `get_code_context`, `get_document` (progressive loading via L0/L1/L2 context layers) |
+| **Structured Data** | `query_data`, `list_datasets`, `get_classification` |
+| **Data Management** | `ingest_data`, `delete_documents` |
+| **Knowledge Graph** | `graph_query` (traverse, find paths), `graph_mutate` (developer/admin) |
+| **Policy & Rules** | `check_policy`, `get_rules`, `manage_policies` (runtime OPA config, admin) |
+| **Evaluation** | `submit_feedback` (1-5 star ratings), `get_eval_stats` (quality metrics) |
+| **Snapshots** | `create_snapshot`, `list_snapshots` |
+| **EU AI Act** | `generate_compliance_doc` (Annex IV), `verify_audit_integrity` (Art. 12), `export_audit_log`, `get_system_info` (Art. 13 transparency), `review_pending` + `get_review_status` (Art. 14 human oversight) |
 
-Works with any MCP-compatible agent — Claude, OpenCode, or custom implementations.
+Works with any MCP-compatible agent — Claude, Claude Code, OpenCode, or custom implementations. See the full [MCP Tool Reference](mcp-tools.md) for parameters and access roles.
 
 ### 🏠 Self-Hosted & GDPR-Native
 
@@ -89,6 +87,20 @@ Two access patterns:
 
 Activate with `docker compose --profile proxy up`. OPA policies control which tools are mandatory, which providers are allowed, and iteration limits.
 
+### ⚖️ EU AI Act Compliance Toolkit
+
+For deployers operating high-risk AI systems, Powerbrain ships executable compliance building blocks:
+
+- **Art. 9** — Risk register with live indicators (`GET /health` returns risk status)
+- **Art. 10** — Ingestion quality gate with composite scoring and per-source thresholds
+- **Art. 11/Annex IV** — Auto-generated technical documentation from live system state
+- **Art. 12** — Tamper-evident SHA-256 audit hash chain with verify/export tools
+- **Art. 13** — Transparency endpoint reporting models, policies, PII config, audit integrity
+- **Art. 14** — Circuit breaker kill-switch + approval queue for sensitive operations
+- **Art. 15** — Embedding drift detection, windowed feedback metrics, Prometheus alerts
+
+Background maintenance via `pb-worker` (APScheduler): accuracy metrics refresh, audit retention, GDPR cleanup, review timeouts.
+
 ## Architecture Overview
 
 ```
@@ -97,24 +109,31 @@ Agent / Skill
     ▼
 ┌─────────────────────────────────────────────────┐
 │  MCP Server (Python, FastAPI)                   │
-│  ├─ Authentication (API key verification)       │
+│  ├─ Authentication (API key + OAuth)             │
 │  ├─ Rate Limiting (per-role token bucket)       │
 │  ├─ OPA Policy Check (every request)            │
+│  ├─ Circuit Breaker + Approval Queue (Art. 14)  │
 │  ├─ Qdrant Vector Search (oversampled)          │
 │  ├─ Cross-Encoder Reranking (top-k)             │
 │  ├─ Context Summarization (OPA-controlled)      │
-│  ├─ Sealed Vault (PII resolution)               │
+│  ├─ Sealed Vault (PII pseudonymization)         │
 │  ├─ Knowledge Graph (Apache AGE/Cypher)         │
-│  └─ Audit Log (GDPR-compliant)                  │
+│  └─ Tamper-Evident Audit Log (Art. 12)          │
 └─────────────────────────────────────────────────┘
     │           │           │           │
     ▼           ▼           ▼           ▼
  Qdrant    PostgreSQL     OPA       Ollama/vLLM/TEI
  (vectors)  (data+graph   (policies) (embeddings
              +vault+audit)            +summarization)
+                │
+                ▼
+         ┌──────────────┐
+         │  pb-worker   │  Accuracy metrics, drift
+         │ (APScheduler)│  detection, audit retention
+         └──────────────┘
 ```
 
-**Monitoring:** Prometheus metrics, Grafana dashboards, Grafana Tempo distributed tracing.
+**Monitoring:** Prometheus metrics, Grafana dashboards, Grafana Tempo distributed tracing (W3C traceparent propagation).
 
 ## How is This Different?
 
@@ -129,4 +148,8 @@ Agent / Skill
 
 ## Getting Started
 
-See the [README](../README.md) for quick start instructions and [Deployment Guide](deployment.md) for production setup. The full technical reference is in [CLAUDE.md](../CLAUDE.md).
+- **[Quick Start](../README.md#-quick-start)** — `./scripts/quickstart.sh` for automated setup
+- **[Getting Started Guide](getting-started.md)** — Step-by-step tutorial: auth, ingest, search, policies
+- **[MCP Tool Reference](mcp-tools.md)** — All 23 tools with parameters and access roles
+- **[Deployment Guide](deployment.md)** — Production setup, TLS, Docker Secrets
+- **[Architecture](architecture.md)** — Technical deep-dive

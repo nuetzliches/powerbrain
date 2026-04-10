@@ -254,7 +254,7 @@ Art. 17 deletion: delete vault mapping → pseudonyms become irreversible.
 Sensitive values can be provided as Docker Secrets files in `./secrets/*.txt`:
 - `pg_password.txt` — PostgreSQL password
 - `vault_hmac_secret.txt` — Vault HMAC signing key
-- `forgejo_token.txt` — Forgejo API token
+- `forgejo_token.txt` — Git server API token (any: Forgejo, GitHub, GitLab, etc.)
 - `github_pat.txt` — GitHub PAT (AI Proxy provider key)
 - `anthropic_api_key.txt` — Anthropic API key (AI Proxy provider key)
 - `mcp_auth_token.txt` — Token for pb-proxy → mcp-server auth

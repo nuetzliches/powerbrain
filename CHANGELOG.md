@@ -90,7 +90,7 @@ Initial public release of the Powerbrain Context Engine.
 - Performance caches (embedding cache, OPA result cache, batch embedding)
 - Evaluation and feedback loop
 - Monitoring stack (Prometheus, Grafana, Tempo)
-- CI workflows for Forgejo and GitHub Actions
+- CI workflows (GitHub Actions + Forgejo for internal use)
 - Comprehensive documentation (architecture, deployment, scalability, GDPR, ADRs)
 
 [0.3.1]: https://github.com/nuetzliches/powerbrain/compare/v0.3.0...v0.3.1
