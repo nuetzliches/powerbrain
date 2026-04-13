@@ -70,12 +70,24 @@ powerbrain/
 │   ├── pii_config.yaml    ← PII scanner config (entity types, custom recognizers)
 │   ├── retention_cleanup.py ← GDPR retention cleanup jobs
 │   ├── sync_service.py    ← Repository sync orchestration (incremental)
-│   ├── repos.yaml.example ← Repository sync configuration template
+│   ├── repos.yaml.example      ← Repository sync configuration template
+│   ├── office365.yaml.example  ← Office 365 sync configuration template
 │   ├── adapters/
 │   │   ├── base.py        ← NormalizedDocument, SourceAdapter ABC
 │   │   ├── git_adapter.py ← Git adapter (include/exclude, skip patterns)
-│   │   └── providers/
-│   │       └── github.py  ← GitHub REST API (PAT + GitHub App auth)
+│   │   ├── providers/
+│   │   │   └── github.py  ← GitHub REST API (PAT + GitHub App auth)
+│   │   └── office365/     ← Office 365 adapter (separate package)
+│   │       ├── adapter.py       ← Office365Adapter(SourceAdapter)
+│   │       ├── graph_client.py  ← Auth, $batch, RU-tracking, retry
+│   │       ├── content.py       ← markitdown + fallback extraction
+│   │       ├── requirements.txt ← msal, markitdown, python-docx, etc.
+│   │       ├── providers/
+│   │       │   ├── sharepoint.py ← SharePoint/OneDrive (Delta Query)
+│   │       │   ├── outlook.py    ← Outlook Mail (Delta Query)
+│   │       │   ├── teams.py      ← Teams Messages (Delta Query + dedup)
+│   │       │   └── onenote.py    ← OneNote (Delegated Auth, no delta)
+│   │       └── tests/
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── init-db/
@@ -87,7 +99,8 @@ powerbrain/
 │   ├── 015_human_oversight.sql ← Circuit breaker + approval queue (Art. 14)
 │   ├── 016_data_quality.sql    ← Quality scoring (Art. 10)
 │   ├── 017_accuracy_monitoring.sql ← Drift detection (Art. 15)
-│   └── 018_repo_sync_state.sql    ← Repository sync state tracking
+│   ├── 018_repo_sync_state.sql    ← Repository sync state tracking
+│   └── 019_sync_state_delta.sql   ← Delta link support for Office 365
 ├── opa-policies/pb/
 │   ├── data.json           ← Policy data (configurable without Rego knowledge)
 │   ├── policy_data_schema.json ← JSON Schema for data.json validation
@@ -510,6 +523,8 @@ All 4 services (mcp-server, proxy, reranker, ingestion) share a common telemetry
 27. ✅ **Correction Boost in Reranking (B-13)** — New `boost_corrections` parameter in `rerank_options`. Documents with `metadata.isCorrection: true` receive a configurable score boost in the heuristic post-rerank phase.
 28. ✅ **OPAL Integration (B-10)** — opal-server + opal-client as Docker Compose profile (`--profile opal`). Watches a git repo for policy changes and pushes to OPA in real-time via WebSocket. Configurable via `OPAL_POLICY_REPO_URL`.
 29. ✅ **GitHub Adapter** — First source adapter. Syncs GitHub repos into KB with incremental updates (commit SHA tracking). Configurable include/exclude patterns, PAT + GitHub App auth. Polling via pb-worker + `POST /sync/{repo}` endpoint for manual/webhook triggers. All content flows through full pipeline (PII, OPA, quality gate, embedding). Removed files cascade-delete across Qdrant, PG, vault, graph. Config: `ingestion/repos.yaml`.
+
+30. ✅ **Office 365 Adapter** — Second source adapter. Syncs SharePoint, OneDrive, Outlook Mail, Teams Messages, and OneNote into KB via Microsoft Graph API. Delta Queries for incremental sync (except OneNote: timestamp-based). OAuth2 Client Credentials (app-only) + Delegated Auth (OneNote, post-March-2025). Content extraction via Microsoft `markitdown`. Site-level classification in YAML. Teams-SharePoint deduplication (file attachments as refs only). Resource Unit budget tracking + `$batch` API. Config: `ingestion/office365.yaml`.
 
 Details on all features: see `docs/architecture.md`
 

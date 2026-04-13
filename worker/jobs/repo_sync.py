@@ -1,7 +1,10 @@
-"""Repository sync job — triggers sync for all configured repos.
+"""Repository sync job — triggers sync for all configured sources.
 
 Calls the ingestion service HTTP endpoint rather than importing
 sync logic directly, keeping the worker lightweight.
+
+Covers both Git repositories (repos.yaml) and Office 365 sources
+(office365.yaml) via the unified /sync endpoint.
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ async def run(ctx: WorkerContext) -> dict:
     try:
         resp = await ctx.http_client.post(
             f"{INGESTION_URL}/sync",
-            timeout=300.0,
+            timeout=600.0,  # 10min — Office 365 syncs can be slower than Git
         )
         resp.raise_for_status()
         result = resp.json()

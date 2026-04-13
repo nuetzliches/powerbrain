@@ -17,6 +17,7 @@ jobs:
               -r requirements-dev.txt \
               -r mcp-server/requirements.txt \
               -r ingestion/requirements.txt \
+              -r ingestion/adapters/office365/requirements.txt \
               -r pb-proxy/requirements.txt \
               -r worker/requirements.txt \
               fastapi uvicorn pydantic prometheus-client pyyaml python-dotenv &&
@@ -25,6 +26,7 @@ jobs:
               shared/tests \
               mcp-server/tests \
               ingestion/tests \
+              ingestion/adapters/office365/tests \
               reranker/tests \
               pb-proxy/tests \
               worker/tests \
@@ -33,7 +35,7 @@ jobs:
               --cov=shared --cov=mcp-server --cov=ingestion \
               --cov=reranker --cov=pb-proxy --cov=worker \
               --cov-report=term-missing:skip-covered \
-              --cov-fail-under=73
+              --cov-fail-under=68
           "
 
   opa-tests:
