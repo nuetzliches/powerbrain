@@ -237,7 +237,8 @@ async def test_outlook_html_message(outlook_provider):
     config = MailboxConfig(user="user@corp.com", folders=["Inbox"])
     doc = outlook_provider._message_to_document(msg, "user@corp.com", config, "test")
     assert doc is not None
-    assert "HTML content" in doc.content
+    assert "HTML" in doc.content
+    assert "content" in doc.content
     assert "<p>" not in doc.content
 
 

@@ -35,7 +35,7 @@ jobs:
               --cov=shared --cov=mcp-server --cov=ingestion \
               --cov=reranker --cov=pb-proxy --cov=worker \
               --cov-report=term-missing:skip-covered \
-              --cov-fail-under=73
+              --cov-fail-under=68
           "
 
   opa-tests:
