@@ -100,6 +100,49 @@ Classification is assigned **per site / mailbox / team / notebook** in YAML. All
 - It's auditable (admin sees what's classified where)
 - It avoids expensive per-document permission queries
 
+## Quick Start
+
+```bash
+# 1. Azure AD: Register app, grant permissions, admin-consent
+#    Note your tenant_id and client_id
+
+# 2. Store the client secret as Docker Secret
+echo "your_client_secret" > secrets/azure_client_secret.txt
+
+# 3. Create the config file
+cp ingestion/office365.yaml.example ingestion/office365.yaml
+# Edit office365.yaml: set tenant_id, client_id, sites, classification, etc.
+
+# 4. Run the DB migration (adds delta_links column)
+docker exec pb-postgres psql -U pb_admin -d powerbrain \
+  -f /docker-entrypoint-initdb.d/019_sync_state_delta.sql
+
+# 5. Rebuild the ingestion container (installs Office 365 dependencies)
+docker compose build ingestion
+docker compose up -d ingestion
+
+# 6. Trigger a manual sync to verify
+curl -X POST http://localhost:8081/sync
+# Response includes both Git and Office 365 sources
+
+# 7. The worker job syncs automatically every N minutes (default: 5)
+#    Check logs:
+docker logs pb-worker --tail 20
+```
+
+### Verify Data Is Indexed
+
+```bash
+# Search for content from Office 365
+curl -s http://localhost:8080/tools/search_knowledge \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "your search term", "source_type": "office365"}'
+```
+
+### Manual Sync for a Single Source
+
+The `/sync` endpoint syncs all sources. To sync only Office 365 sources, trigger via the unified endpoint and check the response for the source name.
+
 ## How It Works
 
 ### Sync Flow
@@ -180,3 +223,44 @@ For tenants with millions of documents:
 ### Teams Rate Limits
 
 Teams API has stricter rate limits than SharePoint. If you see frequent 429 errors, increase the `poll_interval_minutes` for Teams sources.
+
+### Supported File Formats
+
+| Format | Extraction Method | Notes |
+|---|---|---|
+| DOCX, DOC | markitdown / python-docx | Paragraphs + tables |
+| XLSX, XLS | markitdown / openpyxl | Sheet-wise, tables as Markdown |
+| PPTX, PPT | markitdown / python-pptx | Slide-wise text |
+| PDF | markitdown | Text extraction |
+| MSG, EML | markitdown | Subject + body + metadata |
+| MD, TXT, CSV, JSON, YAML | Direct UTF-8 decode | No conversion needed |
+| Python, JS, TS, Go, etc. | Direct UTF-8 decode | Code files |
+| HTML | BeautifulSoup / regex | Script/style stripped |
+| PNG, ZIP, EXE, etc. | Skipped | Binary files ignored |
+
+### Configuration Reference
+
+| Field | Level | Default | Description |
+|---|---|---|---|
+| `name` | source | (required) | Unique source identifier |
+| `tenant_id` | source | (required) | Azure AD tenant ID |
+| `client_id` | source | (required) | App registration client ID |
+| `project` | source | source name | Project ID for OPA filtering |
+| `collection` | source | `pb_general` | Qdrant collection |
+| `poll_interval_minutes` | source/default | `15` | Sync frequency |
+| `max_file_size_mb` | source/default | `50` | Skip files larger than this |
+| `ru_budget_per_minute` | source | `1250` | SharePoint Resource Unit budget |
+| `sites[].url` | site | (required) | SharePoint site URL |
+| `sites[].classification` | site | `internal` | Data classification level |
+| `sites[].include` | site | all files | Glob patterns (supports `**`) |
+| `sites[].exclude` | site | none | Glob patterns to skip |
+| `mailboxes[].user` | mailbox | (required) | UPN or email address |
+| `mailboxes[].folders` | mailbox | (required) | Mail folder names |
+| `mailboxes[].classification` | mailbox | `internal` | Data classification level |
+| `mailboxes[].max_age_months` | mailbox | `12` | Only sync recent mail |
+| `teams[].name` | team | (required) | Team display name |
+| `teams[].channels` | team | (required) | Channel names or `["*"]` |
+| `teams[].classification` | team | `internal` | Data classification level |
+| `onenote[].notebook` | notebook | (required) | Notebook display name |
+| `onenote[].site` | notebook | none | SharePoint site (for site-scoped notebooks) |
+| `onenote[].classification` | notebook | `internal` | Data classification level |
