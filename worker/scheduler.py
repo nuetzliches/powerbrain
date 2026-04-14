@@ -31,6 +31,7 @@ from worker.jobs import (
     audit_retention,
     gdpr_retention,
     pending_review_timeout,
+    repo_sync,
 )
 
 logging.basicConfig(
@@ -65,6 +66,14 @@ JOB_SPECS: list[dict] = [
         "id":      "audit_retention_cleanup",
         "func":    audit_retention.run,
         "trigger": CronTrigger(hour=3, minute=0),
+    },
+    {
+        "id":      "repo_sync",
+        "func":    repo_sync.run,
+        "trigger": IntervalTrigger(
+            minutes=int(os.getenv("REPO_SYNC_INTERVAL_MINUTES", "5")),
+            jitter=30,
+        ),
     },
 ]
 

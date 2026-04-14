@@ -1,0 +1,31 @@
+# ============================================================
+#  Powerbrain — Pre-built images from GHCR
+#
+#  Use this as an override to skip local Docker builds:
+#
+#    docker compose -f docker-compose.yml -f docker-compose.ghcr.yml \
+#      --profile local-llm --profile local-reranker up -d
+#
+#  Set POWERBRAIN_VERSION to pin a specific release (default: latest).
+# ============================================================
+
+services:
+  reranker:
+    image: ghcr.io/nuetzliches/powerbrain-reranker:${POWERBRAIN_VERSION:-latest}
+    build: !reset null
+
+  mcp-server:
+    image: ghcr.io/nuetzliches/powerbrain-mcp-server:${POWERBRAIN_VERSION:-latest}
+    build: !reset null
+
+  ingestion:
+    image: ghcr.io/nuetzliches/powerbrain-ingestion:${POWERBRAIN_VERSION:-latest}
+    build: !reset null
+
+  pb-proxy:
+    image: ghcr.io/nuetzliches/powerbrain-proxy:${POWERBRAIN_VERSION:-latest}
+    build: !reset null
+
+  pb-worker:
+    image: ghcr.io/nuetzliches/powerbrain-worker:${POWERBRAIN_VERSION:-latest}
+    build: !reset null

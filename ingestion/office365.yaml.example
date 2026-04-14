@@ -1,0 +1,88 @@
+# ============================================================
+#  Powerbrain — Office 365 Sync Configuration
+#  Copy to office365.yaml and adjust: cp office365.yaml.example office365.yaml
+#
+#  Each source defines a Microsoft 365 tenant with data sources to sync.
+#  All content flows through the full pipeline (PII scan, OPA, embedding).
+#
+#  Authentication:
+#  - App registration in Azure AD with appropriate Graph API permissions
+#  - Client secret via Docker Secret (secrets/azure_client_secret.txt)
+#  - OneNote requires delegated auth (refresh token via Docker Secret)
+#
+#  Required Azure AD Application Permissions:
+#  - Sites.Read.All (SharePoint sites & document libraries)
+#  - Files.Read.All (OneDrive / SharePoint files)
+#  - Mail.Read (Outlook mailboxes — application permission)
+#  - ChannelMessage.Read.All (Teams channel messages)
+#  - Team.ReadBasic.All (enumerate teams)
+#  - Group.Read.All (enumerate Microsoft 365 groups)
+#
+#  For OneNote (delegated auth only since March 2025):
+#  - Notes.Read.All (delegated, requires service account)
+#  - offline_access (for refresh token)
+# ============================================================
+
+defaults:
+  poll_interval_minutes: 15
+  max_file_size_mb: 50
+  collection: "pb_general"
+
+sources:
+  # Example: SharePoint document libraries
+  # - name: "corporate-docs"
+  #   tenant_id: "your-tenant-id"
+  #   client_id: "your-app-client-id"
+  #   # client_secret via Docker Secret: secrets/azure_client_secret.txt
+  #   project: "corporate"
+  #   sites:
+  #     - url: "https://corp.sharepoint.com/sites/legal"
+  #       classification: "confidential"
+  #       include: ["Shared Documents/**/*.docx", "Shared Documents/**/*.pdf"]
+  #     - url: "https://corp.sharepoint.com/sites/wiki"
+  #       classification: "internal"
+  #   onenote:
+  #     - notebook: "Team Wiki"
+  #       site: "https://corp.sharepoint.com/sites/wiki"
+  #       classification: "internal"
+  #   poll_interval_minutes: 30
+
+  # Example: Outlook mailboxes
+  # - name: "support-mail"
+  #   tenant_id: "your-tenant-id"
+  #   client_id: "your-app-client-id"
+  #   project: "support"
+  #   mailboxes:
+  #     - user: "support@corp.com"
+  #       folders: ["Inbox", "Customer Requests"]
+  #       classification: "confidential"
+  #       max_age_months: 12
+  #     - user: "info@corp.com"
+  #       folders: ["Inbox"]
+  #       classification: "internal"
+  #   poll_interval_minutes: 60
+
+  # Example: Teams channels
+  # - name: "team-discussions"
+  #   tenant_id: "your-tenant-id"
+  #   client_id: "your-app-client-id"
+  #   project: "teams"
+  #   teams:
+  #     - name: "Engineering"
+  #       channels: ["General", "Architecture"]
+  #       classification: "internal"
+  #     - name: "Legal"
+  #       channels: ["*"]        # All channels
+  #       classification: "confidential"
+  #   poll_interval_minutes: 30
+
+  # Example: Multi-tenant (partner portal on different tenant)
+  # - name: "partner-portal"
+  #   tenant_id: "partner-tenant-id"
+  #   client_id: "partner-app-client-id"
+  #   # Different Docker Secret: secrets/azure_client_secret_partner.txt
+  #   project: "partners"
+  #   collection: "pb_general"
+  #   sites:
+  #     - url: "https://partner.sharepoint.com/sites/shared"
+  #       classification: "public"

@@ -62,7 +62,12 @@
         "min_quality_score": {
           "default":   0.6,
           "code":      0.4,
-          "contracts": 0.8
+          "contracts": 0.8,
+          "github":    0.3,
+          "office365": 0.5,
+          "email":     0.5,
+          "teams":     0.4,
+          "onenote":   0.4
         },
         "duplicate_threshold": 0.95
       },

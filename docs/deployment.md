@@ -165,8 +165,8 @@ This means you can migrate to Docker Secrets gradually — existing `.env` setup
    # Generate HMAC secret
    openssl rand -base64 32 > secrets/vault_hmac_secret.txt
 
-   # Add Forgejo token
-   echo "your-forgejo-token" > secrets/forgejo_token.txt
+   # Add Git server token (Forgejo, GitHub, GitLab, etc.)
+   echo "your-git-server-token" > secrets/forgejo_token.txt
    ```
 
 2. Set restrictive permissions:
@@ -318,8 +318,8 @@ If you don't need real-time sync, the default setup (static volume mount) contin
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PG_PASSWORD` | `changeme_in_production` | PostgreSQL password |
-| `FORGEJO_URL` | `http://forgejo.local:3000` | Forgejo server URL |
-| `FORGEJO_TOKEN` | (empty) | Forgejo API token |
+| `FORGEJO_URL` | `http://forgejo.local:3000` | Git server URL (any: Forgejo, GitHub, GitLab, etc.) |
+| `FORGEJO_TOKEN` | (empty) | Git server API token |
 | `VAULT_HMAC_SECRET` | `change-me-in-production` | Vault token signing key |
 | `RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Reranker model |
 | `RERANKER_ENABLED` | `true` | Enable/disable reranker |

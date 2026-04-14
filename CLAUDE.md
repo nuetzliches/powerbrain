@@ -69,6 +69,25 @@ powerbrain/
 │   ├── pii_scanner.py     ← PII detection (Presidio)
 │   ├── pii_config.yaml    ← PII scanner config (entity types, custom recognizers)
 │   ├── retention_cleanup.py ← GDPR retention cleanup jobs
+│   ├── sync_service.py    ← Repository sync orchestration (incremental)
+│   ├── repos.yaml.example      ← Repository sync configuration template
+│   ├── office365.yaml.example  ← Office 365 sync configuration template
+│   ├── adapters/
+│   │   ├── base.py        ← NormalizedDocument, SourceAdapter ABC
+│   │   ├── git_adapter.py ← Git adapter (include/exclude, skip patterns)
+│   │   ├── providers/
+│   │   │   └── github.py  ← GitHub REST API (PAT + GitHub App auth)
+│   │   └── office365/     ← Office 365 adapter (separate package)
+│   │       ├── adapter.py       ← Office365Adapter(SourceAdapter)
+│   │       ├── graph_client.py  ← Auth, $batch, RU-tracking, retry
+│   │       ├── content.py       ← markitdown + fallback extraction
+│   │       ├── requirements.txt ← msal, markitdown, python-docx, etc.
+│   │       ├── providers/
+│   │       │   ├── sharepoint.py ← SharePoint/OneDrive (Delta Query)
+│   │       │   ├── outlook.py    ← Outlook Mail (Delta Query)
+│   │       │   ├── teams.py      ← Teams Messages (Delta Query + dedup)
+│   │       │   └── onenote.py    ← OneNote (Delegated Auth, no delta)
+│   │       └── tests/
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── init-db/
@@ -79,7 +98,9 @@ powerbrain/
 │   ├── 014_audit_hashchain.sql ← Tamper-resistant audit log (Art. 12)
 │   ├── 015_human_oversight.sql ← Circuit breaker + approval queue (Art. 14)
 │   ├── 016_data_quality.sql    ← Quality scoring (Art. 10)
-│   └── 017_accuracy_monitoring.sql ← Drift detection (Art. 15)
+│   ├── 017_accuracy_monitoring.sql ← Drift detection (Art. 15)
+│   ├── 018_repo_sync_state.sql    ← Repository sync state tracking
+│   └── 019_sync_state_delta.sql   ← Delta link support for Office 365
 ├── opa-policies/pb/
 │   ├── data.json           ← Policy data (configurable without Rego knowledge)
 │   ├── policy_data_schema.json ← JSON Schema for data.json validation
@@ -118,10 +139,23 @@ powerbrain/
 │   │   ├── accuracy_metrics.py  ← Art. 15 drift + feedback refresh
 │   │   ├── audit_retention.py   ← Art. 12 checkpoint + prune
 │   │   ├── gdpr_retention.py    ← GDPR retention cleanup
-│   │   └── pending_review_timeout.py ← Art. 14 review expiry
+│   │   ├── pending_review_timeout.py ← Art. 14 review expiry
+│   │   └── repo_sync.py        ← GitHub/Git repository sync trigger
 │   ├── Dockerfile
 │   └── requirements.txt
+├── scripts/
+│   ├── quickstart.sh          ← Automated first-time setup
+│   ├── build-images.sh        ← Docker image build script
+│   └── seed_*.py              ← Test data seeding scripts
+├── tests/
+│   ├── integration/           ← E2E smoke tests (gated behind RUN_INTEGRATION_TESTS=1)
+│   └── load/
+│       ├── locustfile.py      ← Locust load test for MCP search pipeline
+│       └── README.md          ← Load test instructions
+├── SECURITY.md                ← Vulnerability reporting policy
 └── docs/
+    ├── getting-started.md          ← Step-by-step tutorial for newcomers
+    ├── mcp-tools.md                ← All 23 MCP tools with parameters and access roles
     ├── what-is-powerbrain.md       ← Detailed overview and positioning
     ├── deployment.md               ← Dev, prod, TLS, Docker Secrets guide
     ├── architecture.md             ← Technical deep-dive (components, GDPR)
@@ -141,11 +175,11 @@ powerbrain/
 | qdrant        | 6333  | Qdrant                             | Vector database                  |
 | postgres      | 5432  | PostgreSQL 16 + Apache AGE         | Structured data + graph + audit  |
 | opa           | 8181  | Open Policy Agent                  | Policy engine + access control   |
-| ollama        | 11434 | Ollama                             | Local embeddings + summarization |
+| ollama        | 11434 | Ollama (optional, `local-llm`)     | Local embeddings + summarization |
 | vllm          | 8000  | vLLM (optional, `gpu` profile)     | Production LLM serving           |
 | tei           | 8010  | HF TEI (optional, `gpu` profile)   | Production embedding serving     |
 | caddy         | 80/443| Caddy 2 (optional, `tls` profile)  | TLS reverse proxy                |
-| forgejo       | 3000  | Forgejo (external, not in Compose) | Git repos, policies, schemas     |
+| git server    | —     | Any Git server (external, optional)| Git repos, policies, schemas     |
 | prometheus    | 9090  | Prometheus                         | Metrics collection               |
 | grafana       | 3001  | Grafana                            | Dashboards + visualization       |
 | tempo         | 4317  | Grafana Tempo                      | Distributed tracing              |
@@ -242,7 +276,7 @@ Art. 17 deletion: delete vault mapping → pseudonyms become irreversible.
 Sensitive values can be provided as Docker Secrets files in `./secrets/*.txt`:
 - `pg_password.txt` — PostgreSQL password
 - `vault_hmac_secret.txt` — Vault HMAC signing key
-- `forgejo_token.txt` — Forgejo API token
+- `forgejo_token.txt` — Git server API token (any: Forgejo, GitHub, GitLab, etc.)
 - `github_pat.txt` — GitHub PAT (AI Proxy provider key)
 - `anthropic_api_key.txt` — Anthropic API key (AI Proxy provider key)
 - `mcp_auth_token.txt` — Token for pb-proxy → mcp-server auth
@@ -250,11 +284,31 @@ Sensitive values can be provided as Docker Secrets files in `./secrets/*.txt`:
 Services read from `/run/secrets/<name>` with env var fallback for backward compatibility.
 The `_read_secret()` helper checks `<ENV_VAR>_FILE` first, then falls back to `<ENV_VAR>`.
 
-### Forgejo Integration
-No separate git container — uses existing Forgejo:
-- `pb-policies` repo → OPA bundle polling
+### Git Server Integration
+No separate git container — uses any existing Git server (Forgejo, GitHub, GitLab, Gitea, etc.):
+- `pb-policies` repo → OPA bundle polling (via OPAL or direct)
 - `pb-schemas` repo → JSON schema validation
 - `pb-docs` + project repos → Ingestion pipeline
+
+Configured via `FORGEJO_URL` / `OPAL_POLICY_REPO_URL`. The env var names use "Forgejo" for historical reasons but accept any Git server URL.
+
+### GitHub Adapter (Repository Sync)
+Syncs GitHub repository contents into the knowledge base as a data source.
+
+**Configuration:** `ingestion/repos.yaml` (see `repos.yaml.example`). Each entry: name, URL, branch, collection, project, classification, auth mode, include/exclude patterns.
+
+**Sync modes:**
+- **Polling** — pb-worker job every N minutes (configurable via `REPO_SYNC_INTERVAL_MINUTES`, default 5)
+- **Manual** — `POST /sync/{repo_name}` on ingestion service (port 8081)
+- **External webhook** — Tools like [Hookaido](https://github.com/nuetzliches/hookaido) can call the sync endpoint on push events
+
+**Auth:** PAT (via `secrets/github_pat.txt`) or GitHub App (JWT + installation token, requires `app_id`, `installation_id`, `private_key_path` in repos.yaml).
+
+**Incremental sync:** Tracks last commit SHA in `repo_sync_state` table. First sync fetches full tree, subsequent syncs use compare API (only changed files). Modified files: delete old → re-ingest new. Removed files: cascade-delete (Qdrant, PG, vault, graph).
+
+**Pipeline:** All content flows through standard ingestion: chunking → PII scan → OPA policy → quality gate (`github` source_type, threshold 0.3) → embedding → context layers (L0/L1/L2).
+
+**Default skip patterns:** Binary files, `.git/`, `node_modules/`, `vendor/`, `__pycache__/`, lock files. Additional filtering via include/exclude globs in config.
 
 ### LLM Provider Abstraction
 Embedding and Summarization use the OpenAI-compatible API (`/v1/embeddings`, `/v1/chat/completions`).
@@ -320,15 +374,19 @@ Configuration: `pb-proxy/litellm_config.yaml` for aliases + `provider_keys`, `pb
 
 ### Prerequisites
 - Docker + Docker Compose
-- Access to existing Forgejo server (optional)
-- Forgejo API token with `read:repository` permission (optional)
+- Access to a Git server for policy repos (optional, any: Forgejo, GitHub, GitLab, etc.)
+- Git server API token with `read:repository` permission (optional)
 
 ### First Start
 ```bash
-cp .env.example .env
-# Edit .env: PG_PASSWORD (and optionally FORGEJO_URL, FORGEJO_TOKEN)
+# Automated (recommended):
+./scripts/quickstart.sh
 
-docker compose up -d
+# Or manually:
+cp .env.example .env
+# Edit .env: PG_PASSWORD (and optionally FORGEJO_URL for Git server integration)
+
+docker compose --profile local-llm --profile local-reranker up -d
 
 # Pull embedding model
 docker exec pb-ollama ollama pull nomic-embed-text
@@ -388,12 +446,21 @@ Tests are gated behind `RUN_INTEGRATION_TESTS=1` and take ~90s (plus stack start
 The `docker_stack` fixture calls `docker compose down -v` before and after the test session.
 
 ### CI / PR Validation
-PR workflow (`.forgejo/workflows/pr-validate.yml`) runs on every PR to `master`:
-- **unit-tests** — All service tests in `python:3.12-slim` container (`-m "not integration"`)
+PR workflow (`.github/workflows/pr-validate.yml`) runs on every PR to `master`:
+- **unit-tests** — All service tests in `python:3.12-slim` container (`-m "not integration"`), coverage threshold 80% (`--cov-fail-under=80`)
 - **opa-tests** — OPA policy tests (`opa test opa-policies/pb/`)
-- **docker-build** — Build all 4 images (no push)
+- **docker-build** — Build all 5 images (no push)
+- **security-scan** — `pip-audit` (dependency vulnerabilities) + `bandit` (static analysis), non-blocking
 
-All three jobs must pass before merge. Branch protection requires PR — no direct pushes to master.
+All jobs must pass before merge. Branch protection requires PR — no direct pushes to master.
+
+### Load Tests
+Locust-based load tests for the MCP search pipeline (not in CI, local only):
+```bash
+pip install locust
+locust -f tests/load/locustfile.py --host=http://localhost:8080
+# Web UI at http://localhost:8089
+```
 
 Run tests locally (same as CI):
 ```bash
@@ -404,7 +471,11 @@ docker run --rm -v "$(pwd):/app" -w /app python:3.12-slim bash -c "
     -r pb-proxy/requirements.txt \
     fastapi uvicorn pydantic prometheus-client pyyaml python-dotenv &&
   PYTHONPATH=.:mcp-server:ingestion:reranker:pb-proxy \
-  python -m pytest -m 'not integration' --tb=short -q
+  python -m pytest -m 'not integration' --tb=short -q \
+    --cov=shared --cov=mcp-server --cov=ingestion \
+    --cov=reranker --cov=pb-proxy --cov=worker \
+    --cov-report=term-missing:skip-covered \
+    --cov-fail-under=80
 "
 ```
 
@@ -451,6 +522,9 @@ All 4 services (mcp-server, proxy, reranker, ingestion) share a common telemetry
 26. ✅ **Policy Management Tool (B-12)** — `manage_policies` MCP tool with list/read/update actions for OPA policy data sections at runtime. JSON Schema validation before writes, cache invalidation, audit logging with old+new values.
 27. ✅ **Correction Boost in Reranking (B-13)** — New `boost_corrections` parameter in `rerank_options`. Documents with `metadata.isCorrection: true` receive a configurable score boost in the heuristic post-rerank phase.
 28. ✅ **OPAL Integration (B-10)** — opal-server + opal-client as Docker Compose profile (`--profile opal`). Watches a git repo for policy changes and pushes to OPA in real-time via WebSocket. Configurable via `OPAL_POLICY_REPO_URL`.
+29. ✅ **GitHub Adapter** — First source adapter. Syncs GitHub repos into KB with incremental updates (commit SHA tracking). Configurable include/exclude patterns, PAT + GitHub App auth. Polling via pb-worker + `POST /sync/{repo}` endpoint for manual/webhook triggers. All content flows through full pipeline (PII, OPA, quality gate, embedding). Removed files cascade-delete across Qdrant, PG, vault, graph. Config: `ingestion/repos.yaml`.
+
+30. ✅ **Office 365 Adapter** — Second source adapter. Syncs SharePoint, OneDrive, Outlook Mail, Teams Messages, and OneNote into KB via Microsoft Graph API. Delta Queries for incremental sync (except OneNote: timestamp-based). OAuth2 Client Credentials (app-only) + Delegated Auth (OneNote, post-March-2025). Content extraction via Microsoft `markitdown`. Site-level classification in YAML. Teams-SharePoint deduplication (file attachments as refs only). Resource Unit budget tracking + `$batch` API. Config: `ingestion/office365.yaml`.
 
 Details on all features: see `docs/architecture.md`
 
@@ -482,7 +556,7 @@ All project-specific identifiers use the `pb` (Powerbrain) prefix consistently:
 | Prometheus metrics | `pb_<service>_` | `pb_mcp_requests_total`, `pb_reranker_duration_seconds` |
 | Qdrant collections | `pb_<type>` | `pb_general`, `pb_code`, `pb_rules` |
 | Logger names | `pb-<component>` | `pb-mcp`, `pb-ingestion`, `pb-graph` |
-| Forgejo org/repos | `pb-org/pb-<name>` | `pb-org/pb-policies`, `pb-org/pb-schemas` |
+| Git repos | `pb-<name>` | `pb-policies`, `pb-schemas` (any Git server) |
 
 ### Plans and Specs
 
@@ -502,7 +576,7 @@ Implementation plans and design specs are stored centrally:
 | Summarization | qwen2.5:3b (Ollama) | llama3.2:3b | Small, fast, good instruction following |
 | Policy Engine | OPA (Rego) | Cerbos, GoRules | CNCF standard, battle-tested |
 | PII Scanner | Presidio | spaCy NER | Broad entity detection + extensible |
-| Git Server | Forgejo (external) | Gitea | Already available, API-compatible |
+| Git Server | Any (Forgejo default) | — | Supports Forgejo, GitHub, GitLab, Gitea, Bitbucket |
 | Relational DB | PostgreSQL 16 | MySQL, SQLite | JSONB, GIN index, extensions |
 | PII Storage | Sealed Vault (Dual) | Destructive masking, full encryption | Reversible, searchable, GDPR-compliant |
 | TLS | Caddy (optional profile) | Nginx, Traefik | Zero-config HTTPS, simple Caddyfile |
@@ -511,14 +585,23 @@ Implementation plans and design specs are stored centrally:
 
 ## Pre-Public Checklist
 
-Tasks to complete before open-sourcing the repository:
+Tasks completed for open-sourcing the repository:
 
-- [x] **Audit secrets and internal URLs** — Grepped for internal domains, runner names, personal paths. Parameterized `build-images.sh`, sanitized doc paths. `.forgejo/` workflows contain Forgejo-specific references but are kept for internal CI use.
+- [x] **Audit secrets and internal URLs** — Parameterized `build-images.sh`, sanitized doc paths
 - [x] **Review `.env.example`** — No real credentials or internal hostnames
 - [x] **Add LICENSE file** — Apache 2.0
-- [x] **Keep `.forgejo/` workflows in repo (coexistence model)** — `.forgejo/workflows/` stays in the public repo for internal Forgejo CI. GitHub ignores this directory. `.github/workflows/` handles public CI. Both coexist without conflict. See [Deployment Guide → CI/CD](#cicd--dual-workflow-setup) for details.
-- [x] **Add GitHub Actions CI** — `.github/workflows/pr-validate.yml` with same 3 jobs (unit-tests, opa-tests, docker-build) using `ubuntu-latest` and `actions/checkout@v4`
-- [x] **Enable branch protection on `master`** — GitHub Ruleset: require PR, require status checks (`unit-tests`, `opa-tests`, `docker-build`), no direct push
-- [x] **Add CONTRIBUTING.md** — Contributor guide with dev setup, test commands, code conventions
+- [x] **Dual CI** — `.forgejo/` (internal) + `.github/` (public) coexist
+- [x] **GitHub Actions CI** — `.github/workflows/pr-validate.yml` with 4 jobs (unit-tests, opa-tests, docker-build, security-scan)
+- [x] **Branch protection on `master`** — Require PR + status checks
+- [x] **CONTRIBUTING.md** — Contributor guide with dev setup, test commands, code conventions
+- [x] **SECURITY.md** — Vulnerability reporting policy via GitHub Security Advisories
+- [x] **GitHub Templates** — Issue templates (bug report, feature request) + PR template
+- [x] **README badges** — CI status, License, Docker, MCP
+- [x] **Quick Start script** — `scripts/quickstart.sh` for automated first-time setup
+- [x] **Getting Started guide** — `docs/getting-started.md` — tutorial for newcomers
+- [x] **MCP Tool Reference** — `docs/mcp-tools.md` — all 23 tools documented
+- [x] **Coverage threshold** — 80% minimum enforced in CI (`--cov-fail-under=80`)
+- [x] **Security scanning** — `pip-audit` + `bandit` in CI (non-blocking)
+- [x] **Load tests** — Locust-based load test for search pipeline (`tests/load/`)
 - [x] **Set repo description + topics** — Description, topics (mcp, rag, opa, gdpr, etc.)
 - [x] **Switch to public** — `gh repo edit --visibility public`

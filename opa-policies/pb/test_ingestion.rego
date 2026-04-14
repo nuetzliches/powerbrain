@@ -90,3 +90,23 @@ test_reason_empty_on_allow if {
     result.allowed == true
     result.reason == ""
 }
+
+# ── GitHub source type (adapter) ──────────────────────────
+
+test_github_threshold_low_passes if {
+    result := ingestion.quality_gate with input as {
+        "source_type":   "github",
+        "quality_score": 0.35,
+    }
+    result.allowed == true
+    result.min_score == 0.3
+}
+
+test_github_threshold_blocks_below_minimum if {
+    result := ingestion.quality_gate with input as {
+        "source_type":   "github",
+        "quality_score": 0.25,
+    }
+    result.allowed == false
+    result.min_score == 0.3
+}

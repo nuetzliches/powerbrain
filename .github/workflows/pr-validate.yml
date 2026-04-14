@@ -8,7 +8,7 @@ jobs:
   unit-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Run unit tests
         run: |
@@ -17,6 +17,7 @@ jobs:
               -r requirements-dev.txt \
               -r mcp-server/requirements.txt \
               -r ingestion/requirements.txt \
+              -r ingestion/adapters/office365/requirements.txt \
               -r pb-proxy/requirements.txt \
               -r worker/requirements.txt \
               fastapi uvicorn pydantic prometheus-client pyyaml python-dotenv &&
@@ -25,6 +26,7 @@ jobs:
               shared/tests \
               mcp-server/tests \
               ingestion/tests \
+              ingestion/adapters/office365/tests \
               reranker/tests \
               pb-proxy/tests \
               worker/tests \
@@ -32,13 +34,14 @@ jobs:
               --tb=short -q \
               --cov=shared --cov=mcp-server --cov=ingestion \
               --cov=reranker --cov=pb-proxy --cov=worker \
-              --cov-report=term-missing:skip-covered
+              --cov-report=term-missing:skip-covered \
+              --cov-fail-under=68
           "
 
   opa-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Download OPA
         run: |
@@ -51,7 +54,7 @@ jobs:
   docker-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Build mcp-server image
         run: docker build -f mcp-server/Dockerfile -t pb-mcp-server:pr-test .
@@ -67,3 +70,42 @@ jobs:
 
       - name: Build worker image
         run: docker build -f worker/Dockerfile -t pb-worker:pr-test .
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install scanning tools
+        run: pip install pip-audit bandit
+
+      - name: Dependency audit (pip-audit)
+        continue-on-error: true
+        run: |
+          pip-audit -r mcp-server/requirements.txt
+          pip-audit -r ingestion/requirements.txt
+          pip-audit -r pb-proxy/requirements.txt
+          pip-audit -r worker/requirements.txt
+
+      - name: Static security scan (bandit)
+        continue-on-error: true
+        run: |
+          bandit -r shared/ mcp-server/ ingestion/ reranker/ pb-proxy/ worker/ \
+            -x '*/tests/*' \
+            --severity-level medium \
+            -f json -o bandit-report.json || true
+          bandit -r shared/ mcp-server/ ingestion/ reranker/ pb-proxy/ worker/ \
+            -x '*/tests/*' \
+            --severity-level medium
+
+      - name: Upload bandit report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bandit-report
+          path: bandit-report.json

@@ -10,6 +10,8 @@ Endpoints:
   POST /ingest            — Ingest text (full privacy pipeline)
   POST /ingest/chunks     — Ingest pre-processed chunks (adapter, ingest_text_chunks pipeline)
   POST /snapshots/create  — Create a knowledge snapshot
+  POST /sync              — Sync all configured Git repositories
+  POST /sync/{repo_name}  — Sync a single Git repository
   GET  /health            — Health check
 """
 
@@ -1051,3 +1053,46 @@ async def snapshot_create(req: SnapshotRequest):
     except Exception as e:
         log.error(f"Snapshot creation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Repository Sync ─────────────────────────────────────────
+
+
+@app.post("/sync")
+async def sync_all():
+    """Sync all configured Git repositories."""
+    from ingestion.sync_service import sync_all_repos
+
+    if not pg_pool:
+        raise HTTPException(status_code=503, detail="Database not connected")
+
+    results = await sync_all_repos(
+        pool=pg_pool,
+        http_client=http_client,
+        ingestion_url=f"http://localhost:{os.getenv('PORT', '8081')}",
+        qdrant_url=QDRANT_URL,
+    )
+    return {"repos": results}
+
+
+@app.post("/sync/{repo_name}")
+async def sync_single(repo_name: str):
+    """Sync a single configured Git repository by name."""
+    from ingestion.sync_service import load_repo_configs, sync_repo
+
+    if not pg_pool:
+        raise HTTPException(status_code=503, detail="Database not connected")
+
+    configs = load_repo_configs()
+    config = next((c for c in configs if c.name == repo_name), None)
+    if not config:
+        raise HTTPException(status_code=404, detail=f"Repo '{repo_name}' not found in repos.yaml")
+
+    result = await sync_repo(
+        config=config,
+        pool=pg_pool,
+        http_client=http_client,
+        ingestion_url=f"http://localhost:{os.getenv('PORT', '8081')}",
+        qdrant_url=QDRANT_URL,
+    )
+    return result

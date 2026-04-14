@@ -1,5 +1,10 @@
 # 🧠 Powerbrain
 
+[![CI](https://github.com/nuetzliches/powerbrain/actions/workflows/pr-validate.yml/badge.svg)](https://github.com/nuetzliches/powerbrain/actions/workflows/pr-validate.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Docker Compose](https://img.shields.io/badge/Docker_Compose-ready-2496ED?logo=docker)](docker-compose.yml)
+[![MCP](https://img.shields.io/badge/MCP-compatible-green)](https://modelcontextprotocol.io/)
+
 > *"AI eats context. We decide what's on the menu."*
 
 Open-source context engine that feeds AI agents with policy-compliant enterprise knowledge — self-hosted, GDPR-native, provider-agnostic.
@@ -30,7 +35,7 @@ Agent / Skill
 └─────────────────────────────────────────────────┘
     │           │           │           │
     ▼           ▼           ▼           ▼
- Qdrant    PostgreSQL     OPA       Ollama
+ Qdrant    PostgreSQL     OPA       Ollama/vLLM/TEI
  (vectors)  (data+vault)  (policies) (embeddings+LLM)
                 │
                 ▼
@@ -48,9 +53,9 @@ Agent / Skill
 
 🎯 **Relevance Pipeline** — 3-stage search: Qdrant oversampling (5x candidates) → OPA policy filtering → Cross-Encoder reranking. Graceful degradation: if the reranker is down, results fall back to vector ordering.
 
-📝 **Context Summarization** — Agents can request summaries instead of raw chunks. OPA policies can enforce summarization for sensitive data (confidential = summary only, no raw text), control detail levels, or deny summarization entirely. Powered by Ollama.
+📝 **Context Summarization** — Agents can request summaries instead of raw chunks. OPA policies can enforce summarization for sensitive data (confidential = summary only, no raw text), control detail levels, or deny summarization entirely. Powered by any OpenAI-compatible LLM (Ollama, vLLM, or external).
 
-🔌 **MCP-Native Interface** — 16 tools accessible through the Model Context Protocol. Works with any MCP-compatible agent (Claude, OpenCode, custom). One endpoint, one protocol.
+🔌 **MCP-Native Interface** — 23 tools accessible through the Model Context Protocol. Works with any MCP-compatible agent (Claude, OpenCode, custom). One endpoint, one protocol.
 
 🏠 **Self-Hosted & GDPR-Native** — Everything runs on your infrastructure. No external API calls for embeddings, search, or summarization. Docker Compose up and you're running.
 
@@ -75,16 +80,15 @@ The `pb-worker` maintenance container runs four APScheduler jobs: accuracy metri
 ## 🚀 Quick Start
 
 ```bash
-git clone <repo-url> && cd powerbrain
-cp .env.example .env
-# Edit .env: set PG_PASSWORD (and optionally FORGEJO_URL, FORGEJO_TOKEN)
+git clone https://github.com/nuetzliches/powerbrain.git && cd powerbrain
 
-docker compose up -d
+# Automated setup (recommended):
+./scripts/quickstart.sh
 
-# Pull the embedding model
+# Or manually:
+cp .env.example .env        # Edit: set PG_PASSWORD
+docker compose --profile local-llm --profile local-reranker up -d
 docker exec pb-ollama ollama pull nomic-embed-text
-
-# Create vector collections
 for col in pb_general pb_code pb_rules; do
   curl -s -X PUT "http://localhost:6333/collections/$col" \
     -H 'Content-Type: application/json' \
@@ -92,20 +96,31 @@ for col in pb_general pb_code pb_rules; do
 done
 ```
 
-Connect your agent:
+Verify everything is running:
+
+```bash
+curl -s http://localhost:8080/health   # MCP Server
+curl -s http://localhost:6333/healthz  # Qdrant
+curl -s http://localhost:8181/health   # OPA
+```
+
+Connect your agent (a default dev key is pre-seeded for local use):
 
 ```json
 {
   "mcpServers": {
     "powerbrain": {
       "type": "http",
-      "url": "http://localhost:8080/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer pb_dev_localonly_do_not_use_in_production"
+      }
     }
   }
 }
 ```
 
-That's it. Your agent now has access to `search_knowledge`, `query_data`, `graph_query`, `generate_compliance_doc`, and 12 more tools.
+That's it. Your agent now has access to `search_knowledge`, `query_data`, `graph_query`, `generate_compliance_doc`, and 19 more tools — see [MCP Tool Reference](docs/mcp-tools.md). For production keys, see the [Getting Started guide](docs/getting-started.md#2-authentication).
 
 ### Optional: AI Provider Proxy
 
@@ -127,12 +142,12 @@ curl http://localhost:8090/v1/chat/completions \
 
 ```
 1. Agent calls search_knowledge("GDPR deletion policy", summarize=true)
-2. Powerbrain embeds the query via Ollama (nomic-embed-text)
+2. Powerbrain embeds the query (nomic-embed-text via configurable provider)
 3. Qdrant returns 50 candidates (10 × 5 oversampling)
 4. OPA filters by agent role + data classification → 30 remain
 5. Cross-Encoder reranks by query-document relevance → top 10
 6. OPA summarization policy: allowed? required? detail level?
-7. Ollama summarizes the chunks (if applicable)
+7. LLM summarizes the chunks (if applicable)
 8. Response: results + summary + policy transparency
 ```
 
@@ -148,6 +163,8 @@ curl http://localhost:8090/v1/chat/completions \
 
 | Document | Description |
 |----------|-------------|
+| [Getting Started](docs/getting-started.md) | Step-by-step tutorial: ingest data, search, understand policies |
+| [MCP Tool Reference](docs/mcp-tools.md) | All 23 MCP tools with parameters and access roles |
 | [What is Powerbrain?](docs/what-is-powerbrain.md) | Detailed overview and positioning |
 | [Architecture](docs/architecture.md) | Technical deep-dive |
 | [Deployment Guide](docs/deployment.md) | Dev, production, TLS, Docker Secrets |

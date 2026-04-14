@@ -1,0 +1,43 @@
+# ============================================================
+#  Powerbrain — Repository Sync Configuration
+#  Copy to repos.yaml and adjust: cp repos.yaml.example repos.yaml
+#
+#  Each entry defines a Git repository to sync into the knowledge base.
+#  All content flows through the full pipeline (PII scan, OPA, embedding).
+# ============================================================
+
+repos:
+  # Example: Sync a public documentation repo
+  # - name: "company-docs"
+  #   url: "https://github.com/your-org/company-docs"
+  #   branch: "main"
+  #   collection: "pb_general"        # Qdrant collection
+  #   project: "company-docs"         # Project ID for filtering
+  #   classification: "internal"      # Data classification level
+  #   auth: "pat"                     # "pat" or "github-app"
+  #   include: ["docs/**", "*.md"]    # Only sync these patterns (empty = all)
+  #   exclude: ["drafts/**"]          # Skip these patterns
+  #   poll_interval_seconds: 300      # Sync every 5 minutes
+
+  # Example: Sync a code repo
+  # - name: "platform-api"
+  #   url: "https://github.com/your-org/platform-api"
+  #   branch: "main"
+  #   collection: "pb_code"
+  #   project: "platform"
+  #   classification: "internal"
+  #   auth: "pat"
+  #   include: ["src/**", "docs/**"]
+  #   exclude: ["src/test/**", "*.test.*"]
+
+  # Example: GitHub App auth (for organizations)
+  # - name: "org-policies"
+  #   url: "https://github.com/your-org/policies"
+  #   branch: "main"
+  #   collection: "pb_rules"
+  #   project: "governance"
+  #   classification: "confidential"
+  #   auth: "github-app"
+  #   app_id: 12345
+  #   installation_id: 67890
+  #   private_key_path: "/run/secrets/github_app_key"

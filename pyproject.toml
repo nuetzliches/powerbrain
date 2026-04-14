@@ -1,7 +1,15 @@
 [project]
 name = "powerbrain"
-version = "0.1.0"
+version = "0.4.0"
 requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = [
@@ -18,4 +26,18 @@ asyncio_mode = "auto"
 addopts = "--import-mode=importlib"
 markers = [
     "integration: requires running services (deselect with -m 'not integration')",
+]
+
+[tool.coverage.run]
+source = ["shared", "mcp-server", "ingestion", "reranker", "pb-proxy", "worker"]
+omit = ["*/tests/*", "*/__main__.py"]
+
+[tool.coverage.report]
+fail_under = 73
+show_missing = true
+skip_covered = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ ==",
 ]
