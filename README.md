@@ -5,6 +5,8 @@
 [![Docker Compose](https://img.shields.io/badge/Docker_Compose-ready-2496ED?logo=docker)](docker-compose.yml)
 [![MCP](https://img.shields.io/badge/MCP-compatible-green)](https://modelcontextprotocol.io/)
 
+Open source. Closed data. 🔐
+
 > *"AI eats context. We decide what's on the menu."*
 
 Open-source context engine that feeds AI agents with policy-compliant enterprise knowledge — self-hosted, GDPR-native, provider-agnostic.
