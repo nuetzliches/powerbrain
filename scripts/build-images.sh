@@ -39,7 +39,11 @@ if [ "${FORCE_BUILD:-false}" = "true" ]; then
   changed="ALL"
   log "FORCE_BUILD=true, rebuilding all images."
 else
-  changed=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "ALL")
+  BEFORE="${BEFORE_SHA:-}"
+  if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+    BEFORE="HEAD~1"
+  fi
+  changed=$(git diff --name-only "$BEFORE" HEAD 2>/dev/null || echo "ALL")
 fi
 
 # If nothing service-relevant changed, rebuild all (safety net)
