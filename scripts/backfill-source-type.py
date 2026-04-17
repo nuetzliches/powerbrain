@@ -3,7 +3,7 @@
 Backfill source_type payload field in Qdrant for existing points.
 
 Derives source_type from the existing 'source' metadata field:
-  - "timesheet:inline" → source_type = "timesheet"
+  - "document:inline" → source_type = "document"
   - "git-commit:inline" → source_type = "git-commit"
 
 Uses Qdrant REST API directly. Run inside the pb-net Docker network:
@@ -71,7 +71,7 @@ def derive_source_type(payload: dict) -> str | None:
     if not source:
         return None
 
-    # source format: "timesheet:inline", "git-commit:inline", etc.
+    # source format: "document:inline", "git-commit:inline", etc.
     if ":" in source:
         return source.split(":")[0]
 

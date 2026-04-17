@@ -61,7 +61,7 @@ class TestDeleteDocumentsValidation:
     async def test_confirm_required(self, patch_server):
         result = await _dispatch(
             "delete_documents",
-            {"confirm": False, "source_type": "timesheet"},
+            {"confirm": False, "source_type": "document"},
             "agent-1", "admin",
         )
         data = _parse_result(result)
@@ -82,7 +82,7 @@ class TestDeleteDocumentsValidation:
         patch_server["opa"].return_value = {"allowed": False}
         result = await _dispatch(
             "delete_documents",
-            {"confirm": True, "source_type": "timesheet"},
+            {"confirm": True, "source_type": "document"},
             "agent-1", "viewer",
         )
         data = _parse_result(result)
@@ -109,7 +109,7 @@ class TestDeleteDocumentsSuccess:
 
         result = await _dispatch(
             "delete_documents",
-            {"confirm": True, "source_type": "timesheet"},
+            {"confirm": True, "source_type": "document"},
             "agent-1", "developer",
         )
         data = _parse_result(result)
@@ -119,7 +119,7 @@ class TestDeleteDocumentsSuccess:
         assert data["deleted"]["qdrant"]["pb_general"] == 5
         assert data["deleted"]["qdrant"]["pb_code"] == 5
         assert data["deleted"]["qdrant"]["pb_rules"] == 5
-        assert data["filters"]["source_type"] == "timesheet"
+        assert data["filters"]["source_type"] == "document"
         assert "errors" not in data
 
         # Verify Qdrant delete called for all 3 collections
@@ -209,7 +209,7 @@ class TestDeleteDocumentsPartialFailure:
 
         result = await _dispatch(
             "delete_documents",
-            {"confirm": True, "source_type": "timesheet"},
+            {"confirm": True, "source_type": "document"},
             "agent-1", "admin",
         )
         data = _parse_result(result)
@@ -244,7 +244,7 @@ class TestDeleteDocumentsPartialFailure:
 
         result = await _dispatch(
             "delete_documents",
-            {"confirm": True, "source_type": "timesheet"},
+            {"confirm": True, "source_type": "document"},
             "agent-1", "admin",
         )
         data = _parse_result(result)
@@ -257,11 +257,11 @@ class TestDeleteDocumentsPartialFailure:
 
 class TestBuildDeleteFilter:
     def test_source_type_filter(self):
-        qf, where, params = _build_delete_filter("timesheet", None, False)
+        qf, where, params = _build_delete_filter("document", None, False)
         assert qf is not None
         assert len(qf.must) == 1
         assert "source_type" in where
-        assert params == ["timesheet"]
+        assert params == ["document"]
 
     def test_project_filter(self):
         qf, where, params = _build_delete_filter(None, "PROJ-A", False)
@@ -271,10 +271,10 @@ class TestBuildDeleteFilter:
         assert params == ["PROJ-A"]
 
     def test_combined_filter(self):
-        qf, where, params = _build_delete_filter("timesheet", "PROJ-A", False)
+        qf, where, params = _build_delete_filter("document", "PROJ-A", False)
         assert qf is not None
         assert len(qf.must) == 2
-        assert params == ["timesheet", "PROJ-A"]
+        assert params == ["document", "PROJ-A"]
         assert "$1" in where and "$2" in where
 
     def test_delete_all_returns_none_filter(self):
