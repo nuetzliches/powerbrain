@@ -264,3 +264,9 @@ Teams API has stricter rate limits than SharePoint. If you see frequent 429 erro
 | `onenote[].notebook` | notebook | (required) | Notebook display name |
 | `onenote[].site` | notebook | none | SharePoint site (for site-scoped notebooks) |
 | `onenote[].classification` | notebook | `internal` | Data classification level |
+
+## Related
+
+- GitHub adapter: see [github-adapter.md](github-adapter.md)
+- General architecture: see [architecture.md](architecture.md)
+- Pipeline details: see [what-is-powerbrain.md](what-is-powerbrain.md)
