@@ -168,6 +168,8 @@ curl http://localhost:8090/v1/chat/completions \
 | [What is Powerbrain?](docs/what-is-powerbrain.md) | Detailed overview and positioning |
 | [Architecture](docs/architecture.md) | Technical deep-dive |
 | [Deployment Guide](docs/deployment.md) | Dev, production, TLS, Docker Secrets |
+| [GitHub Adapter](docs/github-adapter.md) | Sync GitHub repositories into the knowledge base |
+| [Office 365 Adapter](docs/office365-adapter.md) | Sync SharePoint, OneDrive, Outlook, Teams, OneNote |
 | [Technology Decisions](docs/technology-decisions.md) | ADRs and trade-offs |
 | [Risk Register](docs/risk-management.md) | EU AI Act Art. 9 risk register (R-01..R-08) |
 | [EU AI Act Plan](docs/plans/2026-04-08-eu-ai-act-compliance.md) | Implementation plan for B-40..B-46 |
