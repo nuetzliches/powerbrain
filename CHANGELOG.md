@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Shared document-extraction package (`ingestion/content_extraction/`) — lifts the
+  Office 365 adapter's `ContentExtractor` into a reusable module with markitdown
+  as the primary backend and python-docx/openpyxl/python-pptx/BeautifulSoup fallbacks.
+- `POST /extract` endpoint on the ingestion service — converts base64-encoded
+  binary documents (PDF, DOCX, XLSX, PPTX, MSG, EML, RTF, ...) to text.
+  Size-capped via `EXTRACT_MAX_BYTES` (default 25 MB) and timeout via
+  `EXTRACT_TIMEOUT_SECONDS` (default 30 s).
+- Chat-path document attachments in pb-proxy (`/v1/chat/completions` and
+  `/v1/messages`) — extracts `file`/`input_file` (OpenAI) and `document`
+  (Anthropic) blocks via `/extract` before PII scanning and LLM forwarding.
+- GitHub adapter opt-in document ingestion via `allow_documents: true` in
+  `repos.yaml` — fetches Office/PDF files as bytes and runs them through the
+  shared `ContentExtractor`. Ingested as `source_type="github-document"`.
+- New OPA policy `pb.proxy.documents` — gates chat attachments by role, size,
+  MIME type, and per-request file count. Data-driven via `data.json`.
+- Optional Tesseract OCR fallback for scanned PDFs — activated at build time
+  via `--build-arg WITH_OCR=true` plus runtime `OCR_FALLBACK_ENABLED=true`.
+- Prometheus metrics: `pb_extract_requests_total`, `pb_extract_duration_seconds`,
+  `pb_extract_bytes_in`, `pbproxy_documents_extracted_total`,
+  `pbproxy_documents_extracted_bytes`.
+- 42 new unit tests (content_extraction, /extract endpoint, pb-proxy document
+  extraction, Anthropic document normalization) + 11 new OPA tests.
+
+### Changed
+
+- `ingestion/adapters/office365/content.py` is now a thin shim re-exporting
+  from `ingestion.content_extraction` — fully backward compatible.
+- `ingestion/requirements.txt` now hosts markitdown + Office document
+  fallbacks (moved up from `office365/requirements.txt`) so all consumers
+  (adapters + `/extract` endpoint) share one dependency surface.
+- GitHub adapter's `BINARY_EXTENSIONS` split into `HARD_BINARY_EXTENSIONS`
+  (images/archives — always blocked) and `DOCUMENT_EXTENSIONS` (opt-in via
+  `allow_documents`). Legacy alias preserved for backward compatibility.
+
 ## [0.4.0] - 2026-04-10
 
 ### Added

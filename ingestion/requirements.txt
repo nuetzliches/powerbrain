@@ -16,3 +16,21 @@ opentelemetry-sdk>=1.20
 opentelemetry-exporter-otlp-proto-grpc>=1.20
 opentelemetry-instrumentation-fastapi>=0.41b0
 opentelemetry-instrumentation-httpx>=0.48b0
+
+# ── Content extraction (used by Office 365 adapter, GitHub adapter (opt-in),
+#    and the /extract endpoint called by pb-proxy for chat attachments) ──
+# Upper bounds cap at the next major to block unreviewed breaking changes.
+markitdown>=0.1.5,<0.2
+python-docx>=1.1.0,<2.0
+openpyxl>=3.1.0,<4.0
+python-pptx>=0.6.23,<1.0
+beautifulsoup4>=4.12.0,<5.0
+
+# ── Optional OCR fallback for scanned PDFs (default off) ──
+# Activated at build time via `--build-arg WITH_OCR=true` in the Dockerfile.
+# Runtime toggle: OCR_FALLBACK_ENABLED=true
+# Also requires system packages `tesseract-ocr` and `poppler-utils`.
+# pytesseract and pdf2image are installed unconditionally (pure Python, tiny);
+# Tesseract itself is opt-in at the image level.
+pytesseract>=0.3.10,<0.4
+pdf2image>=1.17.0,<2.0

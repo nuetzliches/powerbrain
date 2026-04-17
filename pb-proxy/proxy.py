@@ -109,6 +109,10 @@ from pii_middleware import (
     generate_session_salt,
     build_system_hint,
 )
+from document_extraction import (
+    extract_documents_in_messages,
+    DocumentExtractionError,
+)
 from auth import ProxyKeyVerifier
 from middleware import ProxyAuthMiddleware
 
@@ -150,6 +154,16 @@ PII_SCAN_FAILURES = Counter(
     "pbproxy_pii_scan_failures_total",
     "PII scan failures (ingestion service unreachable)",
     ["fail_mode"],
+)
+DOC_EXTRACT_REQUESTS = Counter(
+    "pbproxy_documents_extracted_total",
+    "Chat-path document extractions",
+    ["status", "mime_type"],
+)
+DOC_EXTRACT_BYTES = Histogram(
+    "pbproxy_documents_extracted_bytes",
+    "Chat-path extracted document size in bytes",
+    buckets=[1024, 10_000, 100_000, 500_000, 1_000_000, 5_000_000, 10_000_000, 25_000_000],
 )
 
 # ── Globals ──────────────────────────────────────────────────
@@ -510,6 +524,63 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
 
         allowed_servers = policy.get("mcp_servers_allowed", tool_injector.server_names)
 
+        # ── Document Attachments (before PII scan) ────────────────
+        # Converts file/document blocks in messages[].content to plain text so
+        # the PII scanner and the LLM both see the extracted content.
+        t0_docs = time.perf_counter()
+        doc_status = "skipped"
+        doc_meta: dict[str, Any] = {}
+        try:
+            rewritten_messages, doc_result = await extract_documents_in_messages(
+                request.messages, pii_http_client, policy,
+            )
+            if doc_result.files > 0:
+                doc_status = "ok"
+                request.messages = rewritten_messages
+                avg_size = doc_result.bytes_in_total // max(doc_result.files, 1)
+                for mime in doc_result.mime_types:
+                    DOC_EXTRACT_REQUESTS.labels(status="ok", mime_type=mime).inc()
+                    DOC_EXTRACT_BYTES.observe(avg_size)
+                log.info(
+                    "Document extraction: files=%d bytes_in=%d chars_out=%d extractors=%s",
+                    doc_result.files, doc_result.bytes_in_total,
+                    doc_result.chars_out_total, doc_result.extractors,
+                )
+            doc_meta = {
+                "files": doc_result.files,
+                "bytes_in": doc_result.bytes_in_total,
+                "chars_out": doc_result.chars_out_total,
+                "extractors": doc_result.extractors,
+                "mime_types": doc_result.mime_types,
+            }
+        except DocumentExtractionError as exc:
+            doc_status = "error"
+            doc_meta = {
+                "status_code": exc.status_code,
+                "detail": exc.detail,
+                "mime_type": exc.mime_type,
+            }
+            DOC_EXTRACT_REQUESTS.labels(
+                status="error", mime_type=exc.mime_type,
+            ).inc()
+            rt_err = get_current_telemetry()
+            if rt_err is not None:
+                rt_err.add_step(PipelineStep(
+                    name="document_extract", service="pb-proxy",
+                    duration_ms=round((time.perf_counter() - t0_docs) * 1000, 2),
+                    status="error", metadata=doc_meta,
+                ))
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+        finally:
+            if doc_status != "error":
+                rt = get_current_telemetry()
+                if rt is not None:
+                    rt.add_step(PipelineStep(
+                        name="document_extract", service="pb-proxy",
+                        duration_ms=round((time.perf_counter() - t0_docs) * 1000, 2),
+                        status=doc_status, metadata=doc_meta,
+                    ))
+
         # ── PII Protection ───────────────────────────────────────
         pii_reverse_map: dict[str, str] = {}
         pii_enabled = policy.get("pii_scan_enabled", config.PII_SCAN_ENABLED)
@@ -867,6 +938,8 @@ async def messages(request: MessagesRequest, raw_request: Request):
         allowed_servers = policy.get("mcp_servers_allowed", tool_injector.server_names)
 
         # ── Convert Anthropic messages to OpenAI format ─────────────
+        # `document` blocks (PDF/DOCX/...) are normalized to OpenAI `file` blocks
+        # by anthropic_format.py so the extractor below can handle them.
         openai_messages = anthropic_messages_to_openai(request.messages)
 
         # Prepend system message if provided
@@ -874,6 +947,51 @@ async def messages(request: MessagesRequest, raw_request: Request):
             system_text = request.system if isinstance(request.system, str) else \
                 "\n".join(b.get("text", "") for b in request.system if isinstance(b, dict))
             openai_messages.insert(0, {"role": "system", "content": system_text})
+
+        # ── Document Attachments (before PII scan) ────────────────
+        t0_docs_msg = time.perf_counter()
+        try:
+            rewritten_msg, doc_result_msg = await extract_documents_in_messages(
+                openai_messages, pii_http_client, policy,
+            )
+        except DocumentExtractionError as exc:
+            DOC_EXTRACT_REQUESTS.labels(
+                status="error", mime_type=exc.mime_type,
+            ).inc()
+            rt_err = get_current_telemetry()
+            if rt_err is not None:
+                rt_err.add_step(PipelineStep(
+                    name="document_extract", service="pb-proxy",
+                    duration_ms=round((time.perf_counter() - t0_docs_msg) * 1000, 2),
+                    status="error",
+                    metadata={
+                        "status_code": exc.status_code,
+                        "detail": exc.detail,
+                        "mime_type": exc.mime_type,
+                    },
+                ))
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+        if doc_result_msg.files > 0:
+            openai_messages = rewritten_msg
+            avg_size = doc_result_msg.bytes_in_total // max(doc_result_msg.files, 1)
+            for mime in doc_result_msg.mime_types:
+                DOC_EXTRACT_REQUESTS.labels(status="ok", mime_type=mime).inc()
+                DOC_EXTRACT_BYTES.observe(avg_size)
+        rt_msg = get_current_telemetry()
+        if rt_msg is not None:
+            rt_msg.add_step(PipelineStep(
+                name="document_extract", service="pb-proxy",
+                duration_ms=round((time.perf_counter() - t0_docs_msg) * 1000, 2),
+                status="ok" if doc_result_msg.files else "skipped",
+                metadata={
+                    "files": doc_result_msg.files,
+                    "bytes_in": doc_result_msg.bytes_in_total,
+                    "chars_out": doc_result_msg.chars_out_total,
+                    "extractors": doc_result_msg.extractors,
+                    "mime_types": doc_result_msg.mime_types,
+                },
+            ))
 
         # ── PII Protection ──────────────────────────────────────────
         pii_reverse_map: dict[str, str] = {}

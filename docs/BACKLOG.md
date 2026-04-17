@@ -1,6 +1,6 @@
 # Powerbrain Backlog
 
-Last updated: 2026-04-09. All backlog items completed or closed.
+Last updated: 2026-04-17.
 
 ---
 
@@ -11,6 +11,65 @@ Last updated: 2026-04-09. All backlog items completed or closed.
 
 ### B-22: ~~GitHub Actions CI (pre-public)~~
 **Done** — `.github/workflows/pr-validate.yml` with 3 jobs (unit-tests, opa-tests, docker-build).
+
+### B-50: Unified auth layer for internal ingestion endpoints
+**Open** — The ingestion service exposes `/extract`, `/pseudonymize`, `/ingest`,
+`/ingest/chunks`, and `/scan` without application-level authentication. Today
+they are only reachable inside the `pb-net` Docker network, but there is no
+defense-in-depth if the network is ever mis-scoped or a container is exposed
+by accident. Add a service-token check (similar to the existing
+`MCP_AUTH_TOKEN` that pb-proxy sends to mcp-server) as shared middleware on
+the ingestion FastAPI app. Scope includes all internal endpoints, not just
+`/extract`.
+
+**Acceptance criteria:**
+- New env var / Docker Secret (e.g. `INGESTION_AUTH_TOKEN`) read via
+  `shared.config.read_secret()`
+- Pure-ASGI middleware rejects requests without `Authorization: Bearer <token>`
+  on protected paths (exempt: `/health`, `/metrics`, `/metrics/json`)
+- pb-proxy, pb-worker, and adapters pass the token on every call
+- Integration test confirms unauthenticated calls get 401
+- Back-compat: if no token configured, middleware logs a loud warning and
+  allows everything (so existing deployments aren't broken on upgrade)
+
+### B-51: End-to-end integration test for document attachments
+**Open** — Add `tests/integration/e2e/test_document_attachment.py` that spins
+up the docker-compose stack (via the existing `docker_stack` fixture), posts
+a small PDF/DOCX via `/v1/chat/completions` **and** `/v1/messages`, and
+asserts the LLM (mock) sees plain text plus a `document_extract` pipeline
+step in `_telemetry`. Include error paths: 413 oversize, 415 wrong MIME,
+403 role denied.
+
+**Acceptance criteria:**
+- Both OpenAI `file` and Anthropic `document` block shapes covered
+- Test fixture PDFs/DOCX live under `testdata/documents/`
+- Runs under `RUN_INTEGRATION_TESTS=1 pytest -m integration`
+- Verifies PII inside a PDF is pseudonymized before reaching the LLM mock
+
+### B-52: ADR — evaluate Docling as markitdown replacement
+**Open** — IBM's [Docling](https://github.com/DS4SD/docling) (MIT, 2024+) is a
+more RAG-optimized document extractor with better table/layout understanding
+than markitdown. Write an ADR in `docs/technology-decisions.md` comparing
+markitdown vs. Docling on our corpus (Office handbooks, scanned PDFs,
+tabular XLSX), with a benchmark script that measures quality + latency on
+`testdata/documents/`. Decision: stay with markitdown, adopt Docling, or
+run Docling as an opt-in backend alongside.
+
+**Out of scope:** implementation — this ticket is research + ADR only.
+
+### B-53: Grafana dashboard panels for document extraction
+**Open** — The new Prometheus metrics
+(`pb_extract_requests_total`, `pb_extract_duration_seconds`,
+`pb_extract_bytes_in`, `pbproxy_documents_extracted_total`,
+`pbproxy_documents_extracted_bytes`) are scraped but not visualized. Add a
+panel group to `monitoring/grafana-dashboards/` covering:
+- Requests per second by status (`ok` / `error`) and MIME type
+- p50/p95/p99 extraction duration
+- Input-size histogram (log-scale)
+- Proxy-side success vs. error rate over time
+
+Should appear on the existing "Powerbrain Overview" dashboard rather than
+living in its own file.
 
 ---
 

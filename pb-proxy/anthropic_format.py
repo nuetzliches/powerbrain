@@ -78,19 +78,24 @@ def _convert_assistant_message(msg: dict) -> list[dict]:
 
 
 def _convert_user_message(msg: dict) -> list[dict]:
-    """Convert an Anthropic user message (possibly with tool_result blocks)."""
+    """Convert an Anthropic user message (possibly with tool_result blocks).
+
+    Anthropic `document` blocks (PDF/DOCX/XLSX attachments) are normalized to
+    the OpenAI `file` block shape so the downstream document-extraction step in
+    pb-proxy can handle both formats uniformly.
+    """
     content = msg.get("content", "")
 
     if isinstance(content, str):
         return [{"role": "user", "content": content}]
 
     # Separate tool_result blocks from regular content
-    text_parts: list[str] = []
+    content_parts: list[dict] = []
     tool_results: list[dict] = []
 
     for block in content:
         if isinstance(block, str):
-            text_parts.append(block)
+            content_parts.append({"type": "text", "text": block})
         elif isinstance(block, dict):
             block_type = block.get("type", "")
             if block_type == "tool_result":
@@ -100,21 +105,99 @@ def _convert_user_message(msg: dict) -> list[dict]:
                     "content": _flatten_content(block.get("content", "")),
                 })
             elif block_type == "text":
-                text_parts.append(block.get("text", ""))
+                content_parts.append({"type": "text", "text": block.get("text", "")})
             elif block_type == "image":
                 # Pass image blocks as-is for now (simplified)
-                text_parts.append("[image]")
+                content_parts.append({"type": "text", "text": "[image]"})
+            elif block_type == "document":
+                file_block = _anthropic_document_to_openai_file(block)
+                if file_block is not None:
+                    content_parts.append(file_block)
 
     result: list[dict] = []
 
     # Emit tool results first (OpenAI expects them right after assistant tool_calls)
     result.extend(tool_results)
 
-    # Then the text content if any
-    if text_parts:
-        result.append({"role": "user", "content": "\n".join(text_parts)})
+    if content_parts:
+        # If every part is text, flatten to a single string (back-compat with
+        # the pre-document-support behavior).
+        if all(p.get("type") == "text" for p in content_parts):
+            result.append({
+                "role": "user",
+                "content": "\n".join(p["text"] for p in content_parts),
+            })
+        else:
+            result.append({"role": "user", "content": content_parts})
 
     return result if result else [{"role": "user", "content": ""}]
+
+
+def _anthropic_document_to_openai_file(block: dict) -> dict | None:
+    """Convert an Anthropic `document` block to an OpenAI `file` block.
+
+    Anthropic shape:
+        {"type": "document",
+         "source": {"type": "base64", "media_type": "application/pdf", "data": "..."},
+         "title": "optional.pdf"}
+
+    OpenAI shape:
+        {"type": "file",
+         "file": {"file_data": "data:application/pdf;base64,...", "filename": "..."}}
+
+    Returns None if the block is not a base64-sourced document (URL sources are
+    skipped — the extractor cannot fetch remote files, by design).
+    """
+    source = block.get("source") or {}
+    if source.get("type") != "base64":
+        return None
+
+    media_type = source.get("media_type", "application/octet-stream")
+    data = source.get("data", "")
+    if not data:
+        return None
+
+    filename = block.get("title") or block.get("filename") or "attachment"
+    # Ensure the filename carries an extension so the extractor can dispatch.
+    if "." not in filename:
+        ext = _MIME_TO_EXT.get(media_type.lower().strip())
+        if ext:
+            filename = f"{filename}{ext}"
+
+    return {
+        "type": "file",
+        "file": {
+            "file_data": f"data:{media_type};base64,{data}",
+            "filename": filename,
+        },
+    }
+
+
+# Local MIME mapping (kept intentionally small — pb-proxy does not depend on
+# the ingestion package). Keep in sync with
+# ingestion/content_extraction/mime.py::MIME_TO_EXTENSION when adding types.
+_MIME_TO_EXT: dict[str, str] = {
+    "application/pdf": ".pdf",
+    "application/msword": ".doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.ms-excel": ".xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.ms-powerpoint": ".ppt",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/vnd.ms-outlook": ".msg",
+    "message/rfc822": ".eml",
+    "application/rtf": ".rtf",
+    "text/rtf": ".rtf",
+    "text/plain": ".txt",
+    "text/markdown": ".md",
+    "text/csv": ".csv",
+    "text/html": ".html",
+    "application/json": ".json",
+    "application/xml": ".xml",
+    "text/xml": ".xml",
+    "application/x-yaml": ".yaml",
+    "text/yaml": ".yaml",
+}
 
 
 # ── OpenAI → Anthropic (response egress) ─────────────────────

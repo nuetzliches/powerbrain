@@ -22,17 +22,29 @@ log = logging.getLogger("pb-github")
 
 API_BASE = "https://api.github.com"
 
-# File extensions considered binary (skip during ingestion)
-BINARY_EXTENSIONS = frozenset({
+# File extensions considered "hard binary" — always skipped regardless of
+# the adapter's `allow_documents` setting (images, archives, native binaries).
+HARD_BINARY_EXTENSIONS = frozenset({
     ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".webp", ".bmp",
     ".woff", ".woff2", ".ttf", ".eot", ".otf",
     ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
     ".exe", ".dll", ".so", ".dylib", ".bin",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
     ".mp3", ".mp4", ".wav", ".avi", ".mov", ".mkv",
     ".pyc", ".pyo", ".class", ".o", ".a",
     ".db", ".sqlite", ".sqlite3",
 })
+
+# Office document extensions — skipped by default for code repos, but can be
+# opt-in via `allow_documents: true` in repos.yaml. Extraction runs through the
+# shared ContentExtractor (markitdown + fallbacks).
+DOCUMENT_EXTENSIONS = frozenset({
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".msg", ".eml", ".rtf",
+})
+
+# Back-compat alias — old callers (tests, external imports) see the legacy
+# union of both sets, preserving the historical default of skipping documents.
+BINARY_EXTENSIONS = HARD_BINARY_EXTENSIONS | DOCUMENT_EXTENSIONS
 
 # Directories to always skip
 SKIP_DIRS = frozenset({
@@ -92,8 +104,14 @@ def detect_language(path: str) -> str | None:
     return lang_map.get(ext)
 
 
-def should_skip_path(path: str) -> bool:
-    """Check if a path should be skipped based on default patterns."""
+def should_skip_path(path: str, allow_documents: bool = False) -> bool:
+    """Check if a path should be skipped based on default patterns.
+
+    When ``allow_documents`` is True, Office-document extensions
+    (``DOCUMENT_EXTENSIONS``) are **not** considered skip-worthy — the caller
+    is expected to fetch them as bytes and run them through the shared
+    ContentExtractor. Hard-binary extensions remain blocked unconditionally.
+    """
     parts = path.split("/")
 
     # Skip directories
@@ -106,12 +124,22 @@ def should_skip_path(path: str) -> bool:
     if filename in SKIP_FILES:
         return True
 
-    # Skip binary extensions
+    # Skip hard-binary extensions unconditionally
     _, ext = os.path.splitext(filename.lower())
-    if ext in BINARY_EXTENSIONS:
+    if ext in HARD_BINARY_EXTENSIONS:
+        return True
+
+    # Skip document extensions unless opt-in
+    if ext in DOCUMENT_EXTENSIONS and not allow_documents:
         return True
 
     return False
+
+
+def is_document_path(path: str) -> bool:
+    """Return True if the file is an Office/PDF document eligible for extraction."""
+    _, ext = os.path.splitext(path.lower())
+    return ext in DOCUMENT_EXTENSIONS
 
 
 @dataclass
@@ -311,4 +339,28 @@ class GitHubProvider:
             raise
         except Exception:
             log.warning("Failed to fetch %s@%s", path, ref, exc_info=True)
+            return None
+
+    async def get_file_bytes(self, path: str, ref: str) -> bytes | None:
+        """Fetch the raw file bytes for binary-aware consumers (e.g. document
+        extraction via markitdown). Returns ``None`` on 404 or fetch error.
+        """
+        try:
+            resp = await self._request(
+                "GET",
+                f"/repos/{self.owner}/{self.repo}/contents/{path}",
+                params={"ref": ref},
+            )
+            data = resp.json()
+            if data.get("encoding") == "base64":
+                return base64.b64decode(data["content"])
+            # Non-base64 variants (e.g. submodule symlinks) are not usable here
+            return None
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                log.debug("File not found: %s@%s", path, ref)
+                return None
+            raise
+        except Exception:
+            log.warning("Failed to fetch bytes for %s@%s", path, ref, exc_info=True)
             return None

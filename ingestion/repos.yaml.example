@@ -41,3 +41,19 @@ repos:
   #   app_id: 12345
   #   installation_id: 67890
   #   private_key_path: "/run/secrets/github_app_key"
+
+  # Example: Handbook/policy repo with PDFs, DOCX, XLSX
+  # Set allow_documents: true to fetch Office/PDF files as bytes and run them
+  # through the shared ContentExtractor (markitdown + fallbacks). Default is
+  # false, which preserves the text-only behavior expected for code repos.
+  # Extracted documents are ingested with source_type="github-document" and
+  # pass through the same pipeline as any other content (PII, OPA, embedding).
+  # - name: "company-handbook"
+  #   url: "https://github.com/your-org/handbook"
+  #   branch: "main"
+  #   collection: "pb_general"
+  #   project: "handbook"
+  #   classification: "internal"
+  #   auth: "pat"
+  #   allow_documents: true
+  #   include: ["handbook/**", "policies/**"]

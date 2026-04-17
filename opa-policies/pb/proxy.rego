@@ -94,3 +94,38 @@ mcp_servers_allowed := input.configured_servers if {
 mcp_servers_allowed := data.pb.config.proxy.default_mcp_servers if {
     not _is_elevated_role
 }
+
+# ── Chat-Path Document Attachments ──────────────────────────
+# Controls whether document attachments (PDF/DOCX/XLSX/PPTX/MSG/...) in
+# `messages[].content` may be extracted and inlined into the LLM request.
+
+default documents_allowed := false
+
+documents_allowed if {
+    some role in data.pb.config.proxy.documents.allowed_roles
+    input.agent_role == role
+}
+
+default documents_max_bytes := 0
+
+documents_max_bytes := data.pb.config.proxy.documents.max_bytes if {
+    documents_allowed
+}
+
+default documents_allowed_mime_types := set()
+
+documents_allowed_mime_types := {m | some m in data.pb.config.proxy.documents.allowed_mime_types} if {
+    documents_allowed
+}
+
+default documents_max_files := 0
+
+documents_max_files := data.pb.config.proxy.documents.max_files_per_request.elevated if {
+    documents_allowed
+    _is_elevated_role
+}
+
+documents_max_files := data.pb.config.proxy.documents.max_files_per_request.default if {
+    documents_allowed
+    not _is_elevated_role
+}

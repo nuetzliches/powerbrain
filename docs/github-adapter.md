@@ -204,11 +204,39 @@ Three-stage filter applied to every file in the tree:
 1. **Default skip patterns** (always applied):
    - Directories: `.git/`, `node_modules/`, `vendor/`, `__pycache__/`, `.venv/`, `dist/`, `build/`, etc.
    - Lock files: `package-lock.json`, `yarn.lock`, `poetry.lock`, `Gemfile.lock`
-   - Binary extensions: `.png`, `.jpg`, `.pdf`, `.zip`, `.exe`, `.pyc`, `.db`, `.mp4`, etc.
+   - Hard-binary extensions: `.png`, `.jpg`, `.zip`, `.exe`, `.pyc`, `.db`, `.mp4`, etc.
+   - Office/PDF documents (`.pdf`, `.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`,
+     `.msg`, `.eml`, `.rtf`) are skipped **unless** `allow_documents: true` is set
+     on the repo (see below).
 2. **exclude** patterns from config (if matched → reject)
 3. **include** patterns from config (if set and not matched → reject)
 
 Globs use `fnmatch` syntax — `*`, `?`, `[abc]`, and `**` for recursive matching.
+
+### Document Ingestion (opt-in)
+
+Some repos contain authoritative prose inside Office documents or PDFs — e.g.
+company handbooks, policies, RFCs. Set `allow_documents: true` in `repos.yaml`
+to fetch those files as bytes and run them through the shared
+`ContentExtractor` (markitdown primary, python-docx/openpyxl/python-pptx
+fallbacks). Extracted text is ingested with `source_type="github-document"`
+and flows through the normal pipeline (PII scan, OPA quality gate, chunking,
+embedding, L0/L1/L2 layers).
+
+```yaml
+- name: "company-handbook"
+  url: "https://github.com/your-org/handbook"
+  branch: "main"
+  collection: "pb_general"
+  project: "handbook"
+  classification: "internal"
+  auth: "pat"
+  allow_documents: true
+  include: ["handbook/**", "policies/**"]
+```
+
+Default is `false` so code repos are unaffected. Hard binaries (images,
+archives, executables) remain blocked regardless of this setting.
 
 ### Rate Limiting
 

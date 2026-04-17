@@ -213,7 +213,7 @@
             },
             "proxy": {
               "type": "object",
-              "required": ["allowed_roles", "required_tools", "max_iterations", "elevated_roles", "default_mcp_servers"],
+              "required": ["allowed_roles", "required_tools", "max_iterations", "elevated_roles", "default_mcp_servers", "documents"],
               "additionalProperties": false,
               "properties": {
                 "allowed_roles": {
@@ -244,6 +244,39 @@
                   "type": "array",
                   "items": { "type": "string" },
                   "description": "MCP servers accessible to non-elevated roles"
+                },
+                "documents": {
+                  "type": "object",
+                  "description": "Document-attachment policy for the chat endpoint (PDF, DOCX, XLSX, ...).",
+                  "required": ["allowed_roles", "max_bytes", "allowed_mime_types", "max_files_per_request"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "allowed_roles": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "description": "Roles that may attach documents to chat messages"
+                    },
+                    "max_bytes": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "description": "Per-file size cap in bytes"
+                    },
+                    "allowed_mime_types": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "minItems": 1,
+                      "description": "Canonical MIME types the extractor will process"
+                    },
+                    "max_files_per_request": {
+                      "type": "object",
+                      "required": ["default", "elevated"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "default": { "type": "integer", "minimum": 0 },
+                        "elevated": { "type": "integer", "minimum": 0 }
+                      }
+                    }
+                  }
                 }
               }
             },
