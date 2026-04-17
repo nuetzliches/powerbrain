@@ -99,7 +99,29 @@
         "required_tools": ["search_knowledge", "check_policy"],
         "max_iterations": { "default": 5, "elevated": 10 },
         "elevated_roles": ["developer", "admin"],
-        "default_mcp_servers": ["powerbrain"]
+        "default_mcp_servers": ["powerbrain"],
+        "documents": {
+          "allowed_roles": ["analyst", "developer", "admin"],
+          "max_bytes": 25000000,
+          "allowed_mime_types": [
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-powerpoint",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.ms-outlook",
+            "message/rfc822",
+            "application/rtf",
+            "text/rtf",
+            "text/plain",
+            "text/markdown",
+            "text/csv",
+            "text/html"
+          ],
+          "max_files_per_request": { "default": 3, "elevated": 10 }
+        }
       },
 
       "summarization": {

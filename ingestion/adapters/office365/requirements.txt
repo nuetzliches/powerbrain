@@ -1,19 +1,11 @@
 # Office 365 adapter dependencies
-# Separate from core ingestion requirements
+#
+# Content extraction libs (markitdown, python-docx, openpyxl, python-pptx,
+# beautifulsoup4) have moved into ingestion/requirements.txt because they are
+# now shared across adapters and the /extract endpoint.
 
 # Microsoft Graph authentication
 msal>=1.28.0
-
-# Content extraction (Office docs → Markdown)
-markitdown>=0.1.0
-
-# Fallback extraction (if markitdown unavailable)
-python-docx>=1.1.0
-openpyxl>=3.1.0
-python-pptx>=0.6.23
-
-# HTML parsing (OneNote pages, email bodies)
-beautifulsoup4>=4.12.0
 
 # HTTP client (shared with core)
 httpx>=0.27.0

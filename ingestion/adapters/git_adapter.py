@@ -21,6 +21,7 @@ from ingestion.adapters.providers.github import (
     PATAuth,
     detect_content_type,
     detect_language,
+    is_document_path,
     should_skip_path,
 )
 
@@ -41,6 +42,10 @@ class RepoConfig:
     include: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
     poll_interval_seconds: int = 300
+    # When true, Office documents (PDF/DOCX/XLSX/PPTX/MSG/...) are fetched as
+    # bytes and extracted via the shared ContentExtractor. Default off: code
+    # repos normally should not ingest docs.
+    allow_documents: bool = False
     # GitHub App fields (only when auth="github-app")
     app_id: int | None = None
     installation_id: int | None = None
@@ -72,10 +77,15 @@ def _matches_patterns(path: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(path, p) for p in patterns)
 
 
-def _should_include(path: str, include: list[str], exclude: list[str]) -> bool:
+def _should_include(
+    path: str,
+    include: list[str],
+    exclude: list[str],
+    allow_documents: bool = False,
+) -> bool:
     """Determine if a file path should be included based on config patterns."""
-    # Default skip patterns always apply
-    if should_skip_path(path):
+    # Default skip patterns always apply (hard binaries + optionally docs)
+    if should_skip_path(path, allow_documents=allow_documents):
         return False
 
     # If exclude patterns match, skip
@@ -128,13 +138,20 @@ class GitAdapter(SourceAdapter):
             )
         return PATAuth(token)
 
-    def _make_document(self, path: str, content: str, sha: str) -> NormalizedDocument:
+    def _make_document(
+        self,
+        path: str,
+        content: str,
+        sha: str,
+        source_type: str = "github",
+        content_type: str | None = None,
+    ) -> NormalizedDocument:
         """Create a NormalizedDocument from file content."""
         return NormalizedDocument(
             content=content,
-            content_type=detect_content_type(path),
+            content_type=content_type or detect_content_type(path),
             source_ref=f"github:{self._owner}/{self._repo}:{path}@{sha}",
-            source_type="github",
+            source_type=source_type,
             language=detect_language(path),
             metadata={
                 "repo_url": self.config.url,
@@ -147,6 +164,26 @@ class GitAdapter(SourceAdapter):
             },
         )
 
+    async def _fetch_document_text(self, path: str, sha: str) -> tuple[str | None, str]:
+        """Fetch a document as bytes and extract its text via ContentExtractor.
+
+        Returns ``(text, extractor)`` where ``extractor`` is the backend used.
+        Returns ``(None, ...)`` on fetch or extraction failure.
+        """
+        raw = await self._provider.get_file_bytes(path, sha)
+        if raw is None:
+            return None, "fetch_failed"
+
+        # Lazy-import to keep GitAdapter importable without markitdown installed
+        from content_extraction import ContentExtractor  # noqa: WPS433
+        extractor = ContentExtractor()
+        try:
+            text, backend = extractor.extract_from_bytes_detailed(raw, path)
+        except Exception:
+            log.warning("Document extraction failed for %s", path, exc_info=True)
+            return None, "failed"
+        return text, backend
+
     async def get_current_sha(self) -> str:
         return await self._provider.get_branch_sha(self.config.branch)
 
@@ -158,7 +195,10 @@ class GitAdapter(SourceAdapter):
         docs: list[NormalizedDocument] = []
         included = [
             e for e in tree
-            if _should_include(e.path, self.config.include, self.config.exclude)
+            if _should_include(
+                e.path, self.config.include, self.config.exclude,
+                allow_documents=self.config.allow_documents,
+            )
         ]
 
         log.info(
@@ -167,9 +207,9 @@ class GitAdapter(SourceAdapter):
         )
 
         for entry in included:
-            content = await self._provider.get_file_content(entry.path, sha)
-            if content is not None:
-                docs.append(self._make_document(entry.path, content, sha))
+            doc = await self._fetch_as_document(entry.path, sha)
+            if doc is not None:
+                docs.append(doc)
 
         return docs
 
@@ -182,14 +222,41 @@ class GitAdapter(SourceAdapter):
         for change in changes:
             if change.status in ("added", "modified", "renamed"):
                 if not _should_include(
-                    change.path, self.config.include, self.config.exclude
+                    change.path, self.config.include, self.config.exclude,
+                    allow_documents=self.config.allow_documents,
                 ):
                     continue
-                content = await self._provider.get_file_content(change.path, current_sha)
-                if content is not None:
-                    docs.append(self._make_document(change.path, content, current_sha))
+                doc = await self._fetch_as_document(change.path, current_sha)
+                if doc is not None:
+                    docs.append(doc)
 
         return docs
+
+    async def _fetch_as_document(self, path: str, sha: str) -> NormalizedDocument | None:
+        """Fetch a single file and turn it into a NormalizedDocument.
+
+        Text files go through ``get_file_content`` as before. Office documents
+        (PDF/DOCX/XLSX/...) are fetched as bytes and extracted via the shared
+        ContentExtractor when ``allow_documents`` is enabled.
+        """
+        if self.config.allow_documents and is_document_path(path):
+            text, extractor = await self._fetch_document_text(path, sha)
+            if text is None or not text.strip():
+                log.info(
+                    "Skipping document %s@%s (no extractable text, backend=%s)",
+                    path, sha, extractor,
+                )
+                return None
+            return self._make_document(
+                path, text, sha,
+                source_type="github-document",
+                content_type="markdown",
+            )
+
+        content = await self._provider.get_file_content(path, sha)
+        if content is None:
+            return None
+        return self._make_document(path, content, sha)
 
     async def get_file_changes(self, since_sha: str) -> list[FileChange]:
         """Get all file changes (add/modify/remove) since a SHA."""

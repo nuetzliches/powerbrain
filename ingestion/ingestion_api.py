@@ -20,6 +20,9 @@ import json
 import logging
 import uuid
 import time
+import asyncio
+import base64
+import binascii
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -37,6 +40,12 @@ from prometheus_client import Counter, Histogram, make_asgi_app as prom_make_asg
 
 from pii_scanner import get_scanner
 from snapshot_service import create_snapshot
+from content_extraction import (
+    ContentExtractor,
+    detect_content_type,
+    mime_type_to_extension,
+    should_skip_file,
+)
 
 # ── Configuration ────────────────────────────────────────────
 QDRANT_URL   = os.getenv("QDRANT_URL",   "http://qdrant:6333")
@@ -112,6 +121,18 @@ try:
         "pb_ingestion_embedding_batch_size", "Embedding batch size",
         buckets=[1, 5, 10, 20, 50, 100],
     )
+    pb_extract_requests = Counter(
+        "pb_extract_requests_total", "Document extraction requests",
+        ["status", "extractor"],
+    )
+    pb_extract_duration = Histogram(
+        "pb_extract_duration_seconds", "Document extraction duration",
+        buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
+    )
+    pb_extract_bytes_in = Histogram(
+        "pb_extract_bytes_in", "Document extraction input size in bytes",
+        buckets=[1024, 10_000, 100_000, 500_000, 1_000_000, 5_000_000, 10_000_000, 25_000_000],
+    )
 except ValueError as e:
     if "Duplicated timeseries" in str(e):
         # Metrics already registered, get them from registry
@@ -128,6 +149,12 @@ except ValueError as e:
                     pb_ingestion_pii_entities = collector
                 elif collector._name == "pb_ingestion_embedding_batch_size":
                     pb_ingestion_embedding_batch = collector
+                elif collector._name == "pb_extract_requests_total":
+                    pb_extract_requests = collector
+                elif collector._name == "pb_extract_duration_seconds":
+                    pb_extract_duration = collector
+                elif collector._name == "pb_extract_bytes_in":
+                    pb_extract_bytes_in = collector
     else:
         raise
 
@@ -176,6 +203,11 @@ app.mount("/metrics", metrics_app)
 qdrant: AsyncQdrantClient | None = None
 http_client: httpx.AsyncClient | None = None
 pg_pool: asyncpg.Pool | None = None
+
+# ── Document extraction (shared singleton, markitdown lazy-init on first use) ──
+_content_extractor = ContentExtractor()
+EXTRACT_MAX_BYTES = int(os.getenv("EXTRACT_MAX_BYTES", str(25 * 1024 * 1024)))  # 25 MB
+EXTRACT_TIMEOUT_SECONDS = float(os.getenv("EXTRACT_TIMEOUT_SECONDS", "30"))
 
 
 @app.on_event("startup")
@@ -249,6 +281,41 @@ class ChunkIngestRequest(BaseModel):
     metadata: dict[str, Any] = {}
     source: str
     source_type: str = "text"
+
+
+class ExtractRequest(BaseModel):
+    """Request for binary document extraction.
+
+    Called primarily by pb-proxy for chat attachments, but also usable by any
+    adapter that needs to convert a binary blob to text via the shared pipeline.
+    """
+    data: str = Field(
+        min_length=1,
+        description="Base64-encoded raw bytes of the file",
+    )
+    filename: str = Field(
+        min_length=1,
+        description="Filename including extension (used to select the extractor)",
+    )
+    mime_type: str | None = Field(
+        default=None,
+        description="Optional MIME hint (not authoritative; extension takes precedence)",
+    )
+    max_bytes: int | None = Field(
+        default=None,
+        description="Optional per-request size cap. Always capped by EXTRACT_MAX_BYTES.",
+    )
+
+
+class ExtractResponse(BaseModel):
+    text: str
+    content_type: str
+    extractor: str = Field(
+        description="Backend used: markitdown | fallback | text | ocr | skipped | failed"
+    )
+    bytes_in: int
+    chars_out: int
+    truncated: bool = False
 
 
 # ── Helper Functions ────────────────────────────────────────
@@ -959,6 +1026,132 @@ async def pseudonymize(req: PseudonymizeRequest) -> PseudonymizeResponse:
         contains_pii=scan_result.contains_pii,
         entity_types=entity_types,
     )
+
+
+@app.post("/extract", response_model=ExtractResponse)
+async def extract_document(req: ExtractRequest) -> ExtractResponse:
+    """Extract text from a binary document (PDF, DOCX, XLSX, PPTX, MSG, ...).
+
+    Called by pb-proxy for chat attachments and by adapters that need to
+    convert binary blobs to text. Runs the sync markitdown call off the
+    event loop so the service stays responsive.
+    """
+    t0 = time.perf_counter()
+    extractor_used = "unknown"
+    status_label = "error"
+
+    try:
+        # ── Pre-decode size guard (reject giant base64 strings before we
+        #    allocate the decoded bytes — base64 is ~4/3× the raw size, so
+        #    this caps the encoded input at 4/3× EXTRACT_MAX_BYTES). ──────
+        encoded_cap = (EXTRACT_MAX_BYTES * 4) // 3 + 16  # +16 padding slack
+        if len(req.data) > encoded_cap:
+            status_label = "too_large"
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"Encoded payload too large ({len(req.data)} > {encoded_cap} chars). "
+                    f"Raw document must not exceed {EXTRACT_MAX_BYTES} bytes."
+                ),
+            )
+
+        # ── Decode base64 ────────────────────────────────────────
+        try:
+            raw = base64.b64decode(req.data, validate=False)
+        except (binascii.Error, ValueError) as exc:
+            status_label = "bad_base64"
+            raise HTTPException(status_code=400, detail=f"Invalid base64 payload: {exc}")
+
+        bytes_in = len(raw)
+        if pb_extract_bytes_in:
+            pb_extract_bytes_in.observe(bytes_in)
+
+        # ── Size caps ───────────────────────────────────────────
+        hard_cap = EXTRACT_MAX_BYTES
+        effective_cap = min(req.max_bytes, hard_cap) if req.max_bytes else hard_cap
+        if bytes_in > effective_cap:
+            status_label = "too_large"
+            raise HTTPException(
+                status_code=413,
+                detail=f"Payload exceeds limit ({bytes_in} > {effective_cap} bytes)",
+            )
+
+        # ── File-type gating ────────────────────────────────────
+        filename = req.filename.strip()
+        if not filename:
+            status_label = "bad_filename"
+            raise HTTPException(
+                status_code=400,
+                detail="Filename must not be empty after trimming whitespace",
+            )
+        if should_skip_file(filename):
+            status_label = "skipped"
+            raise HTTPException(
+                status_code=415,
+                detail=f"File type not supported for extraction: {filename}",
+            )
+
+        # If the caller provided a mime type but no extension, append one
+        if "." not in os.path.basename(filename) and req.mime_type:
+            ext = mime_type_to_extension(req.mime_type)
+            if ext:
+                filename = filename + ext
+
+        # ── Run extraction (sync markitdown in thread; bounded by timeout) ──
+        async def _run_extraction() -> tuple[str | None, str]:
+            return await asyncio.to_thread(
+                _content_extractor.extract_from_bytes_detailed, raw, filename
+            )
+
+        with trace_operation(
+            _ingestion_tracer, "extract", "ingestion",
+            mime_type=req.mime_type or "", bytes_in=bytes_in,
+        ):
+            try:
+                text, extractor_used = await asyncio.wait_for(
+                    _run_extraction(), timeout=EXTRACT_TIMEOUT_SECONDS
+                )
+            except asyncio.TimeoutError:
+                status_label = "timeout"
+                raise HTTPException(
+                    status_code=504,
+                    detail=f"Extraction timed out after {EXTRACT_TIMEOUT_SECONDS:.0f}s",
+                )
+            except HTTPException:
+                raise
+            except Exception as exc:
+                log.warning("Extraction error for %s: %s", filename, exc, exc_info=True)
+                status_label = "error"
+                raise HTTPException(status_code=500, detail=f"Extraction failed: {exc}")
+
+        if extractor_used == "skipped":
+            status_label = "skipped"
+            raise HTTPException(
+                status_code=415,
+                detail=f"File type not supported for extraction: {filename}",
+            )
+
+        if not text or not text.strip():
+            status_label = "empty"
+            raise HTTPException(
+                status_code=422,
+                detail=f"Extraction produced no text ({extractor_used})",
+            )
+
+        status_label = "ok"
+        return ExtractResponse(
+            text=text,
+            content_type=detect_content_type(filename),
+            extractor=extractor_used,
+            bytes_in=bytes_in,
+            chars_out=len(text),
+            truncated=False,
+        )
+    finally:
+        if pb_extract_requests:
+            pb_extract_requests.labels(status=status_label, extractor=extractor_used).inc()
+        if pb_extract_duration:
+            pb_extract_duration.observe(time.perf_counter() - t0)
 
 
 @app.get("/health")
