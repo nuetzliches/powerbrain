@@ -7,30 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-17
+
 ### Added
 
-- Shared document-extraction package (`ingestion/content_extraction/`) — lifts the
-  Office 365 adapter's `ContentExtractor` into a reusable module with markitdown
-  as the primary backend and python-docx/openpyxl/python-pptx/BeautifulSoup fallbacks.
-- `POST /extract` endpoint on the ingestion service — converts base64-encoded
-  binary documents (PDF, DOCX, XLSX, PPTX, MSG, EML, RTF, ...) to text.
-  Size-capped via `EXTRACT_MAX_BYTES` (default 25 MB) and timeout via
-  `EXTRACT_TIMEOUT_SECONDS` (default 30 s).
-- Chat-path document attachments in pb-proxy (`/v1/chat/completions` and
-  `/v1/messages`) — extracts `file`/`input_file` (OpenAI) and `document`
-  (Anthropic) blocks via `/extract` before PII scanning and LLM forwarding.
-- GitHub adapter opt-in document ingestion via `allow_documents: true` in
-  `repos.yaml` — fetches Office/PDF files as bytes and runs them through the
-  shared `ContentExtractor`. Ingested as `source_type="github-document"`.
-- New OPA policy `pb.proxy.documents` — gates chat attachments by role, size,
-  MIME type, and per-request file count. Data-driven via `data.json`.
-- Optional Tesseract OCR fallback for scanned PDFs — activated at build time
-  via `--build-arg WITH_OCR=true` plus runtime `OCR_FALLBACK_ENABLED=true`.
-- Prometheus metrics: `pb_extract_requests_total`, `pb_extract_duration_seconds`,
-  `pb_extract_bytes_in`, `pbproxy_documents_extracted_total`,
-  `pbproxy_documents_extracted_bytes`.
-- 42 new unit tests (content_extraction, /extract endpoint, pb-proxy document
-  extraction, Anthropic document normalization) + 11 new OPA tests.
+- **Office 365 Adapter** (#42): second source adapter. Syncs SharePoint,
+  OneDrive, Outlook Mail, Teams Messages, and OneNote into the knowledge
+  base via Microsoft Graph API.
+  - Delta Queries for incremental sync (all providers except OneNote,
+    which uses timestamp-based sync).
+  - OAuth2 Client Credentials (app-only) + Delegated Auth (OneNote,
+    post-March-2025 Microsoft Graph policy).
+  - Content extraction via Microsoft `markitdown` + format-specific
+    fallbacks (python-docx, openpyxl, python-pptx, BeautifulSoup).
+  - Site-level classification in YAML config.
+  - Teams ↔ SharePoint deduplication (file attachments stored as refs only).
+  - Resource Unit budget tracking + `$batch` API usage.
+  - Config: `ingestion/office365.yaml` (example provided).
+- **Shared document extraction** (`ingestion/content_extraction/`, #46) —
+  `ContentExtractor` lifted out of the Office 365 adapter into a reusable
+  module so all adapters + the `/extract` endpoint share one surface.
+- **`POST /extract` endpoint** on the ingestion service (#46) — converts
+  base64-encoded binary documents (PDF, DOCX, XLSX, PPTX, MSG, EML, RTF, ...)
+  to text. Size-capped via `EXTRACT_MAX_BYTES` (default 25 MB) and bounded
+  by `EXTRACT_TIMEOUT_SECONDS` (default 30 s).
+- **Chat-path document attachments** in pb-proxy (#46,
+  `/v1/chat/completions` and `/v1/messages`) — extracts `file`/`input_file`
+  (OpenAI) and `document` (Anthropic) blocks via `/extract` before PII
+  scanning and LLM forwarding.
+- **GitHub adapter opt-in document ingestion** (#46) via
+  `allow_documents: true` in `repos.yaml` — fetches Office/PDF files as
+  bytes and runs them through the shared `ContentExtractor`. Ingested as
+  `source_type="github-document"`.
+- **New OPA policy `pb.proxy.documents`** (#46) — gates chat attachments by
+  role, size, MIME type, and per-request file count. Data-driven via
+  `data.json`.
+- **Optional Tesseract OCR fallback** (#46) for scanned PDFs — activated at
+  build time via `--build-arg WITH_OCR=true` plus runtime
+  `OCR_FALLBACK_ENABLED=true`.
+- **Prometheus metrics**: `pb_extract_requests_total`,
+  `pb_extract_duration_seconds`, `pb_extract_bytes_in`,
+  `pbproxy_documents_extracted_total`, `pbproxy_documents_extracted_bytes`.
+- 42 new unit tests (content_extraction, /extract endpoint, pb-proxy
+  document extraction, Anthropic document normalization) + 11 new OPA tests.
 
 ### Changed
 
@@ -42,22 +61,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub adapter's `BINARY_EXTENSIONS` split into `HARD_BINARY_EXTENSIONS`
   (images/archives — always blocked) and `DOCUMENT_EXTENSIONS` (opt-in via
   `allow_documents`). Legacy alias preserved for backward compatibility.
-- Consolidated dependency version bumps across all services:
+- Consolidated dependency version bumps across all services (#47):
   - Security floors: `pyjwt>=2.10`, `pyyaml>=6.0.2`, `httpx>=0.28`,
     `msal>=1.32` (Entra-ID fixes), `litellm>=1.80` (proxy).
   - OpenTelemetry unified across ingestion/pb-proxy/reranker/mcp-server at
     `>=1.27` (core) and `>=0.48b0` (instrumentation).
   - `torch>=2.6` in reranker for CVE coverage.
-  - `python-pptx` upper bound corrected from `<1.0` to `<2.0` so the current
-    1.0.x series installs.
   - Worker requirements relaxed from hard pins to SemVer-safe ranges
     (`apscheduler>=3.11,<4.0` — 4.x is an incompatible rewrite,
     `python-dotenv>=1.2,<2.0`, `qdrant-client>=1.15,<2.0`, etc.).
 
 ### Fixed
 
+- CI PR validation detects changes correctly across multi-commit pushes
+  (#43) — use `BEFORE_SHA` instead of `HEAD^` for the change-detection
+  baseline.
 - `python-pptx<1.0` ceiling excluded the already-released 1.0.x series —
-  corrected to `<2.0`.
+  corrected to `<2.0` (#47).
+
+### Documentation
+
+- GitHub adapter reference added and cross-linked with the Office 365
+  adapter docs (#44).
+- `docs/architecture.md` §2.9 Document Extraction — new section describing
+  the shared extractor, policy gates, and OCR fallback.
+- 4 new backlog tickets logged: B-50 (unified ingestion auth layer),
+  B-51 (E2E test for chat document attachments), B-52 (ADR markitdown vs.
+  Docling), B-53 (Grafana panels for extraction metrics).
 
 ## [0.4.0] - 2026-04-10
 
