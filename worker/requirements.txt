@@ -1,6 +1,11 @@
-apscheduler==3.10.4
-asyncpg==0.31.0
-httpx==0.28.1
-prometheus-client==0.25.0
-qdrant-client==1.13.2
-python-dotenv==1.2.2
+# pb-worker dependencies.
+# Ranges (not hard pins) so pip-audit / Dependabot can pick up patches;
+# upper bounds cap at the next major to block incompatible rewrites.
+# IMPORTANT: APScheduler 4.x is a full rewrite and NOT compatible with the
+# 3.x scheduler API used in worker/scheduler.py — keep the `<4.0` ceiling.
+apscheduler>=3.11,<4.0
+asyncpg>=0.30,<1.0
+httpx>=0.28,<1.0
+prometheus-client>=0.25,<1.0
+qdrant-client>=1.15,<2.0
+python-dotenv>=1.2,<2.0
