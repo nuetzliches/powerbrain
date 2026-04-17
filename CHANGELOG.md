@@ -42,6 +42,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub adapter's `BINARY_EXTENSIONS` split into `HARD_BINARY_EXTENSIONS`
   (images/archives — always blocked) and `DOCUMENT_EXTENSIONS` (opt-in via
   `allow_documents`). Legacy alias preserved for backward compatibility.
+- Consolidated dependency version bumps across all services:
+  - Security floors: `pyjwt>=2.10`, `pyyaml>=6.0.2`, `httpx>=0.28`,
+    `msal>=1.32` (Entra-ID fixes), `litellm>=1.80` (proxy).
+  - OpenTelemetry unified across ingestion/pb-proxy/reranker/mcp-server at
+    `>=1.27` (core) and `>=0.48b0` (instrumentation).
+  - `torch>=2.6` in reranker for CVE coverage.
+  - `python-pptx` upper bound corrected from `<1.0` to `<2.0` so the current
+    1.0.x series installs.
+  - Worker requirements relaxed from hard pins to SemVer-safe ranges
+    (`apscheduler>=3.11,<4.0` — 4.x is an incompatible rewrite,
+    `python-dotenv>=1.2,<2.0`, `qdrant-client>=1.15,<2.0`, etc.).
+
+### Fixed
+
+- `python-pptx<1.0` ceiling excluded the already-released 1.0.x series —
+  corrected to `<2.0`.
 
 ## [0.4.0] - 2026-04-10
 

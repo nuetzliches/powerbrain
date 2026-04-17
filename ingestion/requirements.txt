@@ -1,20 +1,20 @@
 fastapi>=0.115
 uvicorn[standard]>=0.34
-httpx>=0.27
+httpx>=0.28
 asyncpg>=0.30
 qdrant-client>=1.12
 presidio-analyzer>=2.2
 presidio-anonymizer>=2.2
 spacy>=3.7
 pydantic>=2.0
-pyyaml>=6.0
-pyjwt[crypto]>=2.8
+pyyaml>=6.0.2
+pyjwt[crypto]>=2.10
 cachetools>=5.3
 prometheus-client>=0.21
-opentelemetry-api>=1.20
-opentelemetry-sdk>=1.20
-opentelemetry-exporter-otlp-proto-grpc>=1.20
-opentelemetry-instrumentation-fastapi>=0.41b0
+opentelemetry-api>=1.27
+opentelemetry-sdk>=1.27
+opentelemetry-exporter-otlp-proto-grpc>=1.27
+opentelemetry-instrumentation-fastapi>=0.48b0
 opentelemetry-instrumentation-httpx>=0.48b0
 
 # ── Content extraction (used by Office 365 adapter, GitHub adapter (opt-in),
@@ -23,7 +23,7 @@ opentelemetry-instrumentation-httpx>=0.48b0
 markitdown>=0.1.5,<0.2
 python-docx>=1.1.0,<2.0
 openpyxl>=3.1.0,<4.0
-python-pptx>=0.6.23,<1.0
+python-pptx>=0.6.23,<2.0
 beautifulsoup4>=4.12.0,<5.0
 
 # ── Optional OCR fallback for scanned PDFs (default off) ──
