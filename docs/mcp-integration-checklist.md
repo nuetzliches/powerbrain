@@ -20,12 +20,12 @@ Checklist for connecting a new MCP server to the pb-proxy.
 ## Authentication
 
 - [ ] **Choose auth mode**: `bearer` (user token forwarding), `static` (fixed token from env var), `none`
-- [ ] **Define `forward_headers`**: which client headers must the proxy forward to the MCP? (e.g. `X-TC-PAT` for TimeCockpit)
+- [ ] **Define `forward_headers`**: which client headers must the proxy forward to the MCP? (e.g. `X-Custom-Auth` for a third-party service)
 - [ ] **Extend OPA policy**: add the server to `mcp_servers_allowed` in `proxy.rego` (which roles may access it?)
 
 ## General
 
-- [ ] **Set `prefix`**: unique namespace for tool names (e.g. `tc_`, `jira_`, `slack_`)
+- [ ] **Set `prefix`**: unique namespace for tool names (e.g. `crm_`, `jira_`, `slack_`)
 - [ ] **Set `required`**: must the server be reachable when the proxy starts? (`true` = proxy will not start without this server)
 - [ ] **Check `tool_whitelist`**: should only specific tools be exposed? (default: all tools of the server)
 - [ ] **Docker networking**: server must be reachable in the `proxy-net` network

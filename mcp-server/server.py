@@ -1396,7 +1396,7 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "source_type": {"type": "string",
-                                    "description": "Filter by source_type (e.g. 'timesheet', 'git-commit')"},
+                                    "description": "Filter by source_type (e.g. 'document', 'git-commit')"},
                     "project":     {"type": "string",
                                     "description": "Filter by project ID"},
                     "confirm":     {"type": "boolean",
