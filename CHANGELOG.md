@@ -7,6 +7,151 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-19
+
+Four features that together answer the questions enterprise
+decision-makers ask most often — *who can see what*, *what happens
+to our PII*, and *what does your pipeline do with our documents* —
+plus the sales-demo surfaces that make those answers visible in
+fifteen minutes.
+
+### Added
+
+- **Sales-Demo UI** (#50): opt-in Streamlit app `pb-demo` on port 8095,
+  profile `demo`. Starts out with three tabs:
+  - Tab A *Same question, different answers* — analyst vs viewer
+    side-by-side on the same query, shows OPA access matrix in action.
+  - Tab B *We never stored the secret* — live PII vault scan → ingest →
+    HMAC-token reveal with purpose-bound `fields_to_redact`.
+  - Tab C *The org behind the answer* — `streamlit-agraph` rendering of
+    the NovaTech knowledge graph (8 employees → 3 departments → 4
+    projects) via `graph_query`.
+  - Plus pre-seeded demo keys (`pb_demo_analyst_localonly`,
+    `pb_demo_viewer_localonly`), 6 German-PII customer records, and an
+    8-employee graph seed. Quickstart gained `--seed` / `--demo` flags
+    and auto-generates Postgres / HMAC / proxy secrets.
+  - 15-min presenter script in `docs/playbook-sales-demo.md`.
+- **Editions (Community vs Enterprise) + `/vault/resolve`** (#52):
+  - Every service advertises `"edition": "community"` (`mcp-server`)
+    or `"enterprise"` (`pb-proxy`) on `/health` + `/transparency`.
+  - New mcp-server endpoint `POST /vault/resolve` does text-level
+    de-pseudonymisation (regex extract `[ENTITY_TYPE:hash]` → SQL
+    hash-match → OPA vault policy → purpose-based field redaction →
+    audit log).
+  - pb-proxy's agent loop calls `/vault/resolve` on tool results under
+    the OPA-gated `pb.proxy.pii_resolve_tool_results` policy (enabled /
+    allowed_roles / allowed_purposes / default_purpose). Client
+    declares purpose via `X-Purpose` header.
+  - Stats surface on `_proxy.vault_resolutions` + `X-Proxy-Vault-*`
+    response headers.
+  - Demo Tab D *MCP vs Proxy* renders both paths side-by-side on the
+    same query; purpose toggle changes what gets redacted.
+  - Full capability matrix + topology in `docs/editions.md`.
+- **Pipeline Inspector + `/preview` endpoint** (#54):
+  - New `POST /preview` on the ingestion service: runs the full
+    pipeline (optional extract → PII scan → quality score + OPA
+    ingestion gate → OPA privacy decision) against a document
+    without persisting to PostgreSQL or Qdrant. Returns a structured
+    `{extract, scan, quality, privacy, summary}` payload with
+    per-phase timings and an explicit `would_ingest` verdict.
+  - Demo Tab E *Pipeline Inspector* with three adapter-representative
+    fixtures (SharePoint contract, Outlook support email, GitHub
+    README) plus optional file upload. Editable `classification` /
+    `source_type` / `legal_basis` so the OPA policy effect is
+    visible live.
+
+### Changed
+
+- **OPA policy data path** (#50): `opa-policies/data.json` moved from
+  the `pb/` subdirectory to the repo-level `opa-policies/` so the OPA
+  `run` loader mounts it at `data.pb.config.*` instead of the
+  doubly-prefixed `data.pb.pb.config.*`. Without this, the ingestion
+  `pii_action` check was silently stuck on the default `block`. CI
+  invocations and Docker volume mounts updated; no deployer action
+  needed beyond pulling the new image.
+- **Graph PII masking** (#51): `_mask_graph_pii` in the MCP server is
+  now deterministic and policy-driven. The previous Presidio-per-value
+  scan produced inconsistent results on non-English names (Elena →
+  `<PERSON>`, Tim → unchanged, Sarah → `<LOCATION>`). New `pb.config.
+  graph_pii_keys` section in `data.json` maps graph property keys to
+  Presidio entity-type labels; the walker replaces matched values
+  with `<ENTITY_TYPE>` deterministically. Admin-editable at runtime
+  via `manage_policies`.
+- **Access matrix** (#50): `confidential` now includes `analyst` and
+  `developer` in addition to `admin`. Matches realistic RBAC for
+  customer records and salary bands; `restricted` stays admin-only.
+- **Quickstart flags** (#50): `./scripts/quickstart.sh --seed` seeds
+  the 21 base documents; `--demo` adds the PII customer records, the
+  graph seed, the demo UI profile, the pb-proxy profile, and pulls the
+  summarisation model. Auto-generates Postgres / vault / proxy-service
+  tokens — no more manual `.env` editing.
+
+### Fixed
+
+- **PII pseudonymisation overlap** (#53): Presidio can emit overlapping
+  hits on the same character range (classic case: the trailing digit
+  run of a German IBAN is also a valid phone number). The pseudonymiser
+  replaced both in descending-position order and produced nested
+  artefacts like `[IBAN_CODE:73c1acb4]db0d4]`. New
+  `_resolve_overlapping_spans` helper picks one hit per overlap —
+  higher score wins, then longer span, then earlier start — and is
+  applied consistently in `scan_text`, `mask_text`, and
+  `pseudonymize_text`.
+- **Graph `find_path`** (#50): `_parse_return_columns` in
+  `graph_service.py` was splitting `"RETURN a, r, b LIMIT 1"` into
+  three columns and sanitising the third to `"bLIMIT1"`, which broke
+  the row lookup. The parser now strips `LIMIT`/`ORDER BY`/`SKIP`/
+  `OFFSET` before splitting.
+- **DE date-of-birth recognizer** (#50): dropped the pure-numeric
+  `dd.mm.yyyy` pattern because it fired on harmless policy dates (e.g.
+  "gültig ab 01.01.2025"), which the ingestion quality gate then
+  blocked wholesale. The keyword-anchored variant (`Geburtsdatum:`,
+  `geb.`, `geboren am`) remains and covers the real use case.
+- **Vault schema width** (#50): `pii_vault.pseudonym_mapping.pseudonym`
+  was `VARCHAR(20)` — too narrow for longer entity tags like
+  `[DE_DATE_OF_BIRTH:…]` or `[EMAIL_ADDRESS:…]`. Migration `021`
+  widens it to `VARCHAR(64)` idempotently.
+- **pb-proxy bootstrap** (#52): the proxy service token in
+  `secrets/mcp_auth_token.txt` must be a registered `api_keys` row so
+  the proxy can reach mcp-server under `AUTH_REQUIRED=true`. The
+  quickstart now registers it automatically via
+  `scripts/register-proxy-key.sh`; previously this was a silent
+  startup failure on fresh installs.
+- **Seed authentication** (#50): `testdata/seed.py` now sends
+  `Authorization: Bearer` on every MCP call; the graph seed step
+  previously couldn't initialise the MCP session under the default
+  `AUTH_REQUIRED=true`, and the seed container aborted before the
+  graph ran.
+- **Suggestion buttons in demo Tab A** (#51): moved outside the
+  `st.form` so clicks actually fire and update the query / trigger
+  the search.
+
+### Migration notes
+
+- **`init-db/020_viewer_role.sql`** (new): widens the `api_keys.
+  agent_role` CHECK to include `viewer` so the pre-seeded demo viewer
+  key is valid. Existing deployments pick this up on next restart;
+  no manual steps required.
+- **`init-db/021_widen_vault_pseudonym.sql`** (new): widens
+  `pii_vault.pseudonym_mapping.pseudonym` to `VARCHAR(64)`.
+  Idempotent — re-runs on existing databases.
+- **`opa-policies/data.json`** moved from `opa-policies/pb/data.json`
+  (same for `policy_data_schema.json`). Deployers who mount these
+  paths directly in custom `docker-compose` overrides should update
+  their mounts.
+- **pb-proxy service token**: `secrets/mcp_auth_token.txt` is now
+  auto-registered by `quickstart.sh`. Manual deployments should run
+  `./scripts/register-proxy-key.sh` once after the Postgres init
+  completes.
+
+### Stats
+
+- **989 unit tests** pass (13 new), **68.95% coverage** (CI threshold
+  68%).
+- **131/131 OPA policy tests** pass (12 new for `graph_pii_keys` +
+  `pii_resolve_tool_results` + viewer role regressions).
+- **5 merged PRs** since v0.5.0: #50, #51, #52, #53, #54.
+
 ## [0.5.0] - 2026-04-17
 
 ### Added
