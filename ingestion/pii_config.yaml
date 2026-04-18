@@ -15,6 +15,10 @@ languages:
 
 # Presidio built-in entity types to detect
 # Full list: https://microsoft.github.io/presidio/supported_entities/
+# NOTE: DATE_OF_BIRTH is not a Presidio built-in — use the DE_DATE_OF_BIRTH
+# custom recognizer below. The built-in phone/IBAN detectors are kept because
+# they score valid numbers highly; the German custom regexes below act as a
+# high-recall fallback for common formats that the built-ins miss.
 entity_types:
   - PERSON
   - EMAIL_ADDRESS
@@ -23,7 +27,6 @@ entity_types:
   - CREDIT_CARD
   - IP_ADDRESS
   - LOCATION
-  - DATE_OF_BIRTH
   # - ORGANIZATION  # uncomment to detect company/org names
 
 # Custom regex-based recognizers
@@ -43,6 +46,50 @@ custom_recognizers:
       - name: de_social_security
         regex: '\b\d{2}\s?\d{6}\s?[A-Z]\s?\d{3}\b'
         score: 0.6
+
+  # German mobile + landline fallback. Presidio's built-in phonenumbers-based
+  # recognizer scores many DE formats below 0.7 and drops them. This pattern
+  # anchors on the mobile prefixes (15x/16x/17x) or a 2–5 digit landline area
+  # code after +49 / 0049 / 0, so it does not match arbitrary digit runs
+  # inside an IBAN or postal code. Score 0.85 < IBAN Loose (0.95) so any
+  # overlap resolves in favour of the IBAN.
+  - name: German Phone Number
+    entity_type: PHONE_NUMBER
+    language: de
+    patterns:
+      - name: de_phone_full
+        regex: '(?<![\w+])(?:\+49|0049|\(0\)|0)[\s\-/()]*(?:1[5-7]\d|[2-9]\d{1,4})[\s\-/()]+\d{3,}(?:[\s\-]?\d+)*(?!\d)'
+        score: 0.85
+
+  # IBAN fallback — a permissive pattern that matches anything IBAN-shaped
+  # without running the checksum. Presidio's built-in IbanRecognizer requires
+  # a valid checksum and silently drops test/fake IBANs commonly used in demos
+  # and fixtures, which is exactly what we want to pseudonymise. Scored above
+  # the phone recognizer so overlaps resolve to IBAN.
+  - name: IBAN Loose
+    entity_type: IBAN_CODE
+    language: de
+    patterns:
+      - name: iban_loose_de
+        regex: '\b[A-Z]{2}\d{2}(?:[\s]?[A-Z0-9]{4}){3,7}(?:[\s]?[A-Z0-9]{1,4})?\b'
+        score: 0.95
+
+  # Date of Birth — keyword-anchored only.
+  # Presidio ships no DATE_OF_BIRTH recognizer out of the box, and spaCy's
+  # DE NER frequently mislabels dotted dates as LOCATION. A bare numeric
+  # pattern would also flag harmless policy effective dates ("gültig ab
+  # 01.01.2025") which the ingestion quality gate then blocks wholesale.
+  # Require an explicit birthdate keyword to fire this recognizer.
+  - name: German Date of Birth
+    entity_type: DE_DATE_OF_BIRTH
+    language: de
+    patterns:
+      - name: de_dob_with_keyword
+        # Trailing `\.?` swallows the sentence-final period so that spaCy's
+        # LOCATION mislabel for dotted dates fully overlaps and gets dropped
+        # by Presidio's conflict resolution (higher score wins).
+        regex: '(?:Geburtsdatum|geb\.?|geboren\s+am)\s*:?\s*\d{1,2}\.\s?\d{1,2}\.\s?\d{2,4}\.?'
+        score: 0.97
 
 # Metadata fields that may contain PII.
 # Maps Qdrant payload / metadata key name → OPA fields_to_redact category.

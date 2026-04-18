@@ -37,12 +37,25 @@ test_confidential_allowed_for_admin if {
     access.allow with input as {"agent_role": "admin", "classification": "confidential", "action": "read"}
 }
 
-test_confidential_denied_for_analyst if {
-    not access.allow with input as {"agent_role": "analyst", "classification": "confidential", "action": "read"}
+# confidential covers routine business-internal records (customer profiles,
+# salary bands, contracts); analysts and developers need read access for
+# their day-to-day work. Only `restricted` (board- / audit-only) is locked
+# down to admin.
+test_confidential_allowed_for_analyst if {
+    access.allow with input as {"agent_role": "analyst", "classification": "confidential", "action": "read"}
 }
 
-test_confidential_denied_for_developer if {
-    not access.allow with input as {"agent_role": "developer", "classification": "confidential", "action": "read"}
+test_confidential_allowed_for_developer if {
+    access.allow with input as {"agent_role": "developer", "classification": "confidential", "action": "read"}
+}
+
+# Demo sales-UI contract: viewer must NOT see confidential or restricted data.
+test_confidential_denied_for_viewer if {
+    not access.allow with input as {"agent_role": "viewer", "classification": "confidential", "action": "read"}
+}
+
+test_restricted_denied_for_viewer if {
+    not access.allow with input as {"agent_role": "viewer", "classification": "restricted", "action": "read"}
 }
 
 test_restricted_allowed_for_admin if {

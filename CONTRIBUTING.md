@@ -46,7 +46,7 @@ docker run --rm -v "$(pwd):/app" -w /app python:3.12-slim bash -c "
 "
 
 # OPA policy tests
-docker exec pb-opa /opa test /policies/pb/ -v
+docker exec pb-opa /opa test /policies/ -v
 ```
 
 ## How to Contribute

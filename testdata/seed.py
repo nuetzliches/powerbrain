@@ -20,6 +20,7 @@ Environment variables:
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -32,12 +33,17 @@ INGESTION_URL = os.environ.get("INGESTION_URL", "http://ingestion:8081")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333")
 MCP_URL = os.environ.get("MCP_URL", "http://mcp-server:8080")
+MCP_API_KEY = os.environ.get(
+    "MCP_API_KEY",
+    "pb_dev_localonly_do_not_use_in_production",
+)
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
 
 MAX_WAIT_SECONDS = int(os.environ.get("MAX_WAIT_SECONDS", "120"))
 POLL_INTERVAL = 3
 
 DOCUMENTS_FILE = Path(__file__).parent / "documents.json"
+DOCUMENTS_PII_FILE = Path(__file__).parent / "documents_pii.json"
 
 
 # ── HTTP helpers ─────────────────────────────────────────────────────────────
@@ -57,16 +63,26 @@ def http_get(url: str, timeout: int = 10) -> dict | str | None:
         return None
 
 
-def http_post(url: str, payload: dict, timeout: int = 120) -> dict:
-    """POST request with JSON body, returns parsed JSON."""
+def http_post(
+    url: str,
+    payload: dict,
+    timeout: int = 120,
+    *,
+    auth: bool = False,
+) -> dict:
+    """POST request with JSON body, returns parsed JSON.
+
+    Pass auth=True when the endpoint requires the MCP bearer token
+    (anything under /mcp on the MCP server when AUTH_REQUIRED=true).
+    """
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=data, method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        },
-    )
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if auth and MCP_API_KEY:
+        headers["Authorization"] = f"Bearer {MCP_API_KEY}"
+    req = urllib.request.Request(url, data=data, method="POST", headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         body = resp.read().decode()
         return json.loads(body) if body else {}
@@ -111,24 +127,34 @@ def wait_for_all_services() -> None:
     wait_for_service("Qdrant", f"{QDRANT_URL}/healthz")
     wait_for_service("Ollama", f"{OLLAMA_URL}/api/tags")
     wait_for_service("Ingestion API", f"{INGESTION_URL}/health")
-    # MCP server has no /health — try initialize
+    # MCP server has no /health — try initialize (auth required when
+    # AUTH_REQUIRED=true, which is the default).
     deadline = time.time() + MAX_WAIT_SECONDS
+    last_err: Exception | None = None
     while time.time() < deadline:
         try:
-            http_post(f"{MCP_URL}/mcp", {
-                "jsonrpc": "2.0", "id": 0, "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-03-26",
-                    "capabilities": {},
-                    "clientInfo": {"name": "seed", "version": "1.0"},
+            http_post(
+                f"{MCP_URL}/mcp",
+                {
+                    "jsonrpc": "2.0", "id": 0, "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-03-26",
+                        "capabilities": {},
+                        "clientInfo": {"name": "seed", "version": "1.0"},
+                    },
                 },
-            })
+                auth=True,
+            )
             print("  MCP server: ready")
             break
-        except Exception:
+        except Exception as exc:
+            last_err = exc
             time.sleep(POLL_INTERVAL)
     else:
-        print("  MCP server: TIMEOUT — aborting", file=sys.stderr)
+        print(
+            f"  MCP server: TIMEOUT — aborting (last error: {last_err})",
+            file=sys.stderr,
+        )
         sys.exit(1)
     print()
 
@@ -181,18 +207,30 @@ def ensure_collections(collections: set[str]) -> None:
 
 def ingest_document(doc: dict) -> dict:
     """Send a single document through the Ingestion API."""
+    metadata: dict[str, object] = {
+        "title": doc["title"],
+        "original_source": doc["source"],
+        "type": doc["type"],
+        "seed_id": doc["id"],
+    }
+    # Optional: data_category is required for vault access via the PII policy.
+    if doc.get("data_category"):
+        metadata["data_category"] = doc["data_category"]
+    # OPA's privacy policy blocks confidential ingestion unless a legal_basis
+    # is supplied. The testdata is fictional — use a per-doc override or
+    # fall back to "legitimate_interest" so the PII-vault demo can seed.
+    if doc.get("legal_basis"):
+        metadata["legal_basis"] = doc["legal_basis"]
+    elif doc.get("classification") == "confidential":
+        metadata["legal_basis"] = "legitimate_interest"
+
     payload = {
         "source": doc["content"],
         "source_type": "json",
         "collection": doc["collection"],
         "project": doc.get("project"),
         "classification": doc["classification"],
-        "metadata": {
-            "title": doc["title"],
-            "original_source": doc["source"],
-            "type": doc["type"],
-            "seed_id": doc["id"],
-        },
+        "metadata": metadata,
     }
     return http_post(f"{INGESTION_URL}/ingest", payload)
 
@@ -204,15 +242,19 @@ def verify_seeded_data() -> bool:
     """Quick verification: search via MCP and check we get results."""
     print("Verifying seeded data via MCP search...")
 
-    # Initialize MCP session
-    http_post(f"{MCP_URL}/mcp", {
-        "jsonrpc": "2.0", "id": 1, "method": "initialize",
-        "params": {
-            "protocolVersion": "2025-03-26",
-            "capabilities": {},
-            "clientInfo": {"name": "seed-verify", "version": "1.0"},
+    # Initialize MCP session (auth required)
+    http_post(
+        f"{MCP_URL}/mcp",
+        {
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "seed-verify", "version": "1.0"},
+            },
         },
-    })
+        auth=True,
+    )
 
     # Search each collection
     collections = {
@@ -223,19 +265,22 @@ def verify_seeded_data() -> bool:
 
     all_ok = True
     for collection, query in collections.items():
-        result = http_post(f"{MCP_URL}/mcp", {
-            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {
-                "name": "search_knowledge",
-                "arguments": {
-                    "query": query,
-                    "collection": collection,
-                    "top_k": 1,
-                    "agent_id": "seed-verify",
-                    "agent_role": "admin",
+        # agent_id/role are derived from the API key — no longer tool params.
+        result = http_post(
+            f"{MCP_URL}/mcp",
+            {
+                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {
+                    "name": "search_knowledge",
+                    "arguments": {
+                        "query": query,
+                        "collection": collection,
+                        "top_k": 1,
+                    },
                 },
             },
-        })
+            auth=True,
+        )
 
         try:
             content = json.loads(result["result"]["content"][0]["text"])
@@ -255,16 +300,48 @@ def verify_seeded_data() -> bool:
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Seed Powerbrain knowledge base with testdata.")
+    parser.add_argument(
+        "--include-pii",
+        action="store_true",
+        default=os.environ.get("SEED_INCLUDE_PII") == "1",
+        help="Also ingest documents_pii.json (customer records with German PII) "
+             "for the sales-demo PII-vault walkthrough. Default off, or set SEED_INCLUDE_PII=1.",
+    )
+    parser.add_argument(
+        "--no-base",
+        action="store_true",
+        default=os.environ.get("SEED_NO_BASE") == "1",
+        help="Skip the base documents.json (e.g. to ingest only PII fixtures).",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
-    # Load documents
-    if not DOCUMENTS_FILE.exists():
-        print(f"ERROR: {DOCUMENTS_FILE} not found", file=sys.stderr)
+    args = _parse_args()
+
+    documents: list[dict] = []
+    if not args.no_base:
+        if not DOCUMENTS_FILE.exists():
+            print(f"ERROR: {DOCUMENTS_FILE} not found", file=sys.stderr)
+            return 1
+        with open(DOCUMENTS_FILE) as f:
+            documents.extend(json.load(f))
+
+    if args.include_pii:
+        if not DOCUMENTS_PII_FILE.exists():
+            print(f"WARNING: {DOCUMENTS_PII_FILE} not found — skipping PII fixtures", file=sys.stderr)
+        else:
+            with open(DOCUMENTS_PII_FILE) as f:
+                documents.extend(json.load(f))
+
+    if not documents:
+        print("ERROR: no documents to ingest (check --include-pii / --no-base flags)", file=sys.stderr)
         return 1
 
-    with open(DOCUMENTS_FILE) as f:
-        documents: list[dict] = json.load(f)
-
-    print(f"Testdata Seed: {len(documents)} documents")
+    print(f"Testdata Seed: {len(documents)} documents"
+          f"{' (incl. PII fixtures)' if args.include_pii else ''}")
     print(f"  Ingestion API: {INGESTION_URL}")
     print(f"  Ollama:        {OLLAMA_URL}")
     print(f"  Qdrant:        {QDRANT_URL}")

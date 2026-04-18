@@ -86,6 +86,17 @@ def _parse_return_columns(cypher: str) -> list[str]:
     clause = match.group(1).strip()
     # Remove leading DISTINCT keyword
     clause = re.sub(r'^DISTINCT\s+', '', clause, flags=re.IGNORECASE)
+    # Strip trailing post-projection clauses so they don't get mistaken for
+    # column expressions. Without this, "RETURN a, r, b LIMIT 1" becomes
+    # three columns ["a", "r", "b LIMIT 1"] and the last one sanitises to
+    # "bLIMIT1", which breaks the row lookup. Order matters: trim from the
+    # first keyword that appears.
+    clause = re.split(
+        r'\b(?:ORDER\s+BY|SKIP|OFFSET|LIMIT)\b',
+        clause,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0].strip()
 
     # Split on commas that are not inside parentheses or brackets
     cols: list[str] = []

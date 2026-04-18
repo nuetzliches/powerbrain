@@ -7,7 +7,7 @@
       "access_matrix": {
         "public":       ["viewer", "analyst", "developer", "admin"],
         "internal":     ["analyst", "developer", "admin"],
-        "confidential": ["admin"],
+        "confidential": ["analyst", "developer", "admin"],
         "restricted":   ["admin"]
       },
       "write_roles": ["admin", "developer"],

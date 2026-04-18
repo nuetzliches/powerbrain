@@ -14,7 +14,7 @@ def _ensure_schema_loaded(monkeypatch):
         # Load schema from repo path for tests running outside Docker
         import os
         schema_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "opa-policies", "pb", "policy_data_schema.json",
+            os.path.dirname(__file__), "..", "..", "opa-policies", "policy_data_schema.json",
         )
         with open(schema_path) as f:
             schema = json.load(f)

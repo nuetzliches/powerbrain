@@ -77,16 +77,28 @@ Powerbrain is **not itself a high-risk AI system**, but Deployers who operate on
 
 The `pb-worker` maintenance container runs four APScheduler jobs: accuracy metrics refresh (5 min), pending-review timeouts (hourly), GDPR retention cleanup (daily 02:00), audit retention cleanup (daily 03:00).
 
+## 🎬 Run a Sales Demo in 5 Minutes
+
+Need to show a decision-maker what Powerbrain does? Spin up the full demo stack (role-aware search, live PII vault, knowledge-graph explorer) with a single command:
+
+```bash
+./scripts/quickstart.sh --demo
+```
+
+The script seeds 21 base documents, 6 customer records with German PII, and an 8-person org-chart graph. When healthchecks finish, open **http://localhost:8095** — a three-tab Streamlit app with inline presenter notes. The full 15-minute narrative lives in [docs/playbook-sales-demo.md](docs/playbook-sales-demo.md).
+
 ## 🚀 Quick Start
 
 ```bash
 git clone https://github.com/nuetzliches/powerbrain.git && cd powerbrain
 
 # Automated setup (recommended):
-./scripts/quickstart.sh
+./scripts/quickstart.sh            # base stack, no seed
+./scripts/quickstart.sh --seed     # + 21 sample documents
+./scripts/quickstart.sh --demo     # + PII vault fixtures + graph + demo UI on :8095
 
 # Or manually:
-cp .env.example .env        # Edit: set PG_PASSWORD
+cp .env.example .env        # PG_PASSWORD comes from secrets/pg_password.txt (auto-generated)
 docker compose --profile local-llm --profile local-reranker up -d
 docker exec pb-ollama ollama pull nomic-embed-text
 for col in pb_general pb_code pb_rules; do

@@ -39,6 +39,29 @@ class TestParseReturnColumns:
         assert result[0] == "name"
         assert result[1].startswith("name")
 
+    def test_return_with_limit_clause(self):
+        # Regression: "RETURN a, r, b LIMIT 1" used to parse as three columns
+        # ["a", "r", "b LIMIT 1"] and the third sanitised to "bLIMIT1",
+        # producing a KeyError at row lookup. find_path uses this shape.
+        result = _parse_return_columns(
+            "MATCH (a)-[r*1..3]-(b) RETURN a, r, b LIMIT 1"
+        )
+        assert result == ["a", "r", "b"]
+
+    def test_return_with_order_by(self):
+        result = _parse_return_columns(
+            "MATCH (n) RETURN n.name, n.score ORDER BY n.score DESC"
+        )
+        assert result == ["name", "score"]
+
+    def test_return_with_skip_offset(self):
+        result = _parse_return_columns("MATCH (n) RETURN n SKIP 5 LIMIT 10")
+        assert result == ["n"]
+
+    def test_return_with_offset_only(self):
+        result = _parse_return_columns("MATCH (n) RETURN n OFFSET 5")
+        assert result == ["n"]
+
 
 class TestEscapeCypherValue:
     def test_string_escapes_quotes(self):
