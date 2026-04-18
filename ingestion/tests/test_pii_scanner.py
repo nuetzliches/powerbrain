@@ -14,6 +14,7 @@ from pii_scanner import (
     RecognizerConfig,
     LanguageConfig,
     load_config,
+    _resolve_overlapping_spans,
 )
 
 
@@ -206,6 +207,104 @@ class TestPseudonymizeText:
         assert pseudo.endswith("]")
         assert "[EMAIL_ADDRESS:" in result
         assert "max@example.com" not in result
+
+
+def _span(entity_type: str, start: int, end: int, score: float):
+    """Small helper — Presidio AnalyzerResult-alike."""
+    m = MagicMock()
+    m.entity_type = entity_type
+    m.start = start
+    m.end = end
+    m.score = score
+    return m
+
+
+class TestResolveOverlappingSpans:
+    """Standalone tests for the span-overlap resolver.
+
+    Exercises the three tie-breakers independently plus the no-op case.
+    """
+
+    def test_empty(self):
+        assert _resolve_overlapping_spans([]) == []
+
+    def test_non_overlapping_kept_as_is(self):
+        a = _span("PERSON", 0, 5, 0.95)
+        b = _span("EMAIL_ADDRESS", 10, 25, 0.99)
+        out = _resolve_overlapping_spans([a, b])
+        assert len(out) == 2
+        assert [r.entity_type for r in out] == ["PERSON", "EMAIL_ADDRESS"]
+
+    def test_higher_score_wins_on_overlap(self):
+        # Regression: the IBAN tail overlap with the phone recognizer.
+        # IBAN 161..188 (score 0.95) vs PHONE_NUMBER 171..188 (score 0.85).
+        iban = _span("IBAN_CODE", 161, 188, 0.95)
+        phone = _span("PHONE_NUMBER", 171, 188, 0.85)
+        kept = _resolve_overlapping_spans([iban, phone])
+        assert len(kept) == 1
+        assert kept[0].entity_type == "IBAN_CODE"
+
+    def test_longer_span_wins_on_score_tie(self):
+        short = _span("LOCATION", 100, 106, 0.85)
+        long = _span("DE_DATE_OF_BIRTH", 88, 114, 0.85)
+        kept = _resolve_overlapping_spans([short, long])
+        assert len(kept) == 1
+        assert kept[0].entity_type == "DE_DATE_OF_BIRTH"
+
+    def test_earlier_start_wins_on_full_tie(self):
+        first = _span("PERSON", 5, 10, 0.9)
+        second = _span("LOCATION", 7, 12, 0.9)
+        kept = _resolve_overlapping_spans([first, second])
+        assert len(kept) == 1
+        assert kept[0].start == 5
+
+    def test_chain_of_overlaps_resolved_greedily(self):
+        """Three overlapping spans in sequence — highest-score wins all."""
+        a = _span("A", 0, 10, 0.7)
+        b = _span("B", 5, 15, 0.95)
+        c = _span("C", 12, 20, 0.8)
+        kept = _resolve_overlapping_spans([a, b, c])
+        # B covers 5..15, so A (0..10) and C (12..20) both overlap with B
+        # and are dropped. Result: [B] only.
+        assert [r.entity_type for r in kept] == ["B"]
+
+    def test_result_sorted_by_start(self):
+        """Caller-visible order is ascending by start regardless of input order."""
+        a = _span("A", 30, 35, 0.9)
+        b = _span("B", 0, 5, 0.9)
+        c = _span("C", 50, 60, 0.9)
+        kept = _resolve_overlapping_spans([a, b, c])
+        assert [r.start for r in kept] == [0, 30, 50]
+
+
+class TestPseudonymizeTextOverlap:
+    """Integration tests covering the overlap fix end-to-end."""
+
+    def test_iban_phone_overlap_no_artefacts(self, scanner):
+        """Regression for the `[IBAN_CODE:abc]db0d4]` artefact seen live."""
+        text = "Bankverbindung: DE68 2005 0550 1234 5678 90. Vertrag: abc"
+        # IBAN covers the full formatted number (start=16, end=43).
+        iban = _span("IBAN_CODE", 16, 43, 0.95)
+        # Phone recognizer matches the trailing digit run `0550 1234 5678 90`
+        # (start=26, end=43) — a proper subset / overlap with the IBAN.
+        phone = _span("PHONE_NUMBER", 26, 43, 0.85)
+        scanner.analyzer.analyze.return_value = [iban, phone]
+
+        result, mapping = scanner.pseudonymize_text(text, "salt")
+
+        # The full IBAN was replaced exactly once, nothing leaked.
+        iban_original = text[16:43]
+        assert iban_original in mapping
+        assert mapping[iban_original].startswith("[IBAN_CODE:")
+        # No dangling ']' or trailing digit fragments that used to come
+        # from the second, overlapping substitution writing into the tag.
+        assert "]db0d4]" not in result
+        assert result.count("[IBAN_CODE:") == 1
+        # Phone was discarded — lower score.
+        assert "[PHONE_NUMBER:" not in result
+        # Sanity: the prefix / suffix around the IBAN still match.
+        assert result.startswith("Bankverbindung: [IBAN_CODE:")
+        assert result.endswith(". Vertrag: abc")
 
 
 class TestPIIScannerConfig:
