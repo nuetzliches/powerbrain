@@ -132,6 +132,9 @@ class TestBuildTransparencyPayload:
         payload = await _build_transparency_payload()
 
         assert payload["service"] == "mcp-server"
+        # mcp-server always labels itself community; pb-proxy labels
+        # enterprise. Demos detect the pair by hitting both endpoints.
+        assert payload["edition"] == "community"
         assert "report_version" in payload and len(payload["report_version"]) == 16
         assert "system_purpose" in payload
         assert isinstance(payload["deployment_constraints"], list)

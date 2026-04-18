@@ -14,8 +14,8 @@ from pathlib import Path
 
 import streamlit as st
 
-from mcp_client import get_clients
-from panels import knowledge_graph, pii_vault, search_roles
+from mcp_client import get_clients, get_proxy_client
+from panels import knowledge_graph, mcp_vs_proxy, pii_vault, search_roles
 
 # ─── Page setup ─────────────────────────────────────────────────────────────
 
@@ -72,6 +72,7 @@ with st.sidebar:
 # ─── Main ───────────────────────────────────────────────────────────────────
 
 mcp, ingestion = get_clients()
+proxy = get_proxy_client()
 
 # Warm the session — Streamlit reruns on interaction, but a single init call
 # per-session is enough.
@@ -92,10 +93,11 @@ st.write(
     "Each tab runs against the same live instance — no mock data."
 )
 
-tab_search, tab_pii, tab_graph = st.tabs([
+tab_search, tab_pii, tab_graph, tab_editions = st.tabs([
     "A · Same question, different answers",
     "B · We never stored the secret",
     "C · The org behind the answer",
+    "D · MCP vs Proxy (editions)",
 ])
 
 with tab_search:
@@ -106,3 +108,6 @@ with tab_pii:
 
 with tab_graph:
     knowledge_graph.render(mcp, DEMO_ANALYST_KEY)
+
+with tab_editions:
+    mcp_vs_proxy.render(mcp, proxy, DEMO_ANALYST_KEY)

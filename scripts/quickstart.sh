@@ -66,6 +66,15 @@ if [ ! -f secrets/vault_hmac_secret.txt ]; then
     info "  secrets/vault_hmac_secret.txt"
 fi
 
+# pb-proxy uses a separate API key to reach mcp-server under AUTH_REQUIRED.
+# The file needs to exist even when the proxy isn't in this profile so that
+# Compose can mount the secret later without prompting for a rebuild.
+if [ ! -f secrets/mcp_auth_token.txt ]; then
+    openssl rand -hex 32 | awk '{printf "pb_%s", $0}' > secrets/mcp_auth_token.txt
+    chmod 600 secrets/mcp_auth_token.txt
+    info "  secrets/mcp_auth_token.txt"
+fi
+
 # ── Start services ──────────────────────────────────────────
 compose_profiles=(--profile local-llm --profile local-reranker)
 if [ "$enable_seed" = "1" ]; then
@@ -99,6 +108,15 @@ wait_for "PostgreSQL"  "http://localhost:8080/health" 60  # mcp-server depends o
 wait_for "Qdrant"      "http://localhost:6333/healthz"
 wait_for "OPA"         "http://localhost:8181/health"
 wait_for "Reranker"    "http://localhost:8082/health"
+
+# pb-proxy needs an api_keys row for its internal token. Register it
+# now (idempotent) so the proxy's lifespan tool-refresh can reach
+# mcp-server when AUTH_REQUIRED=true.
+if [ "$enable_demo" = "1" ]; then
+    ./scripts/register-proxy-key.sh secrets/mcp_auth_token.txt || {
+        warn "Could not register pb-proxy service token. Tab D will not work."
+    }
+fi
 
 # ── Pull embedding model ────────────────────────────────────
 info "Pulling embedding model (nomic-embed-text) ..."
@@ -184,6 +202,7 @@ echo "    Qdrant UI:   http://localhost:6333/dashboard"
 echo "    Grafana:     http://localhost:3001      (admin / admin)"
 if [ "$enable_demo" = "1" ]; then
     echo -e "    ${GREEN}Demo UI:     http://localhost:8095${NC}"
+    echo    "    AI proxy:    http://localhost:8090       (enterprise edition, Tab D)"
 fi
 echo ""
 echo "  Next steps:"

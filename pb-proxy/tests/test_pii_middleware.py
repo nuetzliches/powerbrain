@@ -14,6 +14,7 @@ from pii_middleware import (
     depseudonymize_tool_arguments,
     filter_non_text_content,
     build_system_hint,
+    vault_resolve_tool_result,
     PII_PSEUDONYM_PATTERN,
 )
 
@@ -187,3 +188,61 @@ class TestPseudonymPattern:
         text = "Hallo [PERSON:a1b2c3d4] und [EMAIL_ADDRESS:f9e8d7c6]!"
         matches = re.findall(PII_PSEUDONYM_PATTERN, text)
         assert len(matches) == 2
+
+
+class TestVaultResolveToolResult:
+    """Enterprise-edition pb-proxy de-pseudonymises tool-call content by
+    calling mcp-server ``/vault/resolve``. These tests isolate the HTTP
+    contract and the fail-open behaviour — the agent loop's integration
+    lives in ``test_agent_loop.py``."""
+
+    @pytest.mark.asyncio
+    async def test_no_pseudonyms_short_circuits(self):
+        http = AsyncMock()
+        text = "Plain tool output with no PII."
+        out, stats = await vault_resolve_tool_result(
+            text, purpose="support", mcp_url="http://mcp:8080",
+            mcp_token="pb_token", http_client=http,
+        )
+        assert out == text
+        assert stats == {"total": 0, "resolved": 0, "skipped": 0}
+        http.post.assert_not_awaited()  # local-regex fast path
+
+    @pytest.mark.asyncio
+    async def test_calls_vault_resolve_with_token(self):
+        http = AsyncMock()
+        response = MagicMock()
+        response.raise_for_status = lambda: None
+        response.json = lambda: {
+            "text": "Kunde: Anna Müller",
+            "resolved": 1, "total": 1, "skipped": 0,
+        }
+        http.post = AsyncMock(return_value=response)
+
+        out, stats = await vault_resolve_tool_result(
+            "Kunde: [PERSON:a1b2c3d4]",
+            purpose="support", mcp_url="http://mcp:8080/",
+            mcp_token="pb_abc", http_client=http,
+        )
+        assert out == "Kunde: Anna Müller"
+        assert stats == {"total": 1, "resolved": 1, "skipped": 0}
+        # Authorization header propagated, URL stripped of trailing slash.
+        call = http.post.await_args
+        assert call.args[0] == "http://mcp:8080/vault/resolve"
+        assert call.kwargs["headers"]["Authorization"] == "Bearer pb_abc"
+        assert call.kwargs["json"]["purpose"] == "support"
+
+    @pytest.mark.asyncio
+    async def test_fails_open_on_http_error(self):
+        """Any network error → return original text + empty stats so the
+        agent loop never crashes mid-completion because of vault outage."""
+        http = AsyncMock()
+        http.post = AsyncMock(side_effect=Exception("connection refused"))
+
+        text = "Kunde: [PERSON:a1b2c3d4]"
+        out, stats = await vault_resolve_tool_result(
+            text, purpose="support", mcp_url="http://mcp:8080",
+            mcp_token="pb_abc", http_client=http,
+        )
+        assert out == text  # unchanged
+        assert stats == {"total": 0, "resolved": 0, "skipped": 0}

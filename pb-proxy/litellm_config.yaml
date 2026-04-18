@@ -52,11 +52,13 @@ model_list:
       api_key: "os.environ/ANTHROPIC_API_KEY"
 
   # ── Local Ollama ───────────────────────────────────────────
-  # Uncomment to add a local model alias:
-  # - model_name: "llama"
-  #   litellm_params:
-  #     model: "ollama/llama3.2"
-  #     api_base: "http://ollama:11434"
+  # Default local model used by the sales-demo Tab E ("MCP vs Proxy")
+  # when the --demo quickstart profile pulls qwen2.5:3b. Swap to any
+  # other Ollama-served model without touching the proxy code.
+  - model_name: "qwen-local"
+    litellm_params:
+      model: "ollama_chat/qwen2.5:3b"
+      api_base: "http://ollama:11434"
 
   # ── Existing LiteLLM Proxy ─────────────────────────────────
   # If you already run a LiteLLM Proxy, route through it:

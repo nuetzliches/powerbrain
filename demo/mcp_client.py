@@ -258,5 +258,79 @@ def build_vault_token(
     return {**payload, "signature": signature}
 
 
+class _ProxyClient:
+    """Thin client for pb-proxy's OpenAI-compatible ``/v1/chat/completions``.
+
+    Used by the sales-demo "MCP vs Proxy" tab to demonstrate the
+    enterprise-edition path (vault resolution + tool injection + chat)
+    next to the raw MCP path.
+    """
+
+    def __init__(self, url: str | None = None, timeout: int = 60) -> None:
+        self.url = (
+            url or os.environ.get("PROXY_URL", "")
+        ).rstrip("/")
+        self.timeout = timeout
+
+    def available(self) -> bool:
+        """``True`` if a pb-proxy URL is configured and /health responds."""
+        if not self.url:
+            return False
+        try:
+            resp = requests.get(f"{self.url}/health", timeout=3)
+        except Exception:
+            return False
+        return resp.status_code == 200
+
+    def chat(
+        self,
+        *,
+        model: str,
+        messages: list[dict],
+        api_key: str,
+        purpose: str | None = None,
+        temperature: float = 0.2,
+        max_tokens: int = 400,
+    ) -> dict:
+        """Call pb-proxy /v1/chat/completions. Returns the raw JSON body.
+
+        ``purpose`` is forwarded as the ``X-Purpose`` header so the
+        proxy's ``pb.proxy.pii_resolve_tool_results`` policy can decide
+        whether to de-pseudonymise tool results via ``/vault/resolve``.
+        """
+        if not self.url:
+            raise RuntimeError("PROXY_URL not configured")
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if purpose:
+            headers["X-Purpose"] = purpose
+
+        body = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        resp = requests.post(
+            f"{self.url}/v1/chat/completions",
+            headers=headers,
+            json=body,
+            timeout=self.timeout,
+        )
+        # Don't raise_for_status — the UI needs to show error bodies too.
+        try:
+            return resp.json()
+        except Exception:
+            return {"_error": resp.text[:2000]}
+
+
 def get_clients() -> tuple[_MCPClient, _IngestionClient]:
     return _MCPClient(), _IngestionClient()
+
+
+def get_proxy_client() -> _ProxyClient:
+    return _ProxyClient()

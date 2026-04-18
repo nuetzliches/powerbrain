@@ -218,7 +218,7 @@
             },
             "proxy": {
               "type": "object",
-              "required": ["allowed_roles", "required_tools", "max_iterations", "elevated_roles", "default_mcp_servers", "documents"],
+              "required": ["allowed_roles", "required_tools", "max_iterations", "elevated_roles", "default_mcp_servers", "documents", "pii_resolve_tool_results"],
               "additionalProperties": false,
               "properties": {
                 "allowed_roles": {
@@ -249,6 +249,33 @@
                   "type": "array",
                   "items": { "type": "string" },
                   "description": "MCP servers accessible to non-elevated roles"
+                },
+                "pii_resolve_tool_results": {
+                  "type": "object",
+                  "description": "Enterprise-edition pb-proxy feature: after the MCP tool returns content containing [TYPE:hash] pseudonyms, the proxy calls mcp-server /vault/resolve to substitute originals subject to OPA vault_access_allowed and vault_fields_to_redact for the declared purpose. Disabled → proxy behaves like community (pseudonyms flow straight through).",
+                  "required": ["enabled", "allowed_roles", "allowed_purposes", "default_purpose"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "Master switch. False turns pb-proxy into a community-equivalent layer for PII."
+                    },
+                    "allowed_roles": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "description": "Roles that may trigger vault resolution through the proxy"
+                    },
+                    "allowed_purposes": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "minItems": 1,
+                      "description": "Purposes the proxy may declare when calling /vault/resolve. Must be a subset of `allowed_purposes[data_category]` for at least one category the proxy handles."
+                    },
+                    "default_purpose": {
+                      "type": "string",
+                      "description": "Purpose the proxy uses when the caller did not supply one (header/query/body)."
+                    }
+                  }
                 },
                 "documents": {
                   "type": "object",

@@ -129,3 +129,30 @@ documents_max_files := data.pb.config.proxy.documents.max_files_per_request.defa
     documents_allowed
     not _is_elevated_role
 }
+
+# ── Enterprise vault resolution for tool results ─────────────
+# Controls whether pb-proxy will call mcp-server /vault/resolve after
+# tool results come back, replacing [TYPE:hash] pseudonyms with
+# vault-resolved originals for the declared purpose. Mirrors the
+# community behaviour when turned off — pseudonyms flow through.
+#
+# Gating is (enabled + role-in-allowed_roles + purpose-in-allowed_purposes).
+# mcp-server's pb.privacy.vault_access_allowed still enforces the
+# per-document classification/data_category/purpose decision, so this
+# policy is a *wrapper* not a bypass.
+
+default pii_resolve_tool_results_allowed := false
+
+pii_resolve_tool_results_allowed if {
+    data.pb.config.proxy.pii_resolve_tool_results.enabled
+    some role in data.pb.config.proxy.pii_resolve_tool_results.allowed_roles
+    input.agent_role == role
+    some p in data.pb.config.proxy.pii_resolve_tool_results.allowed_purposes
+    input.purpose == p
+}
+
+default pii_resolve_tool_results_default_purpose := ""
+
+pii_resolve_tool_results_default_purpose := data.pb.config.proxy.pii_resolve_tool_results.default_purpose if {
+    data.pb.config.proxy.pii_resolve_tool_results.default_purpose
+}
