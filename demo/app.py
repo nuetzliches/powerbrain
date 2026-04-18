@@ -15,7 +15,13 @@ from pathlib import Path
 import streamlit as st
 
 from mcp_client import get_clients, get_proxy_client
-from panels import knowledge_graph, mcp_vs_proxy, pii_vault, search_roles
+from panels import (
+    knowledge_graph,
+    mcp_vs_proxy,
+    pii_vault,
+    pipeline_inspector,
+    search_roles,
+)
 
 # ─── Page setup ─────────────────────────────────────────────────────────────
 
@@ -93,11 +99,12 @@ st.write(
     "Each tab runs against the same live instance — no mock data."
 )
 
-tab_search, tab_pii, tab_graph, tab_editions = st.tabs([
+tab_search, tab_pii, tab_graph, tab_editions, tab_pipeline = st.tabs([
     "A · Same question, different answers",
     "B · We never stored the secret",
     "C · The org behind the answer",
     "D · MCP vs Proxy (editions)",
+    "E · Pipeline Inspector",
 ])
 
 with tab_search:
@@ -111,3 +118,6 @@ with tab_graph:
 
 with tab_editions:
     mcp_vs_proxy.render(mcp, proxy, DEMO_ANALYST_KEY)
+
+with tab_pipeline:
+    pipeline_inspector.render(ingestion)

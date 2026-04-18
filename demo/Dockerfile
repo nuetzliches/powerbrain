@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py mcp_client.py ./
 COPY panels ./panels
 COPY assets ./assets
+COPY fixtures ./fixtures
 
 EXPOSE 8095
 

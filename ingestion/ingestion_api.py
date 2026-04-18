@@ -318,6 +318,41 @@ class ExtractResponse(BaseModel):
     truncated: bool = False
 
 
+class PreviewRequest(BaseModel):
+    """Dry-run request for the pipeline inspector (demo surface).
+
+    Either supply extracted ``text`` directly, or pass base64 ``data``
+    plus ``filename`` to run the same extractor that a real ingest
+    would use. No data is persisted — the call touches only the
+    in-process scanner, quality module, and OPA.
+    """
+    text:           str | None = None
+    data:           str | None = Field(default=None, description="Base64 bytes; alternative to `text`")
+    filename:       str | None = None
+    mime_type:      str | None = None
+    language:       str = Field(default="de")
+    classification: str = Field(default="internal")
+    source_type:    str = Field(default="default")
+    metadata:       dict[str, Any] = Field(default_factory=dict)
+    legal_basis:    str | None = Field(
+        default=None,
+        description="Optional hint for OPA privacy.pii_action on confidential data",
+    )
+
+
+class PreviewResponse(BaseModel):
+    """Flattened view of what every pipeline step would do.
+
+    Shape is intentionally optimised for a demo UI — grouped by phase
+    with booleans / counts the UI can render as badges.
+    """
+    extract:  dict = Field(default_factory=dict)
+    scan:     dict = Field(default_factory=dict)
+    quality:  dict = Field(default_factory=dict)
+    privacy:  dict = Field(default_factory=dict)
+    summary:  dict = Field(default_factory=dict)
+
+
 # ── Helper Functions ────────────────────────────────────────
 
 async def get_embedding(text: str) -> list[float]:
@@ -1152,6 +1187,161 @@ async def extract_document(req: ExtractRequest) -> ExtractResponse:
             pb_extract_requests.labels(status=status_label, extractor=extractor_used).inc()
         if pb_extract_duration:
             pb_extract_duration.observe(time.perf_counter() - t0)
+
+
+@app.post("/preview", response_model=PreviewResponse)
+async def preview(req: PreviewRequest) -> PreviewResponse:
+    """Dry-run the ingestion pipeline without persisting.
+
+    Powers the sales-demo Pipeline Inspector: a decision-maker uploads
+    a representative document (or picks a fixture) and sees exactly
+    what each phase — extract, PII scan, quality gate, OPA privacy
+    decision — would do, with timings. Nothing is written to
+    PostgreSQL or Qdrant; the call is idempotent and cheap.
+
+    Input is either pre-extracted ``text`` or base64 ``data`` +
+    ``filename`` for end-to-end visualisation starting from the
+    binary.
+    """
+    overall_t0 = time.perf_counter()
+
+    # ── Phase 1: extract (only if a binary was supplied) ────────
+    extract_info: dict[str, Any] = {"status": "skipped"}
+    text = req.text or ""
+    if not text:
+        if not (req.data and req.filename):
+            raise HTTPException(
+                status_code=400,
+                detail="provide either 'text' or ('data' + 'filename')",
+            )
+        try:
+            raw = base64.b64decode(req.data, validate=False)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=400,
+                                detail=f"Invalid base64 payload: {exc}")
+        if len(raw) > EXTRACT_MAX_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Payload exceeds limit ({len(raw)} > {EXTRACT_MAX_BYTES} bytes)",
+            )
+        filename = (req.filename or "").strip()
+        t_ex = time.perf_counter()
+        try:
+            text, extractor = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _content_extractor.extract_from_bytes_detailed,
+                    raw, filename,
+                ),
+                timeout=EXTRACT_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504,
+                                detail="Extraction timed out")
+        extract_info = {
+            "status":     "ok" if text else "empty",
+            "extractor":  extractor,
+            "bytes_in":   len(raw),
+            "chars_out":  len(text or ""),
+            "duration_ms": round((time.perf_counter() - t_ex) * 1000, 2),
+        }
+        if not text:
+            # Nothing to scan — return the extraction summary and stop.
+            return PreviewResponse(
+                extract=extract_info,
+                scan={"status": "skipped", "reason": "empty extraction"},
+                quality={"status": "skipped"},
+                privacy={"status": "skipped"},
+                summary={"would_ingest": False,
+                         "reason": "extractor produced no text",
+                         "duration_ms": round(
+                             (time.perf_counter() - overall_t0) * 1000, 2)},
+            )
+
+    # ── Phase 2: PII scan (deterministic, no network) ──────────
+    t_scan = time.perf_counter()
+    scanner = get_scanner()
+    scan_result = scanner.scan_text(text, language=req.language)
+    scan_info = {
+        "contains_pii":     scan_result.contains_pii,
+        "entity_counts":    dict(scan_result.entity_counts),
+        "entity_locations": scan_result.entity_locations[:20],  # cap UI noise
+        "duration_ms":      round((time.perf_counter() - t_scan) * 1000, 2),
+    }
+
+    # ── Phase 3: quality gate (standalone compute + OPA check) ──
+    t_q = time.perf_counter()
+    try:
+        from quality import compute_quality_score  # local import mirrors /ingest
+        quality_report = compute_quality_score(
+            text,
+            metadata=req.metadata,
+            source_type=req.source_type,
+            pii_entity_count=sum(scan_result.entity_counts.values()),
+        )
+        gate = await check_opa_quality_gate(req.source_type, quality_report.score)
+        quality_info = {
+            **quality_report.to_dict(),
+            "gate_allowed":   bool(gate.get("allowed")),
+            "gate_min_score": gate.get("min_score"),
+            "gate_reason":    gate.get("reason"),
+            "duration_ms":    round((time.perf_counter() - t_q) * 1000, 2),
+        }
+    except Exception as exc:
+        quality_info = {
+            "error":       str(exc),
+            "duration_ms": round((time.perf_counter() - t_q) * 1000, 2),
+        }
+
+    # ── Phase 4: OPA privacy decision ───────────────────────────
+    t_p = time.perf_counter()
+    try:
+        priv = await check_opa_privacy(
+            req.classification, scan_result.contains_pii, req.legal_basis,
+        )
+        privacy_info = {
+            "classification":       req.classification,
+            "pii_action":           priv.get("pii_action", "unknown"),
+            "dual_storage_enabled": bool(priv.get("dual_storage_enabled")),
+            "retention_days":       priv.get("retention_days"),
+            "legal_basis_supplied": bool(req.legal_basis),
+            "duration_ms":          round((time.perf_counter() - t_p) * 1000, 2),
+        }
+    except Exception as exc:
+        privacy_info = {
+            "error":       str(exc),
+            "duration_ms": round((time.perf_counter() - t_p) * 1000, 2),
+        }
+
+    pii_action = privacy_info.get("pii_action")
+    gate_allowed = quality_info.get("gate_allowed", False)
+    would_ingest = (
+        gate_allowed
+        and pii_action not in (None, "block")
+    )
+    reason_parts: list[str] = []
+    if not gate_allowed:
+        reason_parts.append(
+            f"quality gate: {quality_info.get('gate_reason', 'denied')}"
+        )
+    if pii_action == "block":
+        reason_parts.append("pii_action=block")
+
+    summary = {
+        "would_ingest": would_ingest,
+        "pii_action":   pii_action,
+        "target_collection": req.metadata.get("collection") or "pb_general",
+        "reasons":      reason_parts,
+        "duration_ms":  round((time.perf_counter() - overall_t0) * 1000, 2),
+        "chars":        len(text),
+    }
+
+    return PreviewResponse(
+        extract=extract_info,
+        scan=scan_info,
+        quality=quality_info,
+        privacy=privacy_info,
+        summary=summary,
+    )
 
 
 @app.get("/health")

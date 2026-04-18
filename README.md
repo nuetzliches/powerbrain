@@ -98,7 +98,7 @@ Need to show a decision-maker what Powerbrain does? Spin up the full demo stack 
 ./scripts/quickstart.sh --demo
 ```
 
-The script seeds 21 base documents, 6 customer records with German PII, and an 8-person org-chart graph. When healthchecks finish, open **http://localhost:8095** — a four-tab Streamlit app with inline presenter notes, including a **MCP vs Proxy** side-by-side that shows the community/enterprise contrast on the same question. The full 15-minute narrative lives in [docs/playbook-sales-demo.md](docs/playbook-sales-demo.md).
+The script seeds 21 base documents, 6 customer records with German PII, and an 8-person org-chart graph. When healthchecks finish, open **http://localhost:8095** — a five-tab Streamlit app with inline presenter notes: role-contrast search, live PII vault, knowledge graph, a **MCP vs Proxy** side-by-side that shows the community/enterprise contrast, and a **Pipeline Inspector** that dry-runs any document through the ingestion pipeline. The full 15-minute narrative lives in [docs/playbook-sales-demo.md](docs/playbook-sales-demo.md).
 
 ## 🚀 Quick Start
 
