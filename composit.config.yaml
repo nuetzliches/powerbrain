@@ -1,0 +1,16 @@
+# composit scanner configuration for powerbrain
+#
+# powerbrain is itself an MCP provider. We don't need to fetch any
+# upstream manifests during scan, so the network phase is off.
+
+# No upstream providers to query.
+# providers: []
+
+# All scanners enabled by default. Terraform/cron would find nothing
+# in this repo; disabling them silences the empty-result noise.
+scanners:
+  terraform: false
+  cron: false
+
+# No extra ad-hoc patterns — the built-in scanners cover what we have.
+# extra_patterns: []

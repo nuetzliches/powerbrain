@@ -1,0 +1,55 @@
+{
+  "composit": "0.1.0",
+  "provider": {
+    "name": "powerbrain",
+    "description": "Policy-aware MCP context engine with vector search, PII vault, and EU AI Act toolkit",
+    "website": "https://github.com/nuetzliches/powerbrain",
+    "repo": "https://github.com/nuetzliches/powerbrain",
+    "contact": "composit@nuetzliche.it",
+    "license": "Apache-2.0",
+    "version": "0.5.0"
+  },
+  "capabilities": [
+    {
+      "type": "knowledge",
+      "product": "powerbrain",
+      "protocol": "mcp",
+      "description": "Vector search over Qdrant + graph context via PostgreSQL/Apache AGE, governed by OPA policies",
+      "tools": 23,
+      "endpoints": {
+        "mcp": "/mcp",
+        "http": "/api/v1"
+      }
+    },
+    {
+      "type": "ingestion",
+      "product": "powerbrain-ingestion",
+      "protocol": "http",
+      "description": "Classification- and PII-aware ingestion pipeline with EU AI Act Art. 10 quality gate",
+      "endpoints": {
+        "http": "/ingest"
+      }
+    },
+    {
+      "type": "proxy",
+      "product": "pb-proxy",
+      "protocol": "http",
+      "description": "Policy-enforced AI provider proxy with rate and budget limits (Art. 15 tooling)"
+    }
+  ],
+  "compliance": ["gdpr", "eu-ai-act"],
+  "eu_ai_act": {
+    "articles": [9, 10, 11, 12, 13, 14, 15],
+    "notes": "Infrastructure hooks exist for each article; see docs/eu-ai-act-mapping.md in the repo for the crosswalk."
+  },
+  "region": "self-hosted",
+  "self_hosted": true,
+  "policy_engine": {
+    "type": "opa",
+    "policies_path": "opa-policies/pb/",
+    "policy_count": 7
+  },
+  "discovery": {
+    "well_known": "https://mcp.nuetzliche.it/.well-known/composit.json"
+  }
+}
