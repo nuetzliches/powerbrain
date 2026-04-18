@@ -211,6 +211,47 @@ class _IngestionClient:
         resp.raise_for_status()
         return resp.json()
 
+    def preview(
+        self,
+        *,
+        text: str | None = None,
+        data_b64: str | None = None,
+        filename: str | None = None,
+        classification: str = "internal",
+        source_type: str = "default",
+        language: str = "de",
+        legal_basis: str | None = None,
+        metadata: dict | None = None,
+    ) -> dict:
+        """Dry-run the ingestion pipeline via POST /preview (no persistence).
+
+        Powers the sales-demo Pipeline Inspector. Caller passes either
+        ``text`` (already extracted) or ``data_b64`` + ``filename`` for
+        the extractor to run end-to-end.
+        """
+        payload: dict[str, Any] = {
+            "classification": classification,
+            "source_type":    source_type,
+            "language":       language,
+            "metadata":       metadata or {},
+        }
+        if text is not None:
+            payload["text"] = text
+        if data_b64 is not None:
+            payload["data"] = data_b64
+        if filename is not None:
+            payload["filename"] = filename
+        if legal_basis:
+            payload["legal_basis"] = legal_basis
+
+        resp = requests.post(
+            f"{self.url}/preview",
+            json=payload,
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
 
 def _load_vault_secret() -> str | None:
     """Read the vault HMAC secret from a Docker secret file or env var.

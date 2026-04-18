@@ -25,7 +25,7 @@ Wait until the banner appears before opening the browser.
 
 | URL | Purpose |
 |---|---|
-| `http://localhost:8095` | The demo UI (four tabs) |
+| `http://localhost:8095` | The demo UI (five tabs) |
 | `http://localhost:8090/health` | pb-proxy — shows `"edition": "enterprise"` |
 | `http://localhost:3001` | Grafana (`admin` / `admin`) — switch to the *Overview* dashboard for a live side-show |
 | `http://localhost:6333/dashboard` | Qdrant UI — optional, show a collection payload to prove the vector store carries pseudonyms |
@@ -83,6 +83,22 @@ Wait until the banner appears before opening the browser.
 
 **Talking point:** "The MCP path is the compliant data layer — our **community** edition. Adding pb-proxy turns it into chat-native UX without your team writing orchestration code — our **enterprise** edition. Both run on your infrastructure. The only switch is `docker compose --profile proxy`."
 
+### Tab E — Pipeline Inspector (3 min, optional)
+
+**Story:** "And this is what happens to a document in the first place — regardless of where it came from."
+
+1. Switch to Tab E, keep the default fixture *SharePoint — Rahmenvertrag 2026*. Hit **Run dry-run**.
+2. Walk through the four phases that appeared:
+   - **Extract**: the DOCX/MD/EML binary would go through markitdown → plain text. For this fixture we skip the binary step because we already have text.
+   - **PII Scan**: entity badges appear (PERSON, EMAIL_ADDRESS, IBAN_CODE, LOCATION, DE_DATE_OF_BIRTH, DE_TAX_ID). Click *First detected entities* to show Presidio's confidence scores per hit.
+   - **Quality Gate**: the composite score + factor breakdown. "EU AI Act Art. 10 — every document clears this gate or it gets rejected before embedding."
+   - **OPA Privacy**: the decision. Confidential + PII + legal basis → `encrypt_and_store` (vault). Remove the legal basis in the form → decision flips to `block`.
+3. Switch to the *Outlook — Customer support request* fixture → see how an `internal` classification with PII produces `pseudonymize` + dual storage.
+4. Switch to *GitHub — adapter-template README* → see `mask`, no PII, no vault. Shows every adapter funnels into the same pipeline.
+5. Upload option: let the customer drop a representative file of their own (NDA, invoice, meeting notes) and hit **Run dry-run**. Nothing is persisted.
+
+**Talking point:** "Nothing you see here has been written to the knowledge base. Pick your adapter — GitHub, SharePoint, Outlook, OneNote, Teams — every document walks these same four phases. If you can show us a representative document from your environment, we can tell you right now which classification and which legal basis your own policies will produce."
+
 ### Close (2 min)
 
 - **Open-source, self-hosted, GDPR-native.** Everything fits on a laptop or an on-prem cluster.
@@ -102,6 +118,8 @@ Invite the audience to fork the repo and run `./scripts/quickstart.sh --demo` th
 | Tab C shows "No employees found" | Graph seed did not run. `docker compose --profile seed logs seed` and check for errors in the *Graph seed* section. |
 | Tab D shows "pb-proxy not reachable" | The proxy isn't up. `docker compose --profile demo up -d pb-proxy` or restart the full stack via `./scripts/quickstart.sh --demo`. |
 | Tab D proxy response looks hallucinated / LLM ignored tool | `qwen2.5:3b` sometimes skips tool calls on the first turn. Ask a more direct question ("search_knowledge für Kunde Julia") or switch `PROXY_MODEL` to `claude-opus` / `gpt-4o` in the demo service env. |
+| Tab E "No fixtures available" | Rebuild the demo image so `demo/fixtures/` gets packaged: `docker compose --profile demo build pb-demo && docker compose up -d --force-recreate pb-demo`. |
+| Tab E dry-run reports `would_ingest=False` unexpectedly | The form's `classification` / `source_type` / `legal_basis` fields are editable — check the values above the result. Presidio also flags harmless-looking strings sometimes; use the entity breakdown to confirm. |
 | "Demo out of date — MCP response shape changed" | The demo UI's Pydantic models are behind a newer MCP server. Rebuild: `docker compose --profile demo build pb-demo`. |
 
 ## 5. What to skip if you have only 5 minutes
