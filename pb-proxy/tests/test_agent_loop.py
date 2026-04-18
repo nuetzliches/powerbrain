@@ -257,3 +257,101 @@ async def test_agent_loop_routes_to_correct_server():
     )
     assert result.tool_calls_executed == 1
     assert result.tools_used == ["search_knowledge"]
+
+
+# ── Enterprise vault resolution ────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_vault_resolve_runs_when_enabled(mock_tool_injector):
+    """Enterprise path: agent loop calls /vault/resolve after the tool
+    returns and uses the resolved text as the next LLM turn's context."""
+    # Tool returns a chunk with pseudonyms — like a real search_knowledge hit
+    # on a confidential customer record from Qdrant.
+    raw_tool_result = '{"results":[{"content":"Kunde [PERSON:a1b2c3d4]"}]}'
+    mock_tool_injector.call_tool = AsyncMock(return_value=raw_tool_result)
+
+    tool_call = _make_tool_call("call_1", "powerbrain_search_knowledge",
+                                '{"query": "Kundenliste"}')
+    llm_1 = _make_response(tool_calls=[tool_call], finish_reason="tool_calls")
+    llm_2 = _make_response()
+    mock_acompletion = AsyncMock(side_effect=[llm_1, llm_2])
+
+    # Mock the HTTP client used for /vault/resolve
+    vault_response = MagicMock()
+    vault_response.raise_for_status = lambda: None
+    vault_response.json = lambda: {
+        "text": '{"results":[{"content":"Kunde Anna Müller"}]}',
+        "resolved": 1, "total": 1, "skipped": 0,
+    }
+    http_client = AsyncMock()
+    http_client.post = AsyncMock(return_value=vault_response)
+
+    loop = AgentLoop(
+        mock_tool_injector,
+        acompletion=mock_acompletion,
+        max_iterations=5,
+        pii_http_client=http_client,
+        pii_session_salt="session-salt",
+        vault_resolve_enabled=True,
+        vault_resolve_purpose="support",
+        vault_resolve_mcp_url="http://mcp:8080",
+        vault_resolve_mcp_token="pb_test",
+    )
+    result = await loop.run(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "Wer sind unsere Kunden?"}],
+        tools=[],
+    )
+
+    # /vault/resolve was called with a Bearer token and purpose.
+    # (The tool-call dispatch also goes through http_client.post if it
+    # needs_pii_scan, so filter by URL to be precise.)
+    vault_calls = [
+        c for c in http_client.post.await_args_list
+        if "/vault/resolve" in (c.args[0] if c.args else "")
+    ]
+    assert len(vault_calls) == 1
+    assert vault_calls[0].kwargs["headers"]["Authorization"] == "Bearer pb_test"
+    assert vault_calls[0].kwargs["json"]["purpose"] == "support"
+
+    # Aggregated stats are surfaced on the result so the proxy response
+    # can label edition-specific behaviour in the UI / headers.
+    assert result.vault_resolutions == {"total": 1, "resolved": 1, "skipped": 0}
+
+
+@pytest.mark.asyncio
+async def test_vault_resolve_skipped_when_disabled(mock_tool_injector):
+    """Community path: without enterprise flags set, /vault/resolve is
+    never called — we shouldn't have a soft dependency on mcp-server's
+    new endpoint just for regular proxy operation."""
+    mock_tool_injector.call_tool = AsyncMock(return_value='{"results": []}')
+
+    tool_call = _make_tool_call("call_1", "powerbrain_search_knowledge",
+                                '{"query": "x"}')
+    llm_1 = _make_response(tool_calls=[tool_call], finish_reason="tool_calls")
+    llm_2 = _make_response()
+    mock_acompletion = AsyncMock(side_effect=[llm_1, llm_2])
+
+    http_client = AsyncMock()
+    http_client.post = AsyncMock()
+
+    loop = AgentLoop(
+        mock_tool_injector,
+        acompletion=mock_acompletion,
+        max_iterations=5,
+        pii_http_client=http_client,
+        # vault_resolve_enabled is False — feature off
+    )
+    result = await loop.run(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "test"}],
+        tools=[],
+    )
+
+    # No /vault/resolve call was made.
+    vault_calls = [
+        c for c in http_client.post.await_args_list
+        if "/vault/resolve" in (c.args[0] if c.args else "")
+    ]
+    assert not vault_calls
+    assert result.vault_resolutions == {"total": 0, "resolved": 0, "skipped": 0}

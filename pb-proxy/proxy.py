@@ -336,6 +336,13 @@ async def health():
     tools_loaded = len(tool_injector.tool_names)
     status = "healthy" if tools_loaded > 0 else "degraded"
     return {
+        "service": "pb-proxy",
+        # pb-proxy turns the policy-compliant MCP layer into a full
+        # chat-native experience: tool injection, multi-provider routing,
+        # PII pseudonymisation on the chat path, and optional vault
+        # resolution of tool results. Anything running pb-proxy is the
+        # enterprise deployment tier.
+        "edition": "enterprise",
         "status": status,
         "tools_loaded": tools_loaded,
         "fail_mode": config.FAIL_MODE,
@@ -711,6 +718,32 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
         )
         litellm_kwargs.update(routing_kwargs)
 
+        # ── Enterprise: vault-resolve tool-result pseudonyms ─────
+        # OPA gate: pb.proxy.pii_resolve_tool_results controls whether
+        # the proxy calls mcp-server /vault/resolve. Client supplies
+        # the purpose via `X-Purpose` header; falls back to the
+        # configured default purpose when absent.
+        resolve_cfg = policy.get("pii_resolve_tool_results") or {}
+        resolve_enabled_cfg = resolve_cfg.get("enabled", False)
+        requested_purpose = (raw_request.headers.get("x-purpose") or "").strip()
+        effective_purpose = (
+            requested_purpose
+            or resolve_cfg.get("default_purpose") or ""
+        )
+        allowed_roles = resolve_cfg.get("allowed_roles") or []
+        allowed_purposes = resolve_cfg.get("allowed_purposes") or []
+        vault_resolve_enabled = bool(
+            resolve_enabled_cfg
+            and agent_role in allowed_roles
+            and effective_purpose
+            and (
+                # If the client explicitly supplied a purpose, it must be
+                # on the allow list. Falling back to default_purpose is
+                # always OK because it was vetted at config time.
+                not requested_purpose or effective_purpose in allowed_purposes
+            )
+        )
+
         # Run agent loop
         with trace_operation(_proxy_tracer, "agent_loop", "pb-proxy", model=request.model):
             loop = AgentLoop(
@@ -725,6 +758,11 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
                     k: v for k, v in raw_request.headers.items()
                     if k in tool_injector.forwardable_headers
                 },
+                vault_resolve_enabled=vault_resolve_enabled,
+                vault_resolve_purpose=effective_purpose,
+                vault_resolve_mcp_url=config.MCP_SERVER_URL.rsplit("/mcp", 1)[0]
+                    if vault_resolve_enabled else None,
+                vault_resolve_mcp_token=user_api_key if vault_resolve_enabled else None,
             )
             try:
                 result: AgentLoopResult = await asyncio.wait_for(
@@ -769,11 +807,27 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
                 rt.finish()
                 response_data["_telemetry"] = rt.to_dict()
 
+        # Surface proxy-edition specifics so clients (e.g. the sales-demo
+        # UI's "MCP vs Proxy" panel) can show the effect without parsing
+        # Prometheus. Only populated when vault resolution actually ran.
+        if vault_resolve_enabled and result.vault_resolutions["total"] > 0:
+            response_data.setdefault("_proxy", {})["vault_resolutions"] = {
+                **result.vault_resolutions,
+                "purpose": effective_purpose,
+            }
+
         # Add proxy metadata headers
         headers = {
             "X-Proxy-Iterations": str(result.iterations),
             "X-Proxy-Tool-Calls": str(result.tool_calls_executed),
         }
+        if vault_resolve_enabled and result.vault_resolutions["total"] > 0:
+            headers["X-Proxy-Vault-Resolved"] = str(
+                result.vault_resolutions["resolved"]
+            )
+            headers["X-Proxy-Vault-Total"] = str(
+                result.vault_resolutions["total"]
+            )
         if result.max_iterations_reached:
             headers["X-Proxy-Max-Iterations-Reached"] = "true"
 

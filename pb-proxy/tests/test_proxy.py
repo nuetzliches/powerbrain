@@ -76,6 +76,10 @@ def test_health_endpoint(client):
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
+    # Edition label exposes the pb-proxy tier explicitly so dashboards
+    # and the sales demo can detect which layer is in front of MCP.
+    assert data["service"] == "pb-proxy"
+    assert data["edition"] == "enterprise"
 
 
 def test_list_models_returns_configured_models(mock_deps):

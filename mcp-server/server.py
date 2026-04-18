@@ -14,6 +14,7 @@ import asyncio
 import os
 import json
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -996,6 +997,182 @@ async def log_vault_access(
             (agent_id, document_id, chunk_index, purpose, token_hash)
         VALUES ($1, $2, $3, $4, $5)
     """, agent_id, document_id, chunk_index, purpose, token_hash)
+
+
+# ── Text-level vault resolution (pb-proxy enterprise edition) ────────────
+
+# Regex matching the pseudonyms emitted by ingestion's
+# pseudonymize_text(): [ENTITY_TYPE:8-hex-chars].
+_VAULT_PSEUDONYM_RE = re.compile(r"\[([A-Z_]+):([a-f0-9]{8})\]")
+
+
+async def vault_resolve_pseudonyms(
+    text: str,
+    *,
+    purpose: str,
+    agent_role: str,
+    agent_id: str,
+    token_hash: str,
+) -> dict:
+    """Resolve ``[ENTITY_TYPE:hash]`` pseudonyms in ``text`` back to originals.
+
+    Callers (notably pb-proxy's agent loop) hand in a tool result that may
+    contain pseudonyms produced during ingestion. This function:
+
+    1. Extracts every pseudonym via the canonical regex.
+    2. Batches a single ``pseudonym_mapping`` lookup to resolve each one
+       to ``(document_id, chunk_index, salt, entity_type)``.
+    3. Loads the referenced vault chunks once per ``(document_id,
+       chunk_index)`` pair and hashes each entity in ``pii_entities``
+       against the requested pseudonym hash to recover the original value.
+    4. Gates each resolution through ``pb.privacy.vault_access_allowed``
+       using the document's classification and data_category — silently
+       skipping resolutions whose OPA decision denies access.
+    5. Applies ``pb.privacy.vault_fields_to_redact`` for the purpose, so
+       purposes like ``billing`` still blank IBAN/address fields even when
+       a resolution is allowed.
+    6. Logs every *successful* resolution via ``log_vault_access`` so the
+       audit chain matches the search_knowledge vault path.
+
+    Returns a dict summarising the outcome — useful for diagnostics and
+    for surfaces like the demo that want to show counts without digging
+    into audit tables.
+    """
+    if not text:
+        return {"text": text, "resolved": 0, "total": 0, "skipped": 0}
+
+    matches = list(_VAULT_PSEUDONYM_RE.finditer(text))
+    if not matches:
+        return {"text": text, "resolved": 0, "total": 0, "skipped": 0}
+
+    pseudonyms = list({m.group(0) for m in matches})
+
+    pool = await get_pg_pool()
+    mapping_rows = await pool.fetch("""
+        SELECT pm.pseudonym, pm.document_id, pm.chunk_index,
+               pm.entity_type, pm.salt,
+               oc.original_text, oc.pii_entities,
+               dm.classification, dm.metadata
+        FROM pii_vault.pseudonym_mapping pm
+        JOIN pii_vault.original_content oc
+             ON pm.document_id = oc.document_id
+            AND pm.chunk_index = oc.chunk_index
+        JOIN documents_meta dm
+             ON dm.id = pm.document_id
+        WHERE pm.pseudonym = ANY($1)
+    """, pseudonyms)
+
+    # Cache of pseudonym → original string (only for resolutions the
+    # policy allowed). This is what we substitute back into the text.
+    resolved: dict[str, str] = {}
+    # Per-(doc_id, chunk_index) we only log once regardless of how many
+    # pseudonyms landed on the same chunk.
+    audited: set[tuple[str, int]] = set()
+
+    for row in mapping_rows:
+        pseudonym = row["pseudonym"]
+        if pseudonym in resolved:
+            continue  # already handled via an earlier mapping row
+
+        doc_id = str(row["document_id"])
+        chunk_index = row["chunk_index"]
+        classification = row["classification"] or "internal"
+
+        # The document's data_category lives in metadata JSONB alongside
+        # other ingestion hints. Default empty → OPA purpose-binding fails.
+        meta = row["metadata"] or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except json.JSONDecodeError:
+                meta = {}
+        data_category = meta.get("data_category", "")
+
+        vault_policy = await check_opa_vault_access(
+            agent_role, purpose, classification,
+            data_category, True, False,
+        )
+        if not vault_policy.get("allowed"):
+            continue
+
+        # Reverse-hash the pseudonym against the entities stored with the
+        # chunk. Entities are {type, text, start, end, score}; only the
+        # ``text`` field produces the pseudonym's hash for this salt.
+        entities = row["pii_entities"]
+        if isinstance(entities, str):
+            try:
+                entities = json.loads(entities)
+            except json.JSONDecodeError:
+                entities = []
+        salt = row["salt"]
+        target_type = row["entity_type"]
+        target_hash = pseudonym.rsplit(":", 1)[-1].rstrip("]")
+
+        recovered = None
+        for ent in entities or []:
+            if ent.get("type") != target_type:
+                continue
+            candidate = ent.get("text", "")
+            digest = hashlib.sha256(
+                f"{salt}:{candidate}".encode()
+            ).hexdigest()[:8]
+            if digest == target_hash:
+                recovered = candidate
+                break
+
+        if recovered is None:
+            continue
+
+        # Apply purpose-based field redaction. The mapping PERSON →
+        # `person`, EMAIL_ADDRESS → `email` etc. lives in redact_fields's
+        # field_to_entities table — we reuse it by asking: does the
+        # policy say to redact this entity type?
+        fields_to_redact = set(vault_policy.get("fields_to_redact") or [])
+        if _entity_type_in_redact_set(target_type, fields_to_redact):
+            continue  # policy says: stay pseudonymous for this field
+
+        resolved[pseudonym] = recovered
+        key = (doc_id, chunk_index)
+        if key not in audited:
+            audited.add(key)
+            await log_vault_access(agent_id, doc_id, chunk_index,
+                                   purpose, token_hash)
+
+    if not resolved:
+        return {"text": text, "resolved": 0, "total": len(pseudonyms),
+                "skipped": len(pseudonyms)}
+
+    # Longest-first replacement avoids clashing suffix hashes eating each
+    # other mid-substitution.
+    out = text
+    for pseudo in sorted(resolved, key=len, reverse=True):
+        out = out.replace(pseudo, resolved[pseudo])
+
+    return {
+        "text":      out,
+        "resolved":  len(resolved),
+        "total":     len(pseudonyms),
+        "skipped":   len(pseudonyms) - len(resolved),
+    }
+
+
+def _entity_type_in_redact_set(entity_type: str, fields: set[str]) -> bool:
+    """Does the OPA ``fields_to_redact`` list cover this entity type?"""
+    if not fields:
+        return False
+    # Invert the mapping used by redact_fields() so we can ask
+    # "should I keep this pseudonym for this purpose?".
+    entity_to_field = {
+        "EMAIL_ADDRESS":     "email",
+        "PHONE_NUMBER":      "phone",
+        "IBAN_CODE":         "iban",
+        "DATE_OF_BIRTH":     "birthdate",
+        "DE_DATE_OF_BIRTH":  "birthdate",
+        "LOCATION":          "address",
+        "PERSON":            "person",
+    }
+    field = entity_to_field.get(entity_type)
+    return field is not None and field in fields
 
 
 async def check_feedback_warning(query: str, pool: asyncpg.Pool):
@@ -3110,6 +3287,7 @@ async def _build_risk_health_payload() -> dict:
 
     return {
         "service": "mcp-server",
+        "edition": "community",
         "status": combined,
         "indicators": safe_indicators,
         "risk_register": "docs/risk-management.md",
@@ -3261,6 +3439,7 @@ async def _build_transparency_payload() -> dict:
 
     return {
         "service":        "mcp-server",
+        "edition":        "community",
         "report_version": version,
         "system_purpose": (
             "Powerbrain feeds AI agents with policy-compliant enterprise "
@@ -3410,6 +3589,67 @@ if __name__ == "__main__":
         """
         payload = await _get_transparency_report()
         return JSONResponse(payload)
+
+    async def vault_resolve_endpoint(request):
+        """POST /vault/resolve — text-level pseudonym resolution.
+
+        Primary caller is pb-proxy's agent loop: after a tool response
+        comes back containing ``[ENTITY_TYPE:hash]`` pseudonyms (because
+        the knowledge base stores pseudonyms, not originals), the proxy
+        asks this endpoint to replace them with vault-resolved originals
+        before handing the text to the LLM. Same OPA policy, same audit
+        trail as search_knowledge's inline vault lookup — just over plain
+        text instead of per-chunk metadata.
+
+        Body: ``{"text": str, "purpose": str}``.
+        Auth: any valid ``pb_`` key. OPA still gates per (role, purpose,
+        classification, data_category) so this doesn't widen the vault
+        surface.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
+        text = body.get("text")
+        purpose = body.get("purpose")
+        if not isinstance(text, str) or not purpose:
+            return JSONResponse(
+                {"error": "body must contain 'text' (str) and 'purpose' (str)"},
+                status_code=400,
+            )
+
+        agent_id, role = _auth_user(request)
+        if not role:
+            return JSONResponse(
+                {"error": "authentication required"},
+                status_code=401,
+            )
+
+        # Use the authenticated-agent's identifier as the token_hash for
+        # auditing; these calls are not vault-token-bound but signed via
+        # the API key the caller already presented, so we record that
+        # association instead of a detached HMAC token fingerprint.
+        token_hash = hashlib.sha256(
+            f"vault-resolve:{agent_id}".encode()
+        ).hexdigest()[:16]
+
+        try:
+            result = await vault_resolve_pseudonyms(
+                text,
+                purpose=purpose,
+                agent_role=role,
+                agent_id=agent_id or "unknown",
+                token_hash=token_hash,
+            )
+        except Exception as exc:
+            log.warning("vault_resolve_pseudonyms failed: %s", exc)
+            return JSONResponse(
+                {"error": f"resolution failed: {exc}"},
+                status_code=500,
+            )
+
+        return JSONResponse(result)
 
     async def health_check(request):
         """Content-negotiated health endpoint.
@@ -3562,6 +3802,7 @@ if __name__ == "__main__":
             Route("/health", endpoint=health_check),
             Route("/metrics/json", endpoint=metrics_json),
             Route("/transparency", endpoint=transparency_endpoint),
+            Route("/vault/resolve", endpoint=vault_resolve_endpoint, methods=["POST"]),
             Route("/circuit-breaker", endpoint=circuit_breaker_get, methods=["GET"]),
             Route("/circuit-breaker", endpoint=circuit_breaker_post, methods=["POST"]),
             # OAuth discovery (at stripped paths AND full RFC 9728 paths)

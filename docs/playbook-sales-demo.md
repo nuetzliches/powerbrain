@@ -25,7 +25,8 @@ Wait until the banner appears before opening the browser.
 
 | URL | Purpose |
 |---|---|
-| `http://localhost:8095` | The demo UI (three tabs) |
+| `http://localhost:8095` | The demo UI (four tabs) |
+| `http://localhost:8090/health` | pb-proxy — shows `"edition": "enterprise"` |
 | `http://localhost:3001` | Grafana (`admin` / `admin`) — switch to the *Overview* dashboard for a live side-show |
 | `http://localhost:6333/dashboard` | Qdrant UI — optional, show a collection payload to prove the vector store carries pseudonyms |
 
@@ -71,11 +72,23 @@ Wait until the banner appears before opening the browser.
 
 **Talking point:** "An agent can use this to answer 'who owns the platform migration?' or 'which team do I loop in for this ticket?' — the answer is one graph hop away, no prompt engineering."
 
+### Tab D — MCP vs Proxy (3 min, optional)
+
+**Story:** "And here's how this changes the moment you put our proxy in front of MCP."
+
+1. Switch to Tab D. Pick the "Fasse die Daten zu unserem Kunden Julia Weber zusammen" suggestion.
+2. Left column: raw MCP response — pseudonyms everywhere (`[PERSON:xxx]`, `[EMAIL_ADDRESS:xxx]`).
+3. Right column: pb-proxy call. LLM produced a natural-language summary with Julia's real name resolved via `/vault/resolve` under `purpose=support`; IBAN and address stayed pseudonymised because the policy says `support` doesn't need them.
+4. Toggle purpose to `billing` → IBAN resolves too, DOB is still masked.
+
+**Talking point:** "The MCP path is the compliant data layer — our **community** edition. Adding pb-proxy turns it into chat-native UX without your team writing orchestration code — our **enterprise** edition. Both run on your infrastructure. The only switch is `docker compose --profile proxy`."
+
 ### Close (2 min)
 
 - **Open-source, self-hosted, GDPR-native.** Everything fits on a laptop or an on-prem cluster.
-- **Policies are data, not code.** `opa-policies/pb/data.json` is editable JSON, validated by JSON Schema.
+- **Policies are data, not code.** `opa-policies/data.json` is editable JSON, validated by JSON Schema.
 - **MCP-native.** The same protocol that drove this demo is what your agents will use in production — no custom integrations per tool.
+- **Two tiers, one codebase.** See [docs/editions.md](editions.md) for the full community/enterprise matrix.
 
 Invite the audience to fork the repo and run `./scripts/quickstart.sh --demo` themselves.
 
@@ -87,6 +100,8 @@ Invite the audience to fork the repo and run `./scripts/quickstart.sh --demo` th
 | Tab B reveal says "pseudonymous" for all hits | Ingested document predates the vault feature, or its `data_category` is missing. Click **Ingest record** again to create a fresh vault-backed entry, then retry the reveal. |
 | Tab B reveal errors "VAULT_HMAC_SECRET not available" | The demo container cannot read the HMAC secret. `ls secrets/vault_hmac_secret.txt` should show a non-empty file. Restart: `docker compose --profile demo up -d pb-demo`. |
 | Tab C shows "No employees found" | Graph seed did not run. `docker compose --profile seed logs seed` and check for errors in the *Graph seed* section. |
+| Tab D shows "pb-proxy not reachable" | The proxy isn't up. `docker compose --profile demo up -d pb-proxy` or restart the full stack via `./scripts/quickstart.sh --demo`. |
+| Tab D proxy response looks hallucinated / LLM ignored tool | `qwen2.5:3b` sometimes skips tool calls on the first turn. Ask a more direct question ("search_knowledge für Kunde Julia") or switch `PROXY_MODEL` to `claude-opus` / `gpt-4o` in the demo service env. |
 | "Demo out of date — MCP response shape changed" | The demo UI's Pydantic models are behind a newer MCP server. Rebuild: `docker compose --profile demo build pb-demo`. |
 
 ## 5. What to skip if you have only 5 minutes

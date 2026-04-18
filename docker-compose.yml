@@ -495,6 +495,11 @@ services:
     environment:
       MCP_URL:                http://mcp-server:8080
       INGESTION_URL:          http://ingestion:8081
+      # Populated when the `demo` profile brings pb-proxy up alongside;
+      # demo/panels/mcp_vs_proxy probes this URL and only renders when
+      # the proxy's /health returns an enterprise edition label.
+      PROXY_URL:              http://pb-proxy:8090
+      PROXY_MODEL:            qwen-local
       DEMO_ANALYST_KEY:       pb_demo_analyst_localonly
       DEMO_VIEWER_KEY:        pb_demo_viewer_localonly
       DEV_ADMIN_KEY:          pb_dev_localonly_do_not_use_in_production
@@ -510,7 +515,9 @@ services:
 
   # ── AI Provider Proxy (optional) ──────────────────────────
   pb-proxy:
-    profiles: ["proxy"]
+    # The `demo` profile brings pb-proxy up alongside pb-demo so the
+    # "MCP vs Proxy" tab can hit a real enterprise endpoint.
+    profiles: ["proxy", "demo"]
     build:
       context: .
       dockerfile: pb-proxy/Dockerfile

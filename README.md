@@ -77,6 +77,19 @@ Powerbrain is **not itself a high-risk AI system**, but Deployers who operate on
 
 The `pb-worker` maintenance container runs four APScheduler jobs: accuracy metrics refresh (5 min), pending-review timeouts (hourly), GDPR retention cleanup (daily 02:00), audit retention cleanup (daily 03:00).
 
+## 🧩 Editions
+
+Powerbrain ships as two tiers, both Apache-2.0, both self-hosted.
+**Community** is the MCP context engine (search, vault, OPA, audit).
+**Enterprise** adds `pb-proxy` — an OpenAI-compatible chat gateway that
+orchestrates tool-call loops, pseudonymises the wire, and resolves
+vault pseudonyms for chat responses per OPA policy. Full capability
+matrix and migration notes in [docs/editions.md](docs/editions.md).
+
+Edition detection is on every service's `/health` and `/transparency`
+endpoint: `"edition": "community"` on `mcp-server:8080`, `"edition":
+"enterprise"` on `pb-proxy:8090`.
+
 ## 🎬 Run a Sales Demo in 5 Minutes
 
 Need to show a decision-maker what Powerbrain does? Spin up the full demo stack (role-aware search, live PII vault, knowledge-graph explorer) with a single command:
@@ -85,7 +98,7 @@ Need to show a decision-maker what Powerbrain does? Spin up the full demo stack 
 ./scripts/quickstart.sh --demo
 ```
 
-The script seeds 21 base documents, 6 customer records with German PII, and an 8-person org-chart graph. When healthchecks finish, open **http://localhost:8095** — a three-tab Streamlit app with inline presenter notes. The full 15-minute narrative lives in [docs/playbook-sales-demo.md](docs/playbook-sales-demo.md).
+The script seeds 21 base documents, 6 customer records with German PII, and an 8-person org-chart graph. When healthchecks finish, open **http://localhost:8095** — a four-tab Streamlit app with inline presenter notes, including a **MCP vs Proxy** side-by-side that shows the community/enterprise contrast on the same question. The full 15-minute narrative lives in [docs/playbook-sales-demo.md](docs/playbook-sales-demo.md).
 
 ## 🚀 Quick Start
 

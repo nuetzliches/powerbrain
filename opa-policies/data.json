@@ -109,6 +109,12 @@
         "max_iterations": { "default": 5, "elevated": 10 },
         "elevated_roles": ["developer", "admin"],
         "default_mcp_servers": ["powerbrain"],
+        "pii_resolve_tool_results": {
+          "enabled": true,
+          "allowed_roles": ["analyst", "developer", "admin"],
+          "allowed_purposes": ["support", "billing", "contract_fulfillment", "hr_management", "payroll"],
+          "default_purpose": "support"
+        },
         "documents": {
           "allowed_roles": ["analyst", "developer", "admin"],
           "max_bytes": 25000000,
