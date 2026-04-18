@@ -121,6 +121,59 @@ class PIIScanResult:
     pseudonym_map: dict[str, str] = field(default_factory=dict)
 
 
+# ── Span helpers ───────────────────────────────────────────
+
+def _resolve_overlapping_spans(results: list[Any]) -> list[Any]:
+    """Pick at most one result per text span so downstream replacement is safe.
+
+    Presidio readily emits overlapping hits — classic example is the tail
+    of a German IBAN (``0550 1234 5678 90``) which the phone-number
+    recognizer also matches. If we replace both, the second substitution
+    lands in the middle of the first tag and corrupts the output.
+
+    Resolution strategy, applied greedily in descending priority order:
+
+    1. **Higher score wins.** Presidio scores are a calibrated signal —
+       the IBAN custom recognizer scored 0.95 outranks the phone regex's
+       0.85, which is the desired behaviour on the shared digit span.
+    2. **Longer span wins** on score tie. Prefer the hit that covers
+       more characters; it's typically the superset.
+    3. **Earlier start wins** as a final tie-breaker so the result is
+       deterministic across Presidio runs.
+
+    Returns a list of kept results, ordered as they came in (sort-stable).
+    """
+    if not results:
+        return []
+
+    ranked = sorted(
+        results,
+        key=lambda r: (
+            -float(getattr(r, "score", 0.0)),
+            -(int(r.end) - int(r.start)),
+            int(r.start),
+        ),
+    )
+
+    kept: list[Any] = []
+    for candidate in ranked:
+        c_start, c_end = int(candidate.start), int(candidate.end)
+        overlaps_kept = False
+        for k in kept:
+            k_start, k_end = int(k.start), int(k.end)
+            if c_start < k_end and k_start < c_end:
+                overlaps_kept = True
+                break
+        if not overlaps_kept:
+            kept.append(candidate)
+
+    # Preserve caller-visible order (ascending start). Downstream callers
+    # (scan_text, pseudonymize_text) resort anyway, but stable input is
+    # easier to reason about in tests.
+    kept.sort(key=lambda r: int(r.start))
+    return kept
+
+
 # ── Scanner ─────────────────────────────────────────────────
 
 class PIIScanner:
@@ -215,10 +268,15 @@ class PIIScanner:
         if not results:
             return PIIScanResult()
 
+        # Collapse overlapping hits so downstream consumers (the vault
+        # entity-matching hash lookup in particular) never see two rows
+        # covering the same character range.
+        kept = _resolve_overlapping_spans(results)
+
         entity_counts: dict[str, int] = {}
         entity_locations = []
 
-        for r in results:
+        for r in kept:
             entity_counts[r.entity_type] = entity_counts.get(r.entity_type, 0) + 1
             entity_locations.append({
                 "type": r.entity_type,
@@ -265,9 +323,16 @@ class PIIScanner:
             score_threshold=self.config.min_confidence,
         )
 
+        # Reconcile overlapping hits the same way the pseudonymiser does
+        # so consumers get consistent ``<TYPE>`` placeholders regardless
+        # of which path ran. Presidio's default anonymizer splits on
+        # overlaps and produces "<DE_DATE_OF_BIRTH><LOCATION>" for the
+        # adjacent DOB/LOCATION pair spaCy emits on dotted dates.
+        kept = _resolve_overlapping_spans(results)
+
         anonymized = self.anonymizer.anonymize(
             text=text,
-            analyzer_results=results,
+            analyzer_results=kept,
         )
         return anonymized.text
 
@@ -277,6 +342,13 @@ class PIIScanner:
         """
         Replaces PII with deterministic pseudonyms.
         Same input + salt → same pseudonym (for linkability).
+
+        Overlapping Presidio hits are resolved before replacement (highest
+        score wins; ties go to the longer span). Without this, two hits
+        like ``IBAN_CODE[161..188]`` and ``PHONE_NUMBER[171..188]`` both
+        get substituted in descending-position order, which leaves the
+        PHONE tag pointing into the middle of the freshly-inserted IBAN
+        tag and produces artefacts like ``[IBAN_CODE:abc]db0d4]``.
 
         Returns:
             Tuple of (pseudonymized text, mapping {original → pseudonym})
@@ -288,23 +360,27 @@ class PIIScanner:
             score_threshold=self.config.min_confidence,
         )
 
+        kept = _resolve_overlapping_spans(results)
+
         def make_pseudonym(entity_text: str, entity_type: str) -> str:
             h = hashlib.sha256(f"{salt}:{entity_text}".encode()).hexdigest()[:8]
             return f"[{entity_type}:{h}]"
 
-        # Build individual pseudonyms per result (not per entity type),
+        # Build individual pseudonyms per kept result (not per entity type),
         # so that multiple entities of the same type get different pseudonyms.
         mapping: dict[str, str] = {}
-        for r in results:
+        for r in kept:
             original = text[r.start:r.end]
             pseudo = make_pseudonym(original, r.entity_type)
             mapping[original] = pseudo
 
-        # Manual replacement instead of Presidio's anonymizer (which requires per-type operators).
-        # Sort by position descending for stable offsets.
+        # Manual replacement (position-descending is safe now that spans
+        # don't overlap). We index into the original ``text`` slice for
+        # ``original`` — using the mutating ``pseudonymized`` would still
+        # work but is needlessly fragile.
         pseudonymized = text
-        for r in sorted(results, key=lambda x: x.start, reverse=True):
-            original = pseudonymized[r.start:r.end]
+        for r in sorted(kept, key=lambda x: x.start, reverse=True):
+            original = text[r.start:r.end]
             pseudo = mapping.get(original, make_pseudonym(original, r.entity_type))
             pseudonymized = pseudonymized[:r.start] + pseudo + pseudonymized[r.end:]
 
