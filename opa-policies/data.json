@@ -50,6 +50,15 @@
 
       "pii_entity_types": ["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "IBAN_CODE", "LOCATION"],
 
+      "graph_pii_keys": {
+        "name":      "PERSON",
+        "fullname":  "PERSON",
+        "firstname": "PERSON",
+        "lastname":  "PERSON",
+        "email":     "EMAIL_ADDRESS",
+        "phone":     "PHONE_NUMBER"
+      },
+
       "audit": {
         "retention_days": 365,
         "advisory_lock_id": 847291,
