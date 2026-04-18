@@ -823,54 +823,85 @@ def redact_fields(text: str, pii_entities: list[dict], fields_to_redact: set[str
 
 
 # ── B-30: PII masking for graph query results ──────────────
+#
+# Graph properties carry their semantics in the key name — a key called
+# "email" is an email, period. That's a deterministic classification, so
+# we don't need (and shouldn't pay for) per-value Presidio NER:
+#
+#   * Presidio is probabilistic. spaCy-DE flagged "Elena_Hartmann" as
+#     PERSON, "Tim_Heller" below threshold, "Sarah_Bach" as LOCATION —
+#     producing visually inconsistent output across a single graph.
+#   * Every call crossed the Docker network to ingestion/scan, making
+#     graph_query latency depend on an unrelated service.
+#
+# We replace this with a config-driven key → entity-type-tag mapping
+# loaded from data.pb.config.graph_pii_keys. The result is fully
+# deterministic, audit-friendly, and editable at runtime via the
+# manage_policies MCP tool.
 
-_GRAPH_PII_KEYS = frozenset({"firstname", "lastname", "email", "phone", "name"})
+_graph_pii_keys_cache: dict[str, str] = {}
+_graph_pii_keys_loaded = False
+
+
+async def _get_graph_pii_keys() -> dict[str, str]:
+    """Load the graph-key → entity-type-tag mapping from OPA config.
+
+    Cached for the process lifetime. Use manage_policies (which clears the
+    OPA cache) or a process restart to pick up edits. Graceful fallback to
+    the hardcoded default if OPA is unreachable at startup.
+    """
+    global _graph_pii_keys_loaded, _graph_pii_keys_cache
+    if _graph_pii_keys_loaded:
+        return _graph_pii_keys_cache
+
+    default = {
+        "name":      "PERSON",
+        "fullname":  "PERSON",
+        "firstname": "PERSON",
+        "lastname":  "PERSON",
+        "email":     "EMAIL_ADDRESS",
+        "phone":     "PHONE_NUMBER",
+    }
+    try:
+        resp = await http.get(f"{OPA_URL}/v1/data/pb/config/graph_pii_keys")
+        resp.raise_for_status()
+        cfg = resp.json().get("result")
+        if isinstance(cfg, dict) and cfg:
+            _graph_pii_keys_cache = {k.lower(): v for k, v in cfg.items()}
+        else:
+            _graph_pii_keys_cache = default
+    except Exception as exc:
+        log.warning("OPA graph_pii_keys load failed, using default: %s", exc)
+        _graph_pii_keys_cache = default
+    _graph_pii_keys_loaded = True
+    return _graph_pii_keys_cache
 
 
 async def _mask_graph_pii(data: Any) -> Any:
     """Recursively mask PII in graph query result dicts.
 
-    Walks dicts/lists, finds string values whose key (lower-cased)
-    is in _GRAPH_PII_KEYS, and replaces them with PII-scanner output.
-    On scanner failure, returns data unchanged (graceful degradation).
+    Walks dicts/lists. String values whose lower-cased key matches a
+    configured graph_pii_keys entry are replaced with ``<ENTITY_TYPE>``.
     """
+    keys = await _get_graph_pii_keys()
+    return _mask_walk(data, keys)
+
+
+def _mask_walk(data: Any, keys: dict[str, str]) -> Any:
     if isinstance(data, list):
-        return [await _mask_graph_pii(item) for item in data]
+        return [_mask_walk(item, keys) for item in data]
     if not isinstance(data, dict):
         return data
 
-    # Collect PII-candidate key/value pairs from this dict level
-    candidates: list[tuple[str, str]] = []
+    result: dict[str, Any] = {}
     for key, value in data.items():
-        if isinstance(value, str) and key.lower() in _GRAPH_PII_KEYS and value:
-            candidates.append((key, value))
-
-    # Recurse into nested dicts/lists
-    result = {}
-    for key, value in data.items():
-        if isinstance(value, (dict, list)):
-            result[key] = await _mask_graph_pii(value)
+        if isinstance(value, str) and value:
+            entity = keys.get(key.lower())
+            result[key] = f"<{entity}>" if entity else value
+        elif isinstance(value, (dict, list)):
+            result[key] = _mask_walk(value, keys)
         else:
             result[key] = value
-
-    if not candidates:
-        return result
-
-    # Batch all candidate values into a single scan call
-    delim = "\n---PII_DELIM---\n"
-    combined = delim.join(v for _, v in candidates)
-    try:
-        resp = await http.post(f"{INGESTION_URL}/scan", json={"text": combined})
-        resp.raise_for_status()
-        scan = resp.json()
-        if scan.get("contains_pii"):
-            masked_parts = scan["masked_text"].split(delim)
-            for i, (key, _original) in enumerate(candidates):
-                if i < len(masked_parts):
-                    result[key] = masked_parts[i]
-    except Exception as exc:
-        log.warning("PII scan for graph results failed, returning unmasked: %s", exc)
-
     return result
 
 

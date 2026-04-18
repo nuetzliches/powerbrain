@@ -18,7 +18,7 @@
             "roles", "classifications", "access_matrix",
             "write_roles", "write_classifications",
             "allowed_purposes", "retention_days", "retention_obligations",
-            "fields_to_redact", "pii_actions", "pii_entity_types",
+            "fields_to_redact", "pii_actions", "pii_entity_types", "graph_pii_keys",
             "audit", "ingestion", "human_oversight", "drift", "proxy", "summarization", "rules"
           ],
           "additionalProperties": false,
@@ -101,6 +101,11 @@
               "items": { "type": "string" },
               "minItems": 1,
               "description": "Presidio entity types to scan for"
+            },
+            "graph_pii_keys": {
+              "type": "object",
+              "description": "Maps graph property keys (lower-cased) to Presidio entity-type labels. Values at these keys are deterministically replaced with <ENTITY_TYPE> before graph_query / graph_mutate results are returned. Editable at runtime via manage_policies.",
+              "additionalProperties": { "type": "string" }
             },
             "audit": {
               "type": "object",

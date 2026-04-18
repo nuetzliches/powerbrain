@@ -81,6 +81,21 @@ def render(mcp: _MCPClient, analyst_key: str, viewer_key: str) -> None:
         "policy and data classification decide what each role can read."
     )
 
+    # Suggestions sit OUTSIDE the form so each click rerenders the form
+    # with the chosen query pre-filled AND queues an immediate search.
+    # Inside a form the widget values are captured only on form submit,
+    # which is why the earlier version left the click visually dead.
+    st.markdown("**Suggestions:**")
+    sug_cols = st.columns(len(SUGGESTED_QUERIES))
+    for col, sug in zip(sug_cols, SUGGESTED_QUERIES):
+        with col:
+            if st.button(sug, key=f"suggest_{sug}", use_container_width=True):
+                st.session_state["search_query"] = sug
+                # `run_now` is consumed below to trigger a search without
+                # requiring the user to also click "Run query".
+                st.session_state["search_run_now"] = True
+                st.rerun()
+
     with st.form("search_form"):
         cols = st.columns([3, 1])
         with cols[0]:
@@ -93,21 +108,24 @@ def render(mcp: _MCPClient, analyst_key: str, viewer_key: str) -> None:
             top_k = st.number_input(
                 "top_k", min_value=1, max_value=20, value=5, step=1,
             )
-        st.write("Suggestions:")
-        sug_cols = st.columns(len(SUGGESTED_QUERIES))
-        for col, q in zip(sug_cols, SUGGESTED_QUERIES):
-            with col:
-                if st.form_submit_button(q):
-                    query = q
-                    st.session_state["search_query"] = q
         submitted = st.form_submit_button("Run query", type="primary")
 
-    if not submitted and "search_last_query" not in st.session_state:
-        st.info("Enter a query and press **Run query** to see the two roles' views.")
+    run_now = st.session_state.pop("search_run_now", False)
+    triggered = submitted or run_now
+
+    if not triggered and "search_last_query" not in st.session_state:
+        st.info("Pick a suggestion or enter a query and press **Run query**.")
         return
 
-    q = (query or "").strip()
-    if submitted and q:
+    # When triggered via a suggestion click, the form's local `query` still
+    # reflects the *previous* render's input widget value. Prefer the
+    # session-state query, which was just updated by the button callback.
+    effective_query = (
+        st.session_state.get("search_query") if run_now else query
+    ) or query
+
+    q = (effective_query or "").strip()
+    if triggered and q:
         st.session_state["search_last_query"] = q
         st.session_state["search_last_top_k"] = int(top_k)
 
