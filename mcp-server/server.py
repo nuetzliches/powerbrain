@@ -792,18 +792,20 @@ async def check_opa_vault_access(
 
 def redact_fields(text: str, pii_entities: list[dict], fields_to_redact: set[str]) -> str:
     """Redacts specific PII entity types in the text based on OPA policy."""
-    # Mapping from OPA field names to Presidio entity types
-    field_to_entity = {
-        "email": "EMAIL_ADDRESS",
-        "phone": "PHONE_NUMBER",
-        "iban": "IBAN_CODE",
-        "birthdate": "DATE_OF_BIRTH",
-        "address": "LOCATION",
-        "person": "PERSON",
+    # Mapping from OPA field names to one or more Presidio entity types.
+    # Custom recognizers (e.g. DE_DATE_OF_BIRTH) map to the same category as
+    # their built-in counterpart so purpose-based redaction stays consistent.
+    field_to_entities: dict[str, tuple[str, ...]] = {
+        "email":     ("EMAIL_ADDRESS",),
+        "phone":     ("PHONE_NUMBER",),
+        "iban":      ("IBAN_CODE",),
+        "birthdate": ("DATE_OF_BIRTH", "DE_DATE_OF_BIRTH"),
+        "address":   ("LOCATION",),
+        "person":    ("PERSON",),
     }
-    entities_to_redact = {
-        field_to_entity[f] for f in fields_to_redact if f in field_to_entity
-    }
+    entities_to_redact: set[str] = set()
+    for f in fields_to_redact:
+        entities_to_redact.update(field_to_entities.get(f, ()))
 
     if not entities_to_redact:
         return text

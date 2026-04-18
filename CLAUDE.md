@@ -144,9 +144,20 @@ powerbrain/
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── scripts/
-│   ├── quickstart.sh          ← Automated first-time setup
+│   ├── quickstart.sh          ← Automated first-time setup (--seed / --demo flags)
 │   ├── build-images.sh        ← Docker image build script
+│   ├── seed_graph.py          ← Knowledge-graph seed (used by pb-seed in demo mode)
 │   └── seed_*.py              ← Test data seeding scripts
+├── demo/
+│   ├── app.py                 ← Streamlit entry (pb-demo container)
+│   ├── mcp_client.py          ← MCP HTTP wrapper + vault-token builder
+│   ├── panels/
+│   │   ├── search_roles.py    ← Tab A — OPA role contrast
+│   │   ├── pii_vault.py       ← Tab B — scan/ingest/reveal vault flow
+│   │   └── knowledge_graph.py ← Tab C — NovaTech org-chart (streamlit-agraph)
+│   ├── assets/talk_track.md   ← Presenter cheat-sheet (rendered in sidebar)
+│   ├── Dockerfile
+│   └── requirements.txt
 ├── tests/
 │   ├── integration/           ← E2E smoke tests (gated behind RUN_INTEGRATION_TESTS=1)
 │   └── load/
@@ -155,6 +166,7 @@ powerbrain/
 ├── SECURITY.md                ← Vulnerability reporting policy
 └── docs/
     ├── getting-started.md          ← Step-by-step tutorial for newcomers
+    ├── playbook-sales-demo.md      ← 15-min decision-maker demo script (Tabs A/B/C)
     ├── mcp-tools.md                ← All 23 MCP tools with parameters and access roles
     ├── what-is-powerbrain.md       ← Detailed overview and positioning
     ├── deployment.md               ← Dev, prod, TLS, Docker Secrets guide
@@ -416,7 +428,7 @@ curl http://localhost:11434/api/tags       # Ollama
 ### OPA Policy Tests
 ```bash
 # Run all OPA tests (85 tests: access, privacy, rules, summarization, proxy)
-docker exec pb-opa /opa test /policies/pb/ -v
+docker exec pb-opa /opa test /policies/ -v
 
 # Evaluate a specific policy
 docker exec pb-opa /opa eval \
@@ -448,7 +460,7 @@ The `docker_stack` fixture calls `docker compose down -v` before and after the t
 ### CI / PR Validation
 PR workflow (`.github/workflows/pr-validate.yml`) runs on every PR to `master`:
 - **unit-tests** — All service tests in `python:3.12-slim` container (`-m "not integration"`), coverage threshold 80% (`--cov-fail-under=80`)
-- **opa-tests** — OPA policy tests (`opa test opa-policies/pb/`)
+- **opa-tests** — OPA policy tests (`opa test opa-policies/`)
 - **docker-build** — Build all 5 images (no push)
 - **security-scan** — `pip-audit` (dependency vulnerabilities) + `bandit` (static analysis), non-blocking
 
@@ -527,6 +539,8 @@ All 4 services (mcp-server, proxy, reranker, ingestion) share a common telemetry
 30. ✅ **Office 365 Adapter** — Second source adapter. Syncs SharePoint, OneDrive, Outlook Mail, Teams Messages, and OneNote into KB via Microsoft Graph API. Delta Queries for incremental sync (except OneNote: timestamp-based). OAuth2 Client Credentials (app-only) + Delegated Auth (OneNote, post-March-2025). Content extraction via Microsoft `markitdown`. Site-level classification in YAML. Teams-SharePoint deduplication (file attachments as refs only). Resource Unit budget tracking + `$batch` API. Config: `ingestion/office365.yaml`.
 
 31. ✅ **Shared Document Extraction + Chat Attachments** — `ContentExtractor` lifted into `ingestion/content_extraction/` (markitdown + python-docx/openpyxl/python-pptx/BeautifulSoup fallbacks). New `POST /extract` endpoint on the ingestion service converts base64-encoded documents (PDF/DOCX/XLSX/PPTX/MSG/EML/RTF/...) to text. The pb-proxy chat path (`/v1/chat/completions` and `/v1/messages`) extracts attached files from multimodal message content before PII scanning and LLM forwarding — both OpenAI `file`/`input_file` blocks and Anthropic `document` blocks are supported. The GitHub adapter can optionally ingest Office documents via `allow_documents: true` in `repos.yaml` (default off; ingested with `source_type="github-document"`). OPA-gated via new `pb.proxy.documents` policy section (allowed roles, max bytes, mime allowlist, max files per request). Optional Tesseract OCR fallback for scanned PDFs via `OCR_FALLBACK_ENABLED` + `WITH_OCR=true` Docker build arg (default off). Office 365 adapter switches to a thin shim that re-exports from the shared package — fully backward compatible.
+
+32. ✅ **Decision-Maker Sales-Demo Package** — Opt-in Streamlit app `pb-demo` (port 8095, profile `demo`) with three tabs showcasing the differentiators: (A) role-aware search with side-by-side analyst/viewer columns, (B) live PII vault scan/ingest/reveal with HMAC-signed tokens, (C) NovaTech org-chart via `graph_query get_neighbors` rendered through `streamlit-agraph`. Backed by two pre-seeded demo keys in `init-db/010_api_keys.sql` (`pb_demo_analyst_localonly`, `pb_demo_viewer_localonly`), 6 German-PII customer records (`testdata/documents_pii.json`), and an 8-employee graph seed (`testdata/graph_seed.json` → `scripts/seed_graph.py`). Quickstart polished: auto-generates passwords, drops the manual-edit block, runs a post-seed smoke query, advertises Demo UI/Grafana/MCP endpoints. New `--seed` / `--demo` flags. Plus migration `init-db/020_viewer_role.sql` widens the `agent_role` CHECK to accept `viewer`, and `docs/playbook-sales-demo.md` provides a 15-min presenter narrative.
 
 Details on all features: see `docs/architecture.md`
 

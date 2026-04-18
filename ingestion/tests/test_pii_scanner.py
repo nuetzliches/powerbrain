@@ -326,11 +326,19 @@ class TestPIIScannerConfig:
         cfg = load_config(config_path)
         assert cfg.min_confidence == 0.7
         assert "PERSON" in cfg.entity_types
-        assert len(cfg.custom_recognizers) == 2
-        assert cfg.custom_recognizers[0].entity_type == "DE_TAX_ID"
-        assert cfg.custom_recognizers[1].entity_type == "DE_SOCIAL_SECURITY"
+        # Custom recognizers: DE tax/SSN + phone/IBAN/DOB fallbacks that
+        # compensate for Presidio built-ins dropping German formats or
+        # invalid-checksum IBANs.
+        recognizer_types = [r.entity_type for r in cfg.custom_recognizers]
+        assert "DE_TAX_ID" in recognizer_types
+        assert "DE_SOCIAL_SECURITY" in recognizer_types
+        assert "PHONE_NUMBER" in recognizer_types
+        assert "IBAN_CODE" in recognizer_types
+        assert "DE_DATE_OF_BIRTH" in recognizer_types
+        # And their entity types are exposed through the aggregate helper.
         assert "DE_TAX_ID" in cfg.all_entity_types
         assert "DE_SOCIAL_SECURITY" in cfg.all_entity_types
+        assert "DE_DATE_OF_BIRTH" in cfg.all_entity_types
 
     # ── Scanner init with config ────────────────────────────
 

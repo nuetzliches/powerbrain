@@ -1,0 +1,262 @@
+"""Thin MCP HTTP client for the Powerbrain sales-demo UI.
+
+Owns all request/response parsing. If the upstream schema changes, the
+Pydantic validators here will raise a clear "Demo out of date" message
+instead of crashing mid-presentation.
+"""
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import os
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+import requests
+from pydantic import BaseModel, Field, ValidationError
+
+
+class DemoOutOfDateError(RuntimeError):
+    """MCP returned an unexpected shape — demo was built against an older API."""
+
+
+class SearchResultItem(BaseModel):
+    id: str
+    score: float = 0.0
+    rerank_score: float = 0.0
+    rank: int = 0
+    content: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    # Populated when the caller supplies a valid pii_access_token + purpose
+    # and OPA authorises vault access.
+    original_content: str | None = None
+    vault_access: bool = False
+
+
+class SearchResponse(BaseModel):
+    results: list[SearchResultItem] = Field(default_factory=list)
+    total: int = 0
+    summary: str | None = None
+    summary_policy: str | None = None
+
+
+class GraphNode(BaseModel):
+    # AGE returns nodes as {"id": <int>, "label": str, "properties": {...}}
+    # but find_node/get_neighbors wrap them — keep the shape loose.
+    id: int | str | None = None
+    label: str | None = None
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+
+class _MCPClient:
+    def __init__(
+        self,
+        url: str | None = None,
+        api_key: str | None = None,
+        timeout: int = 30,
+    ) -> None:
+        self.url = (url or os.environ.get("MCP_URL", "http://localhost:8080")).rstrip("/")
+        self.api_key = api_key or os.environ.get("MCP_API_KEY", "")
+        self.timeout = timeout
+        self._request_id = 0
+
+    def _headers(self, override_key: str | None = None) -> dict[str, str]:
+        key = override_key or self.api_key
+        h = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        if key:
+            h["Authorization"] = f"Bearer {key}"
+        return h
+
+    def _next_id(self) -> int:
+        self._request_id += 1
+        return self._request_id
+
+    def _rpc(self, method: str, params: dict, api_key: str | None = None) -> dict:
+        body = {
+            "jsonrpc": "2.0",
+            "id": self._next_id(),
+            "method": method,
+            "params": params,
+        }
+        resp = requests.post(
+            f"{self.url}/mcp",
+            headers=self._headers(api_key),
+            json=body,
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json() if resp.text else {}
+        if "error" in data:
+            raise RuntimeError(f"MCP error: {data['error']}")
+        return data
+
+    def initialize(self, api_key: str | None = None) -> None:
+        self._rpc("initialize", {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "pb-demo-ui", "version": "1.0"},
+        }, api_key=api_key)
+
+    def call_tool(
+        self,
+        name: str,
+        arguments: dict,
+        api_key: str | None = None,
+    ) -> dict:
+        """Call an MCP tool and return the parsed JSON inside content[0].text."""
+        resp = self._rpc(
+            "tools/call",
+            {"name": name, "arguments": arguments},
+            api_key=api_key,
+        )
+        try:
+            text = resp["result"]["content"][0]["text"]
+            return json.loads(text)
+        except (KeyError, IndexError, json.JSONDecodeError) as exc:
+            raise DemoOutOfDateError(
+                f"Unexpected MCP response for {name}: {exc}\n"
+                f"Full payload: {resp}"
+            )
+
+    # ── Convenience wrappers ────────────────────────────────────────
+
+    def search_knowledge(
+        self,
+        query: str,
+        api_key: str,
+        collection: str = "pb_general",
+        top_k: int = 5,
+        pii_access_token: dict | None = None,
+        purpose: str | None = None,
+    ) -> SearchResponse:
+        args: dict[str, Any] = {
+            "query": query,
+            "collection": collection,
+            "top_k": top_k,
+        }
+        if pii_access_token and purpose:
+            args["pii_access_token"] = pii_access_token
+            args["purpose"] = purpose
+        raw = self.call_tool("search_knowledge", args, api_key=api_key)
+        try:
+            return SearchResponse(**raw)
+        except ValidationError as exc:
+            raise DemoOutOfDateError(
+                f"search_knowledge response shape changed: {exc}"
+            )
+
+    def graph_query(self, action: str, api_key: str, **kwargs) -> dict:
+        return self.call_tool(
+            "graph_query",
+            {"action": action, **kwargs},
+            api_key=api_key,
+        )
+
+    def query_data(
+        self,
+        dataset: str,
+        api_key: str,
+        conditions: dict | None = None,
+        limit: int = 50,
+    ) -> dict:
+        args: dict[str, Any] = {"dataset": dataset, "limit": limit}
+        if conditions:
+            args["conditions"] = conditions
+        return self.call_tool("query_data", args, api_key=api_key)
+
+
+class _IngestionClient:
+    """Light wrapper for the ingestion service (bypasses MCP for PII ingest demo)."""
+
+    def __init__(self, url: str | None = None, timeout: int = 60) -> None:
+        self.url = (
+            url or os.environ.get("INGESTION_URL", "http://localhost:8081")
+        ).rstrip("/")
+        self.timeout = timeout
+
+    def ingest(
+        self,
+        content: str,
+        *,
+        collection: str = "pb_general",
+        classification: str = "confidential",
+        project: str | None = None,
+        metadata: dict | None = None,
+    ) -> dict:
+        payload: dict[str, Any] = {
+            "source": content,
+            "source_type": "text",
+            "collection": collection,
+            "classification": classification,
+            "metadata": metadata or {},
+        }
+        if project:
+            payload["project"] = project
+        resp = requests.post(f"{self.url}/ingest", json=payload, timeout=self.timeout)
+        resp.raise_for_status()
+        return resp.json()
+
+    def scan(self, text: str) -> dict:
+        """Run PII scan on a text snippet (used to show which entities would be redacted)."""
+        resp = requests.post(
+            f"{self.url}/scan",
+            json={"text": text},
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+def _load_vault_secret() -> str | None:
+    """Read the vault HMAC secret from a Docker secret file or env var.
+
+    Demo-only: in production, only trusted services hold this secret.
+    """
+    file_path = os.environ.get("VAULT_HMAC_SECRET_FILE")
+    if file_path:
+        try:
+            return Path(file_path).read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+    env_val = os.environ.get("VAULT_HMAC_SECRET")
+    if env_val:
+        return env_val.strip()
+    return None
+
+
+def build_vault_token(
+    purpose: str,
+    data_category: str,
+    ttl_minutes: int = 10,
+    secret: str | None = None,
+) -> dict:
+    """Build an HMAC-signed PII access token (server validates it)."""
+    secret = secret or _load_vault_secret()
+    if not secret:
+        raise RuntimeError(
+            "VAULT_HMAC_SECRET not available — cannot issue vault token. "
+            "Mount secrets/vault_hmac_secret.txt into the demo container."
+        )
+    payload = {
+        "purpose": purpose,
+        "data_category": data_category,
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (
+            datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)
+        ).isoformat(),
+    }
+    signature = hmac.new(
+        secret.encode(),
+        json.dumps(payload, sort_keys=True).encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return {**payload, "signature": signature}
+
+
+def get_clients() -> tuple[_MCPClient, _IngestionClient]:
+    return _MCPClient(), _IngestionClient()

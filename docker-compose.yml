@@ -109,6 +109,11 @@ services:
       - "--server"
       - "--addr=0.0.0.0:8181"
       - "--set=decision_logs.console=true"
+      # `data.json` lives in `/policies/` (not in the `pb/` subdirectory)
+      # so it loads at `data` root — the file's own `{"pb": {"config": ...}}`
+      # structure then matches the `data.pb.config.*` paths used by the Rego
+      # rules. A data.json inside /policies/pb/ would be merged under
+      # data.pb.<content>, yielding data.pb.pb.config (doubly-prefixed).
       - "/policies"
       # For real-time policy sync, use the OPAL profile instead:
       # docker compose --profile opal up -d
@@ -274,7 +279,7 @@ services:
       POLICY_SCHEMA_PATH: /app/policy_data_schema.json
     volumes:
       - ./ingestion/pii_config.yaml:/app/ingestion/pii_config.yaml:ro
-      - ./opa-policies/pb/policy_data_schema.json:/app/policy_data_schema.json:ro
+      - ./opa-policies/policy_data_schema.json:/app/policy_data_schema.json:ro
     depends_on:
       qdrant:
         condition: service_healthy
@@ -446,8 +451,8 @@ services:
   seed:
     profiles: ["seed"]
     build:
-      context: ./testdata
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: testdata/Dockerfile
     container_name: pb-seed
     environment:
       INGESTION_URL:   http://ingestion:8081
@@ -457,6 +462,10 @@ services:
       MCP_URL:         http://mcp-server:8080
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       MAX_WAIT_SECONDS: "180"
+      # Demo profile toggles: set to 1 to include PII fixtures / run graph seed.
+      SEED_INCLUDE_PII:   ${SEED_INCLUDE_PII:-0}
+      SEED_INCLUDE_GRAPH: ${SEED_INCLUDE_GRAPH:-0}
+      MCP_API_KEY:        ${SEED_MCP_API_KEY:-pb_dev_localonly_do_not_use_in_production}
     depends_on:
       qdrant:
         condition: service_healthy
@@ -469,6 +478,35 @@ services:
     networks:
       - pb-net
     restart: "no"
+
+  # ── Sales-demo UI (only with --profile demo) ─────────────
+  # Streamlit app with three panels: role-based search, PII vault reveal,
+  # and the knowledge-graph org-chart. Pointed at the live MCP server.
+  pb-demo:
+    profiles: ["demo"]
+    build:
+      context: ./demo
+      dockerfile: Dockerfile
+    container_name: pb-demo
+    ports:
+      - "${DEMO_PORT:-8095}:8095"
+    secrets:
+      - vault_hmac_secret
+    environment:
+      MCP_URL:                http://mcp-server:8080
+      INGESTION_URL:          http://ingestion:8081
+      DEMO_ANALYST_KEY:       pb_demo_analyst_localonly
+      DEMO_VIEWER_KEY:        pb_demo_viewer_localonly
+      DEV_ADMIN_KEY:          pb_dev_localonly_do_not_use_in_production
+      VAULT_HMAC_SECRET_FILE: /run/secrets/vault_hmac_secret
+    depends_on:
+      mcp-server:
+        condition: service_started
+      ingestion:
+        condition: service_started
+    networks:
+      - pb-net
+    restart: unless-stopped
 
   # ── AI Provider Proxy (optional) ──────────────────────────
   pb-proxy:

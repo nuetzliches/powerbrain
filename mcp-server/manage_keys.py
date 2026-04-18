@@ -117,7 +117,7 @@ def main() -> None:
 
     create = sub.add_parser("create", help="Create a new API key")
     create.add_argument("--agent-id", required=True, help="Unique agent identifier")
-    create.add_argument("--role", required=True, choices=["analyst", "developer", "admin"])
+    create.add_argument("--role", required=True, choices=["viewer", "analyst", "developer", "admin"])
     create.add_argument("--description", default=None, help="What this key is for")
     create.add_argument("--expires-in-days", type=int, default=None)
 

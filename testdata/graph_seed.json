@@ -1,0 +1,49 @@
+{
+  "description": "NovaTech org-chart seed for the sales-demo graph panel. Loaded idempotently by scripts/seed_graph.py via the graph_mutate MCP tool. Node labels and property keys must match [a-zA-Z_][a-zA-Z0-9_]* — see mcp-server/graph_service.py:_require_identifier.",
+  "nodes": [
+    {"label": "Department", "properties": {"id": "dept-eng", "name": "Engineering", "headcount": 24}},
+    {"label": "Department", "properties": {"id": "dept-hr", "name": "HumanResources", "headcount": 6}},
+    {"label": "Department", "properties": {"id": "dept-sales", "name": "Sales", "headcount": 9}},
+
+    {"label": "Project", "properties": {"id": "proj-platform", "name": "Platform2026", "status": "active", "classification": "internal"}},
+    {"label": "Project", "properties": {"id": "proj-mobile", "name": "MobileApp", "status": "active", "classification": "internal"}},
+    {"label": "Project", "properties": {"id": "proj-hr-revamp", "name": "HRPortalRevamp", "status": "planning", "classification": "internal"}},
+    {"label": "Project", "properties": {"id": "proj-sales-cx", "name": "SalesCRMIntegration", "status": "active", "classification": "confidential"}},
+
+    {"label": "Employee", "properties": {"id": "emp-001", "name": "Elena_Hartmann", "role": "VPEngineering", "location": "Berlin"}},
+    {"label": "Employee", "properties": {"id": "emp-002", "name": "Tim_Heller", "role": "AccountExecutive", "location": "Munich"}},
+    {"label": "Employee", "properties": {"id": "emp-003", "name": "Sarah_Bach", "role": "KeyAccount", "location": "Munich"}},
+    {"label": "Employee", "properties": {"id": "emp-004", "name": "Martin_Keller", "role": "SalesEngineer", "location": "Cologne"}},
+    {"label": "Employee", "properties": {"id": "emp-005", "name": "Nina_Roth", "role": "StaffEngineer", "location": "Berlin"}},
+    {"label": "Employee", "properties": {"id": "emp-006", "name": "Jonas_Lehmann", "role": "SeniorDeveloper", "location": "Hamburg"}},
+    {"label": "Employee", "properties": {"id": "emp-007", "name": "Katja_Arnold", "role": "HRDirector", "location": "Frankfurt"}},
+    {"label": "Employee", "properties": {"id": "emp-008", "name": "Paul_Neubert", "role": "MobileLead", "location": "Berlin"}}
+  ],
+  "relationships": [
+    {"from_label": "Employee", "from_id": "emp-001", "to_label": "Department", "to_id": "dept-eng", "rel_type": "MEMBER_OF", "properties": {"since": "2022-01"}},
+    {"from_label": "Employee", "from_id": "emp-005", "to_label": "Department", "to_id": "dept-eng", "rel_type": "MEMBER_OF", "properties": {"since": "2023-06"}},
+    {"from_label": "Employee", "from_id": "emp-006", "to_label": "Department", "to_id": "dept-eng", "rel_type": "MEMBER_OF", "properties": {"since": "2024-02"}},
+    {"from_label": "Employee", "from_id": "emp-008", "to_label": "Department", "to_id": "dept-eng", "rel_type": "MEMBER_OF", "properties": {"since": "2024-09"}},
+
+    {"from_label": "Employee", "from_id": "emp-002", "to_label": "Department", "to_id": "dept-sales", "rel_type": "MEMBER_OF", "properties": {"since": "2023-01"}},
+    {"from_label": "Employee", "from_id": "emp-003", "to_label": "Department", "to_id": "dept-sales", "rel_type": "MEMBER_OF", "properties": {"since": "2022-08"}},
+    {"from_label": "Employee", "from_id": "emp-004", "to_label": "Department", "to_id": "dept-sales", "rel_type": "MEMBER_OF", "properties": {"since": "2024-04"}},
+
+    {"from_label": "Employee", "from_id": "emp-007", "to_label": "Department", "to_id": "dept-hr", "rel_type": "MEMBER_OF", "properties": {"since": "2021-11"}},
+
+    {"from_label": "Employee", "from_id": "emp-001", "to_label": "Project", "to_id": "proj-platform", "rel_type": "WORKS_ON", "properties": {"allocation": 80}},
+    {"from_label": "Employee", "from_id": "emp-005", "to_label": "Project", "to_id": "proj-platform", "rel_type": "WORKS_ON", "properties": {"allocation": 100}},
+    {"from_label": "Employee", "from_id": "emp-006", "to_label": "Project", "to_id": "proj-platform", "rel_type": "WORKS_ON", "properties": {"allocation": 60}},
+    {"from_label": "Employee", "from_id": "emp-008", "to_label": "Project", "to_id": "proj-mobile", "rel_type": "WORKS_ON", "properties": {"allocation": 100}},
+    {"from_label": "Employee", "from_id": "emp-006", "to_label": "Project", "to_id": "proj-mobile", "rel_type": "WORKS_ON", "properties": {"allocation": 40}},
+    {"from_label": "Employee", "from_id": "emp-007", "to_label": "Project", "to_id": "proj-hr-revamp", "rel_type": "WORKS_ON", "properties": {"allocation": 60}},
+    {"from_label": "Employee", "from_id": "emp-003", "to_label": "Project", "to_id": "proj-sales-cx", "rel_type": "WORKS_ON", "properties": {"allocation": 50}},
+    {"from_label": "Employee", "from_id": "emp-004", "to_label": "Project", "to_id": "proj-sales-cx", "rel_type": "WORKS_ON", "properties": {"allocation": 70}},
+    {"from_label": "Employee", "from_id": "emp-002", "to_label": "Project", "to_id": "proj-sales-cx", "rel_type": "WORKS_ON", "properties": {"allocation": 40}},
+
+    {"from_label": "Department", "from_id": "dept-eng", "to_label": "Project", "to_id": "proj-platform", "rel_type": "OWNS", "properties": {}},
+    {"from_label": "Department", "from_id": "dept-eng", "to_label": "Project", "to_id": "proj-mobile", "rel_type": "OWNS", "properties": {}},
+    {"from_label": "Department", "from_id": "dept-hr", "to_label": "Project", "to_id": "proj-hr-revamp", "rel_type": "OWNS", "properties": {}},
+    {"from_label": "Department", "from_id": "dept-sales", "to_label": "Project", "to_id": "proj-sales-cx", "rel_type": "OWNS", "properties": {}}
+  ]
+}
