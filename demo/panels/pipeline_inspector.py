@@ -102,6 +102,62 @@ def _render_scan(scan: dict, text: str) -> None:
                 )
 
 
+def _render_verifier(verifier: dict) -> None:
+    """Show the semantic-verifier outcome when the OPA policy enabled it.
+
+    Noop deployments (community default) get a light-touch caption so the
+    panel doesn't look empty; enterprise deployments with ``backend=llm``
+    get counts + duration + per-entity-type breakdown.
+    """
+    st.markdown("#### 2b · Semantic Verifier")
+    if not verifier.get("enabled"):
+        backend = verifier.get("backend", "noop")
+        st.caption(
+            f"Disabled (`backend={backend}`). Enable via "
+            "`pb.config.ingestion.pii_verifier.enabled=true` to have an "
+            "LLM double-check ambiguous candidates (PERSON / LOCATION / "
+            "ORGANIZATION) before downstream phases see them."
+        )
+        return
+
+    cols = st.columns(5)
+    cols[0].metric("Input", verifier.get("input_count", 0))
+    cols[1].metric("Forwarded", verifier.get("forwarded", 0),
+                   help="Pattern-based types (IBAN, email, phone, DOB) "
+                        "kept without LLM review.")
+    cols[2].metric("Reviewed", verifier.get("reviewed", 0),
+                   help="Ambiguous candidates sent to the LLM.")
+    cols[3].metric("Reverted", verifier.get("reverted", 0),
+                   help="LLM decided these were false positives.",
+                   delta=f"-{verifier.get('reverted', 0)} FP",
+                   delta_color="inverse")
+    cols[4].metric("Duration", f"{verifier.get('duration_ms', 0):.0f} ms")
+
+    before = verifier.get("before") or {}
+    if before:
+        before_total = sum(int(v) for v in (before.get("entity_counts") or {}).values())
+        st.caption(
+            f"Before verifier: {before_total} candidates · "
+            f"After: {verifier.get('kept', 0)} kept · "
+            f"backend=`{verifier.get('backend', '?')}`"
+        )
+
+    per_type = verifier.get("by_entity_type") or {}
+    if per_type:
+        with st.expander("Per-entity-type breakdown"):
+            rows = [
+                {
+                    "entity_type": etype,
+                    "total":       b.get("total", 0),
+                    "forwarded":   b.get("forwarded", 0),
+                    "kept":        b.get("kept", 0),
+                    "reverted":    b.get("reverted", 0),
+                }
+                for etype, b in sorted(per_type.items())
+            ]
+            st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
 def _render_quality(quality: dict) -> None:
     st.markdown("#### 3 · Quality Gate (Art. 10)")
     if "error" in quality:
@@ -290,6 +346,7 @@ def render(ingestion: _IngestionClient) -> None:
 
     _render_extract(result.get("extract") or {})
     _render_scan(result.get("scan") or {}, text)
+    _render_verifier(result.get("verifier") or {})
     _render_quality(result.get("quality") or {})
     _render_privacy(result.get("privacy") or {})
     _render_summary(result.get("summary") or {})

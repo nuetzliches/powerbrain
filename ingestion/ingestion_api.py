@@ -69,6 +69,12 @@ from shared.telemetry import (
     request_telemetry_context, get_current_telemetry,
     MetricsAggregator, TELEMETRY_IN_RESPONSE,
 )
+from shared.pii_verify_provider import (
+    create_pii_verify_provider,
+    build_candidates_from_locations,
+    apply_verdicts_to_scan_result,
+    VerifyStats,
+)
 
 POSTGRES_URL = build_postgres_url()
 
@@ -89,6 +95,41 @@ completion_provider = CompletionProvider(
     base_url=LLM_PROVIDER_URL, api_key=LLM_API_KEY
 )
 
+# ── PII Verifier (Presidio precision filter) ──────────────────
+# ``noop`` keeps the pre-existing Presidio-only behaviour (community
+# default). ``llm`` sends ambiguous candidates (PERSON / LOCATION /
+# ORGANIZATION) to the chat endpoint for context-aware filtering.
+# The *backend* is OPA-policy-driven at runtime so admins can flip
+# via manage_policies without restarting ingestion. The env vars only
+# describe WHERE the LLM lives, not WHETHER to call it.
+PII_VERIFIER_URL            = os.getenv("PII_VERIFIER_URL", LLM_PROVIDER_URL)
+PII_VERIFIER_MODEL          = os.getenv("PII_VERIFIER_MODEL", LLM_MODEL)
+PII_VERIFIER_API_KEY        = os.getenv("PII_VERIFIER_API_KEY", LLM_API_KEY)
+PII_VERIFIER_ENABLED_DEFAULT = os.getenv("PII_VERIFIER_ENABLED", "false").lower() == "true"
+PII_VERIFIER_BACKEND_DEFAULT = os.getenv("PII_VERIFIER_BACKEND", "noop")
+PII_VERIFIER_TIMEOUT        = float(os.getenv("PII_VERIFIER_TIMEOUT_SECONDS", "15"))
+
+# Lazily-initialised per-backend singletons. OPA policy picks which one
+# runs for a given request; we keep the LLM provider warm to avoid
+# reconnect costs on repeated ingests.
+_pii_verifier_providers: dict[str, Any] = {}
+
+
+def _get_pii_verifier_provider(backend: str):
+    """Return (and cache) the provider instance for the requested backend."""
+    key = (backend or "noop").lower()
+    prov = _pii_verifier_providers.get(key)
+    if prov is not None:
+        return prov
+    prov = create_pii_verify_provider(
+        backend=key,
+        base_url=PII_VERIFIER_URL,
+        api_key=PII_VERIFIER_API_KEY,
+        model=PII_VERIFIER_MODEL,
+    )
+    _pii_verifier_providers[key] = prov
+    return prov
+
 DEFAULT_COLLECTION = "pb_general"
 
 logging.basicConfig(level=logging.INFO)
@@ -101,6 +142,8 @@ pb_ingestion_duration = None
 pb_ingestion_chunks = None
 pb_ingestion_pii_entities = None
 pb_ingestion_embedding_batch = None
+pb_ingestion_pii_verifier_calls = None
+pb_ingestion_pii_verifier_duration = None
 
 # Try to create metrics, handle duplicate registration gracefully
 try:
@@ -133,6 +176,17 @@ try:
         "pb_extract_bytes_in", "Document extraction input size in bytes",
         buckets=[1024, 10_000, 100_000, 500_000, 1_000_000, 5_000_000, 10_000_000, 25_000_000],
     )
+    pb_ingestion_pii_verifier_calls = Counter(
+        "pb_ingestion_pii_verifier_calls_total",
+        "Semantic PII verifier decisions (per candidate)",
+        ["entity_type", "backend", "result"],
+    )
+    pb_ingestion_pii_verifier_duration = Histogram(
+        "pb_ingestion_pii_verifier_duration_seconds",
+        "Semantic PII verifier round-trip duration",
+        ["backend"],
+        buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
+    )
 except ValueError as e:
     if "Duplicated timeseries" in str(e):
         # Metrics already registered, get them from registry
@@ -155,6 +209,10 @@ except ValueError as e:
                     pb_extract_duration = collector
                 elif collector._name == "pb_extract_bytes_in":
                     pb_extract_bytes_in = collector
+                elif collector._name == "pb_ingestion_pii_verifier_calls_total":
+                    pb_ingestion_pii_verifier_calls = collector
+                elif collector._name == "pb_ingestion_pii_verifier_duration_seconds":
+                    pb_ingestion_pii_verifier_duration = collector
     else:
         raise
 
@@ -345,9 +403,17 @@ class PreviewResponse(BaseModel):
 
     Shape is intentionally optimised for a demo UI — grouped by phase
     with booleans / counts the UI can render as badges.
+
+    ``verifier`` is populated when the semantic PII verifier
+    (``pb.config.ingestion.pii_verifier.enabled=true``) ran between
+    the raw Presidio scan and the rest of the pipeline. ``scan``
+    reflects the post-verifier state so downstream consumers stay
+    consistent — the ``verifier.before`` sub-field holds the raw
+    Presidio output for comparison in the demo panel.
     """
     extract:  dict = Field(default_factory=dict)
     scan:     dict = Field(default_factory=dict)
+    verifier: dict = Field(default_factory=dict)
     quality:  dict = Field(default_factory=dict)
     privacy:  dict = Field(default_factory=dict)
     summary:  dict = Field(default_factory=dict)
@@ -437,6 +503,115 @@ async def check_opa_quality_gate(
         log.warning(f"OPA quality_gate check failed, fail-closed: {e}")
         return {"allowed": False, "min_score": 0.0,
                 "reason": f"opa_unreachable: {e}"}
+
+
+async def check_opa_pii_verifier() -> dict:
+    """Fetch the semantic verifier policy from OPA.
+
+    Returns ``{enabled, backend, min_confidence_keep}``. Defaults match
+    the noop backend so an outage can't accidentally widen what the
+    verifier drops — fail-closed on policy unreachability.
+    """
+    fallback = {
+        "enabled":  PII_VERIFIER_ENABLED_DEFAULT,
+        "backend":  PII_VERIFIER_BACKEND_DEFAULT,
+        "min_confidence_keep": 0.5,
+    }
+    try:
+        resp = await http_client.post(
+            f"{OPA_URL}/v1/data/pb/config/ingestion/pii_verifier",
+            json={"input": {}},
+        )
+        resp.raise_for_status()
+        data = resp.json().get("result") or {}
+        if not isinstance(data, dict):
+            return fallback
+        return {
+            "enabled":  bool(data.get("enabled", fallback["enabled"])),
+            "backend":  str(data.get("backend", fallback["backend"])),
+            "min_confidence_keep": float(
+                data.get("min_confidence_keep", fallback["min_confidence_keep"])
+            ),
+        }
+    except Exception as exc:
+        log.warning("OPA pii_verifier policy lookup failed, using env defaults: %s", exc)
+        return fallback
+
+
+async def apply_pii_verifier(
+    text: str,
+    contains_pii: bool,
+    entity_counts: dict[str, int],
+    entity_locations: list[dict],
+) -> tuple[bool, dict[str, int], list[dict], dict]:
+    """Run the verifier on a scan result, returning filtered data + stats.
+
+    Wraps :meth:`_BasePIIVerifyProvider.verify` with OPA policy,
+    Prometheus counters, and the telemetry trace span. Safe to call
+    unconditionally: when the verifier is disabled (noop backend) the
+    returned arrays are unchanged and ``stats["enabled"]`` is False.
+    """
+    stats_dict: dict = {"enabled": False, "backend": "noop",
+                         "input_count": len(entity_locations)}
+
+    policy = await check_opa_pii_verifier()
+    if not policy["enabled"] or policy["backend"] == "noop" or not entity_locations:
+        return contains_pii, entity_counts, entity_locations, {
+            **stats_dict,
+            "enabled": policy["enabled"],
+            "backend": policy["backend"],
+        }
+
+    # Build candidates + run. Provider handles pattern vs ambiguous split.
+    # The *backend* is decided by OPA, so the singleton is looked up per
+    # call — admins can flip from noop → llm at runtime without needing
+    # an ingestion restart.
+    candidates = build_candidates_from_locations(text, entity_locations)
+    provider = _get_pii_verifier_provider(policy["backend"])
+    t0 = time.perf_counter()
+    try:
+        with trace_operation(_ingestion_tracer, "pii_verify", "ingestion",
+                             backend=policy["backend"],
+                             input_count=len(candidates)):
+            keep, stats = await provider.verify(
+                http_client, text, candidates,
+            )
+    except Exception as exc:
+        log.warning("pii_verify_provider raised — falling back to noop: %s", exc)
+        return contains_pii, entity_counts, entity_locations, {
+            **stats_dict, "enabled": True, "backend": policy["backend"],
+            "error": str(exc),
+        }
+    duration = time.perf_counter() - t0
+
+    # Prometheus
+    if pb_ingestion_pii_verifier_duration:
+        pb_ingestion_pii_verifier_duration.labels(backend=stats.backend).observe(duration)
+    if pb_ingestion_pii_verifier_calls:
+        for etype, bucket in stats.by_entity_type.items():
+            for result_name in ("kept", "reverted", "forwarded"):
+                count = int(bucket.get(result_name, 0))
+                if count:
+                    pb_ingestion_pii_verifier_calls.labels(
+                        entity_type=etype, backend=stats.backend,
+                        result=result_name,
+                    ).inc(count)
+
+    new_contains, new_counts, new_locs = apply_verdicts_to_scan_result(
+        entity_counts, entity_locations, keep,
+    )
+    return new_contains, new_counts, new_locs, {
+        "enabled":       True,
+        "backend":       stats.backend,
+        "input_count":   stats.input_count,
+        "forwarded":     stats.forwarded,
+        "reviewed":      stats.reviewed,
+        "kept":          stats.kept,
+        "reverted":      stats.reverted,
+        "errors":        stats.errors,
+        "duration_ms":   round(duration * 1000, 2),
+        "by_entity_type": stats.by_entity_type,
+    }
 
 
 async def check_opa_privacy(
@@ -665,6 +840,24 @@ async def ingest_text_chunks(
         # 1. PII-Scan
         scan_result = scanner.scan_text(chunk)
         vault_ref = None
+
+        # Apply semantic verifier when policy enables it. Noop-default
+        # preserves the pre-existing behaviour for every community
+        # deployment.
+        if scan_result.contains_pii:
+            contains_v, counts_v, locs_v, _vstats = await apply_pii_verifier(
+                chunk,
+                scan_result.contains_pii,
+                dict(scan_result.entity_counts),
+                list(scan_result.entity_locations),
+            )
+            # Replace the scan_result view downstream uses with the
+            # verifier-filtered one (or keep the original when disabled).
+            scan_result = type(scan_result)(
+                contains_pii=contains_v,
+                entity_counts=counts_v,
+                entity_locations=locs_v,
+            )
 
         if scan_result.contains_pii:
             pii_detected = True
@@ -1261,12 +1454,33 @@ async def preview(req: PreviewRequest) -> PreviewResponse:
     t_scan = time.perf_counter()
     scanner = get_scanner()
     scan_result = scanner.scan_text(text, language=req.language)
+    raw_contains = scan_result.contains_pii
+    raw_counts = dict(scan_result.entity_counts)
+    raw_locations = list(scan_result.entity_locations)
+    scan_duration_ms = round((time.perf_counter() - t_scan) * 1000, 2)
+
+    # ── Phase 2b: semantic verifier (OPA-gated; community default=off) ──
+    contains_after, counts_after, locs_after, verifier_info = \
+        await apply_pii_verifier(text, raw_contains, raw_counts, raw_locations)
+    if verifier_info.get("enabled"):
+        verifier_info["before"] = {
+            "contains_pii":  raw_contains,
+            "entity_counts": raw_counts,
+        }
+
     scan_info = {
-        "contains_pii":     scan_result.contains_pii,
-        "entity_counts":    dict(scan_result.entity_counts),
-        "entity_locations": scan_result.entity_locations[:20],  # cap UI noise
-        "duration_ms":      round((time.perf_counter() - t_scan) * 1000, 2),
+        "contains_pii":     contains_after,
+        "entity_counts":    counts_after,
+        "entity_locations": locs_after[:20],  # cap UI noise
+        "duration_ms":      scan_duration_ms,
     }
+    # Replace scan_result fields so downstream quality scoring sees
+    # the post-verifier entity density (matches what /ingest will use).
+    scan_result = type(scan_result)(
+        contains_pii=contains_after,
+        entity_counts=counts_after,
+        entity_locations=locs_after,
+    )
 
     # ── Phase 3: quality gate (standalone compute + OPA check) ──
     t_q = time.perf_counter()
@@ -1338,6 +1552,7 @@ async def preview(req: PreviewRequest) -> PreviewResponse:
     return PreviewResponse(
         extract=extract_info,
         scan=scan_info,
+        verifier=verifier_info,
         quality=quality_info,
         privacy=privacy_info,
         summary=summary,

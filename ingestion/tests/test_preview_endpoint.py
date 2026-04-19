@@ -150,17 +150,67 @@ class TestPreviewQualityGate:
 
 
 class TestPreviewResponseShape:
-    def test_has_all_five_phases(self, client):
+    def test_has_all_phases(self, client):
         resp = client.post("/preview", json={
             "text": "Simple text for shape check."
         })
         body = resp.json()
-        assert set(body) == {"extract", "scan", "quality", "privacy", "summary"}
+        # ``verifier`` is a dict (populated with at least {enabled, backend}
+        # even when the verifier is disabled); the other five phases stay.
+        assert set(body) == {"extract", "scan", "verifier", "quality",
+                             "privacy", "summary"}
         # Durations populated even for the skipped-extract case.
         assert "duration_ms" in body["scan"]
         assert "duration_ms" in body["quality"]
         assert "duration_ms" in body["privacy"]
         assert "duration_ms" in body["summary"]
+
+    def test_verifier_populated_when_enabled(self, client, monkeypatch):
+        """When the OPA policy flips the verifier on, /preview surfaces the
+        post-verifier scan counts AND the raw 'before' snapshot for the
+        demo panel to compare against."""
+        # 3 candidates, one is a false positive that the verifier drops.
+        from pii_scanner import PIIScanResult
+        client._mock_scanner.scan_text.return_value = PIIScanResult(
+            contains_pii=True,
+            entity_counts={"PERSON": 2, "LOCATION": 1},
+            entity_locations=[
+                {"type": "PERSON", "start": 0, "end": 4,  "score": 0.9,
+                 "text_snippet": "Anna"},
+                {"type": "PERSON", "start": 10, "end": 26, "score": 0.75,
+                 "text_snippet": "Geschäftsführer"},
+                {"type": "LOCATION", "start": 40, "end": 46, "score": 0.85,
+                 "text_snippet": "Berlin"},
+            ],
+        )
+
+        async def _policy_on():
+            return {"enabled": True, "backend": "llm",
+                    "min_confidence_keep": 0.5}
+        monkeypatch.setattr("ingestion_api.check_opa_pii_verifier", _policy_on)
+
+        async def _fake_apply(text, contains, counts, locs):
+            # Drop the 'Geschäftsführer' false positive.
+            kept = [locs[0], locs[2]]
+            return True, {"PERSON": 1, "LOCATION": 1}, kept, {
+                "enabled": True, "backend": "llm",
+                "input_count": 3, "forwarded": 0, "reviewed": 3,
+                "kept": 2, "reverted": 1, "errors": 0,
+                "duration_ms": 123.0,
+                "by_entity_type": {
+                    "PERSON":   {"total": 2, "kept": 1, "reverted": 1, "forwarded": 0},
+                    "LOCATION": {"total": 1, "kept": 1, "reverted": 0, "forwarded": 0},
+                },
+            }
+        monkeypatch.setattr("ingestion_api.apply_pii_verifier", _fake_apply)
+
+        resp = client.post("/preview", json={"text": "Anna Geschäftsführer Berlin."})
+        body = resp.json()
+        assert body["verifier"]["enabled"] is True
+        assert body["verifier"]["reverted"] == 1
+        # Post-verifier scan: 2 entities, not 3
+        assert body["scan"]["entity_counts"] == {"PERSON": 1, "LOCATION": 1}
+        assert len(body["scan"]["entity_locations"]) == 2
 
     def test_entity_locations_capped(self, client):
         """UI shouldn't render hundreds of rows — the endpoint caps at 20."""

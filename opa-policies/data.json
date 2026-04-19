@@ -78,7 +78,12 @@
           "teams":     0.4,
           "onenote":   0.4
         },
-        "duplicate_threshold": 0.95
+        "duplicate_threshold": 0.95,
+        "pii_verifier": {
+          "enabled":              false,
+          "backend":              "noop",
+          "min_confidence_keep":  0.5
+        }
       },
 
       "human_oversight": {
