@@ -213,6 +213,29 @@
                   "minimum": 0.0,
                   "maximum": 1.0,
                   "description": "Cosine-similarity threshold for duplicate detection on first-chunk embeddings"
+                },
+                "pii_verifier": {
+                  "type": "object",
+                  "description": "Semantic PII verifier (Presidio precision filter). When enabled, ambiguous entity candidates (PERSON / LOCATION / ORGANIZATION) are sent to a chat LLM which decides per-candidate whether the hit is real PII or a false positive (e.g. a German compound noun). Community default: off (noop backend). Enterprise / regulated deployments flip this on to cut false-positive rate without sacrificing recall.",
+                  "required": ["enabled", "backend", "min_confidence_keep"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "Master switch — when false the ingestion pipeline behaves exactly as it did before the verifier was introduced"
+                    },
+                    "backend": {
+                      "type": "string",
+                      "enum": ["noop", "llm"],
+                      "description": "noop = pass-through. llm = OpenAI-compatible chat endpoint (Ollama, vLLM, OpenAI, ...). Configured via PII_VERIFIER_URL / PII_VERIFIER_MODEL env vars."
+                    },
+                    "min_confidence_keep": {
+                      "type": "number",
+                      "minimum": 0.0,
+                      "maximum": 1.0,
+                      "description": "Below this confidence, the verifier treats an ambiguous candidate as a false positive and drops it"
+                    }
+                  }
                 }
               }
             },
