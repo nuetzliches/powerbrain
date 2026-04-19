@@ -7,6 +7,137 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-04-20
+
+One optional precision layer for the PII pipeline, plus the Tab-D
+demo reliability fixes that came out of a live debugging session on
+CPU Ollama.
+
+### Added
+
+- **Semantic PII Verifier (Option B)** (#56): optional precision layer
+  that sits between Presidio's `scan_text` output and the rest of the
+  ingestion pipeline. Presidio has excellent recall but over-flags
+  German compound nouns (`Zahlungsstatus`, `Geschäftsführer`,
+  `Sparkasse Köln`) as PERSON / LOCATION. The verifier catches those
+  false positives without touching recall.
+  - New abstraction `shared/pii_verify_provider.py` (same factory
+    pattern as `rerank_provider.py`). Two backends ship: `noop`
+    (community default, pass-through) and `llm` (OpenAI-compatible
+    chat, e.g. Ollama / qwen2.5:3b).
+  - Pattern types (IBAN, email, phone, DOB) skip the verifier — their
+    Presidio score is already trustworthy. Ambiguous types batch into
+    a single low-temperature chat call per document with ±60-char
+    context windows.
+  - **Fail-open** on any error: unreachable LLM, malformed JSON,
+    timeout → keep every candidate Presidio generated.
+  - OPA-policy-driven backend via
+    `pb.config.ingestion.pii_verifier.{enabled,backend,min_confidence_keep}`
+    so admins flip runtime behaviour through `manage_policies` without
+    restarting ingestion.
+  - Prometheus metrics:
+    `pb_ingestion_pii_verifier_calls_total{entity_type,backend,result}`
+    and `pb_ingestion_pii_verifier_duration_seconds{backend}`.
+  - Applied in both the production `ingest_text_chunks` per-chunk
+    loop and the `/preview` dry-run, so demo Tab E renders
+    `{input, forwarded, reviewed, kept, reverted}` stats live plus a
+    `verifier.before` snapshot for contrast.
+  - Live verification on the NovaTech SharePoint fixture: 9 raw
+    Presidio candidates → 6 after verifier (3 false positives removed)
+    in ~12 s on qwen2.5:3b CPU.
+  - Docs: `docs/pii-verifier.md` (architecture + configuration) and
+    `docs/pii-custom-model.md` (long-horizon roadmap for a fine-tuned
+    German PII model — triggers, phases, why we're not building it
+    today).
+- **Tab-D "Advanced proxy settings" expander** (#57): model, request
+  timeout (30–600 s), and `max_tokens` (100–1000) editable per run in
+  the sales-demo "MCP vs Proxy" tab. Session-scoped; persistent
+  override via `PROXY_MODEL` / `PROXY_TIMEOUT` env on the `pb-demo`
+  service. Plus a diagnostic panel that surfaces tool-call count,
+  finish_reason, and the typical failure modes ("LLM made no tool
+  calls" / "Empty response after N LLM call(s) and M tool call(s)").
+- **Demo playbook — Tuning section** (#57): new chapter in
+  `docs/playbook-sales-demo.md` covering local-LLM levers (timeout,
+  `max_tokens`, Ollama warm-up, `OLLAMA_NUM_CTX`, GPU profile, host
+  Ollama, hosted fallback model) with effect estimates.
+- **Follow-up plan for separated LLM pools** (#57):
+  `docs/plans/2026-04-20-separate-summary-llm-pool.md` specifies the
+  clean fix for agent-loop vs summary-LLM contention — a second
+  `CompletionProvider` instance in `mcp-server` routed through
+  `SUMMARIZATION_PROVIDER_URL` / `SUMMARIZATION_MODEL` /
+  `SUMMARIZATION_API_KEY`. Tracked for the next release.
+
+### Changed
+
+- **`CompletionProvider.generate()` accepts per-call `timeout`**
+  (#57): shared LLM provider abstraction lets callers override the
+  httpx client default when they sit behind a stricter upstream
+  deadline (e.g. the summary LLM call behind the proxy's
+  `TOOL_CALL_TIMEOUT`). Backward-compatible; existing callers unchanged.
+- **MCP server `SUMMARIZATION_TIMEOUT`** (#57): new env var (default
+  **15 s**) gates the summary LLM call in `search_knowledge` and
+  `get_code_context`. Keeps the graceful-fallback branch ("return raw
+  chunks") well below the proxy's `TOOL_CALL_TIMEOUT` so the fallback
+  response actually reaches the upstream caller.
+- **pb-proxy `TOOL_CALL_TIMEOUT`** (#57): default **30 s → 60 s**.
+  Required headroom for the mcp-server's summary attempt +
+  raw-chunks fallback + response envelope on CPU Ollama. Lower it
+  again when pointing at a hosted provider with sub-second latency.
+- **Proxy tool allowlist ships by default** (#57):
+  `pb-proxy/mcp_servers.yaml` now declares a `tool_whitelist` with
+  five entries (`search_knowledge`, `get_document`, `graph_query`,
+  `query_data`, `check_policy`). The MCP server still exposes all 23
+  tools — they are just hidden from the LLM by default so small
+  local models (qwen2.5:3b) stop suffering choice-paralysis from the
+  ~8–10 kB of schema overhead. Enterprise deployments with capable
+  models (Haiku, gpt-4o-mini, qwen2.5:14b+) can drop the whitelist.
+
+### Fixed
+
+- **Tab D proxy timeout / empty-response deadlock** (#57): the
+  pb-proxy agent loop and the mcp-server's forced summarisation
+  (`pb.summarization.summarize_required` for `confidential` hits)
+  both hit 30 s httpx deadlines simultaneously, so the graceful
+  raw-chunks fallback never reached the proxy. Stale symptom in the
+  demo: "Read timed out" or "(empty response)" after ~60 s. The new
+  `SUMMARIZATION_TIMEOUT=15` + `TOOL_CALL_TIMEOUT=60` ordering makes
+  the fallback land ~45 s before the proxy gives up.
+- **Demo client default read timeout** (#57): `_ProxyClient.timeout`
+  default **60 s → 180 s** (+ `PROXY_TIMEOUT` env override) so a
+  slow-but-successful agent-loop iteration on CPU doesn't get killed
+  by the HTTP client in Streamlit before the proxy returns.
+
+### Migration notes
+
+- **`SUMMARIZATION_TIMEOUT`** (new env, default 15 s) and
+  **`TOOL_CALL_TIMEOUT`** (default raised from 30 s to 60 s) are
+  plumbed through `docker-compose.yml`. No action needed unless you
+  override these in a custom compose file — in that case, make sure
+  `TOOL_CALL_TIMEOUT > SUMMARIZATION_TIMEOUT` by a comfortable margin.
+- **`pb-proxy/mcp_servers.yaml` tool_whitelist**: existing deployments
+  that rely on tools outside the five-entry default (e.g. LLM-driven
+  `submit_feedback` or `graph_mutate`) must explicitly add them to
+  the whitelist or remove the whitelist entirely. The MCP server
+  still exposes every tool — only the proxy-side injection is
+  narrowed.
+- **OPA `pb.config.ingestion.pii_verifier` section** (new): defaults
+  to `enabled=false`, `backend=noop`. No behaviour change unless you
+  opt in. Flip at runtime via `manage_policies` once an LLM endpoint
+  is reachable.
+
+### Stats
+
+- **2 merged PRs** since v0.6.0: #56, #57.
+- **+1964 / −21** lines across 19 files (2 new source files, 5 new
+  docs/plans files).
+- Unit tests: full suite **953 passing** (plus 30 intentionally
+  skipped, 8 integration-deselected). New `shared/tests/
+  test_pii_verify_provider.py` adds comprehensive coverage for the
+  verifier's noop/LLM backends, the skip-by-type logic, and the
+  fail-open guarantees.
+- OPA tests: unchanged pass count (no new Rego paths, only a new
+  `pb.config.ingestion.pii_verifier` data section).
+
 ## [0.6.0] - 2026-04-19
 
 Four features that together answer the questions enterprise
