@@ -5,6 +5,26 @@
 #   bearer  — forwards the user's pb_ API key as Bearer token
 #   static  — uses a fixed token from the env var specified in auth_token_env
 #   none    — no Authorization header
+#
+# tool_whitelist (optional):
+#   Limits which of the server's tools are exposed to the LLM. If absent
+#   or null → all tools from the server are injected.
+#
+#   **Why we restrict this list by default:**
+#   The MCP server exposes 23 tools. Injecting all 23 schemas into every
+#   LLM request produces a ~8-10 kB system-prompt overhead. Small local
+#   models (qwen2.5:3b, llama3.2:3b) then suffer from "choice paralysis"
+#   — they pick the wrong tool (e.g. get_document without a doc_id) or
+#   skip tool-calling altogether and answer from parametric knowledge.
+#   We observed this in the sales demo: qwen2.5:3b routinely called
+#   `get_document` instead of `search_knowledge` for "summarise customer
+#   X" queries, producing empty responses.
+#
+#   The whitelist below covers the current Tab D / sales-demo use cases
+#   (knowledge search + structured queries + graph traversal + rule
+#   lookup). For a production deployment with a capable model
+#   (claude-haiku-4-5, gpt-4o-mini, qwen2.5:14b+) remove the whitelist
+#   or widen it — the context-size pressure disappears.
 
 servers:
   - name: powerbrain
@@ -12,3 +32,10 @@ servers:
     auth: bearer
     prefix: powerbrain
     required: true
+    # Keep this list small for small-LLM deployments. See comment above.
+    tool_whitelist:
+      - search_knowledge   # primary retrieval
+      - get_document       # L0/L1/L2 drill-down after a hit
+      - graph_query        # NovaTech org-chart questions (Tab C narrative)
+      - query_data         # structured-data lookups
+      - check_policy       # required by pb.proxy.required_tools

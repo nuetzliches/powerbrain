@@ -75,11 +75,18 @@ class CompletionProvider(_BaseProvider):
         model: str,
         system_prompt: str,
         user_prompt: str,
+        timeout: float | None = None,
     ) -> str | None:
-        resp = await http.post(
-            f"{self.base_url}/v1/chat/completions",
-            headers=self.headers,
-            json={
+        """Generate a completion.
+
+        ``timeout`` overrides the client's default timeout for this call
+        only. Useful when the caller (e.g. search-pipeline summarization)
+        sits behind a stricter upstream deadline than the shared httpx
+        client default.
+        """
+        post_kwargs: dict = {
+            "headers": self.headers,
+            "json": {
                 "model": model,
                 "messages": [
                     {"role": "system", "content": system_prompt},
@@ -87,6 +94,12 @@ class CompletionProvider(_BaseProvider):
                 ],
                 "stream": False,
             },
+        }
+        if timeout is not None:
+            post_kwargs["timeout"] = timeout
+        resp = await http.post(
+            f"{self.base_url}/v1/chat/completions",
+            **post_kwargs,
         )
         resp.raise_for_status()
         content = resp.json()["choices"][0]["message"]["content"]

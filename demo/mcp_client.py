@@ -307,11 +307,23 @@ class _ProxyClient:
     next to the raw MCP path.
     """
 
-    def __init__(self, url: str | None = None, timeout: int = 60) -> None:
+    def __init__(self, url: str | None = None, timeout: int | None = None) -> None:
         self.url = (
             url or os.environ.get("PROXY_URL", "")
         ).rstrip("/")
-        self.timeout = timeout
+        # Local Ollama on CPU easily needs >60s for a 2-turn tool-call loop
+        # (LLM decide → MCP search → LLM answer). Default generously; the
+        # panel exposes a slider for presenters on slower hardware.
+        env_timeout = os.environ.get("PROXY_TIMEOUT")
+        if timeout is not None:
+            self.timeout = timeout
+        elif env_timeout:
+            try:
+                self.timeout = int(env_timeout)
+            except ValueError:
+                self.timeout = 180
+        else:
+            self.timeout = 180
 
     def available(self) -> bool:
         """``True`` if a pb-proxy URL is configured and /health responds."""
@@ -332,6 +344,7 @@ class _ProxyClient:
         purpose: str | None = None,
         temperature: float = 0.2,
         max_tokens: int = 400,
+        timeout: int | None = None,
     ) -> dict:
         """Call pb-proxy /v1/chat/completions. Returns the raw JSON body.
 
@@ -360,7 +373,7 @@ class _ProxyClient:
             f"{self.url}/v1/chat/completions",
             headers=headers,
             json=body,
-            timeout=self.timeout,
+            timeout=timeout if timeout is not None else self.timeout,
         )
         # Don't raise_for_status — the UI needs to show error bodies too.
         try:

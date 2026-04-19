@@ -29,7 +29,14 @@ LITELLM_CONFIG = os.getenv("LITELLM_CONFIG", "/app/litellm_config.yaml")
 
 # ── Agent Loop ───────────────────────────────────────────────
 MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "10"))
-TOOL_CALL_TIMEOUT = int(os.getenv("TOOL_CALL_TIMEOUT", "30"))
+# Per-tool-call deadline for MCP round-trips from the agent loop.
+# Must sit **above** the MCP server's SUMMARIZATION_TIMEOUT (default
+# 15 s) so the graceful "summary failed → raw chunks" fallback in
+# mcp-server/server.py:summarize_text() reliably lands before the proxy
+# abandons the connection. With a local Ollama LLM on CPU, 60 s gives
+# enough headroom for the summary attempt + fallback + response. Lower
+# it only when pointing at a hosted provider with sub-second latency.
+TOOL_CALL_TIMEOUT = int(os.getenv("TOOL_CALL_TIMEOUT", "60"))
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "120"))
 
 # ── Tool Injection ───────────────────────────────────────────

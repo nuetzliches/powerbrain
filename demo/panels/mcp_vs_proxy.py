@@ -72,6 +72,9 @@ def _render_proxy_column(
     query: str,
     api_key: str,
     purpose: str,
+    model: str,
+    max_tokens: int,
+    timeout: int,
 ) -> None:
     st.markdown("#### pb-proxy (enterprise)")
     st.caption(
@@ -79,10 +82,12 @@ def _render_proxy_column(
         "injection and resolves vault pseudonyms per purpose. Client "
         "sees a finished answer."
     )
-    with st.spinner("Proxy is working (tool-call → LLM → vault resolve) ..."):
+    with st.spinner(
+        f"Proxy is working (tool-call → LLM → vault resolve) — up to {timeout}s ..."
+    ):
         try:
             body = proxy.chat(
-                model=PROXY_MODEL,
+                model=model,
                 messages=[
                     {"role": "system", "content": (
                         "Du bist ein hilfreicher Assistent. Nutze die "
@@ -94,6 +99,8 @@ def _render_proxy_column(
                 ],
                 api_key=api_key,
                 purpose=purpose,
+                max_tokens=max_tokens,
+                timeout=timeout,
             )
         except Exception as exc:  # noqa: BLE001
             st.error(f"Proxy call failed: {exc}")
@@ -106,6 +113,12 @@ def _render_proxy_column(
         st.error(body["error"])
         return
 
+    telemetry = body.get("_telemetry") or {}
+    steps = telemetry.get("steps") or []
+    llm_calls = sum(1 for s in steps if s.get("name") == "llm_call")
+    tool_dispatches = sum(1 for s in steps if s.get("name") == "tool_dispatch")
+    tool_names = [s.get("tool") for s in steps if s.get("name") == "tool_dispatch"]
+
     vault_info = (body.get("_proxy") or {}).get("vault_resolutions")
     if vault_info:
         resolved = vault_info.get("resolved", 0)
@@ -114,15 +127,42 @@ def _render_proxy_column(
             f"Vault resolution: {resolved}/{total} pseudonyms "
             f"resolved for purpose=`{vault_info.get('purpose')}`"
         )
+    elif tool_dispatches == 0:
+        st.warning(
+            "LLM made **no tool calls** — it answered from its own "
+            "knowledge instead of `search_knowledge`. Typical for small "
+            "local models (qwen2.5:3b). Try a stronger model "
+            "(e.g. `anthropic/claude-haiku-4-5`) or a more directive "
+            "prompt."
+        )
     else:
-        st.caption("No pseudonyms encountered in tool output.")
+        st.caption(
+            f"{tool_dispatches} tool call(s) — "
+            f"{', '.join(t for t in tool_names if t) or 'n/a'} — "
+            "but no pseudonyms in the output."
+        )
 
+    all_empty = True
     for choice in body.get("choices", []):
         content = choice.get("message", {}).get("content") or ""
+        finish_reason = choice.get("finish_reason")
         with st.container(border=True):
             st.markdown(content or "_(empty response)_")
+            if finish_reason and finish_reason != "stop":
+                st.caption(f"finish_reason: `{finish_reason}`")
+            if content:
+                all_empty = False
 
-    telemetry = body.get("_telemetry") or {}
+    if all_empty:
+        st.info(
+            f"Empty response after {llm_calls} LLM call(s) and "
+            f"{tool_dispatches} tool call(s). Common causes: the local "
+            "LLM produced no final content after the tool result "
+            "(known qwen2.5:3b quirk), `max_tokens` too small, or "
+            "`finish_reason=length`. Try raising **max_tokens** in "
+            "*Advanced proxy settings* or switching to a stronger model."
+        )
+
     if telemetry:
         with st.expander("Proxy telemetry"):
             st.json(telemetry, expanded=False)
@@ -161,6 +201,55 @@ def render(
         ),
     )
 
+    with st.expander("Advanced proxy settings (model / timeout / max_tokens)"):
+        st.caption(
+            "Tune these when the local LLM is slow. The default "
+            "`qwen-local` (qwen2.5:3b) runs on CPU and easily needs "
+            ">60s for a full tool-call round-trip. See "
+            "`docs/playbook-sales-demo.md` → *Tuning the local LLM* for "
+            "the full list of levers (GPU profile, warm-up, hosted "
+            "models)."
+        )
+        col_m, col_t, col_x = st.columns(3)
+        with col_m:
+            model = st.text_input(
+                "Model",
+                value=st.session_state.get("mvp_model", PROXY_MODEL),
+                key="mvp_model",
+                help=(
+                    "LiteLLM alias (e.g. `qwen-local`) or full "
+                    "`provider/model` string (e.g. "
+                    "`anthropic/claude-haiku-4-5`)."
+                ),
+            )
+        with col_t:
+            timeout = st.slider(
+                "Request timeout (s)",
+                min_value=30,
+                max_value=600,
+                value=st.session_state.get("mvp_timeout", 180),
+                step=30,
+                key="mvp_timeout",
+                help=(
+                    "HTTP read timeout from the demo UI to pb-proxy. "
+                    "CPU-only Ollama can need 120-300 s for a 2-turn "
+                    "tool-call loop."
+                ),
+            )
+        with col_x:
+            max_tokens = st.slider(
+                "max_tokens",
+                min_value=100,
+                max_value=1000,
+                value=st.session_state.get("mvp_max_tokens", 400),
+                step=50,
+                key="mvp_max_tokens",
+                help=(
+                    "Upper bound for the final LLM answer. Smaller "
+                    "values shorten decode time on slow hardware."
+                ),
+            )
+
     default_query = SUGGESTED_QUESTIONS[0]
     st.markdown("**Suggested questions:**")
     sug_cols = st.columns(len(SUGGESTED_QUESTIONS))
@@ -193,7 +282,15 @@ def render(
     with left:
         _render_mcp_column(mcp, q, analyst_key)
     with right:
-        _render_proxy_column(proxy, q, analyst_key, purpose)
+        _render_proxy_column(
+            proxy,
+            q,
+            analyst_key,
+            purpose,
+            model=model,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
 
     with st.expander("What just happened?"):
         st.markdown(

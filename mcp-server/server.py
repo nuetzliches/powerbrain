@@ -88,6 +88,12 @@ LLM_PROVIDER_URL       = os.getenv("LLM_PROVIDER_URL", _OLLAMA_URL)
 LLM_MODEL              = os.getenv("LLM_MODEL", "qwen2.5:3b")
 LLM_API_KEY            = os.getenv("LLM_API_KEY", "")
 SUMMARIZATION_ENABLED  = os.getenv("SUMMARIZATION_ENABLED", "true").lower() == "true"
+# Per-call timeout for summarization LLM requests. Kept well below the
+# proxy's TOOL_CALL_TIMEOUT so the graceful fallback to raw chunks
+# ([server.py] summarize_text → except → return None) lands before the
+# upstream caller abandons the connection. See
+# docs/playbook-sales-demo.md → "Tuning the local LLM".
+SUMMARIZATION_TIMEOUT  = float(os.getenv("SUMMARIZATION_TIMEOUT", "15"))
 
 embedding_provider = EmbeddingProvider(base_url=EMBEDDING_PROVIDER_URL, api_key=EMBEDDING_API_KEY)
 llm_provider       = CompletionProvider(base_url=LLM_PROVIDER_URL, api_key=LLM_API_KEY)
@@ -491,6 +497,7 @@ async def summarize_text(
                 model=LLM_MODEL,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                timeout=SUMMARIZATION_TIMEOUT,
             )
         except Exception as e:
             log.warning(f"Summarization failed, returning raw chunks: {e}")
