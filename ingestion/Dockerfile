@@ -20,8 +20,13 @@ RUN python -m spacy download de_core_news_md
 RUN python -m spacy download en_core_web_lg
 
 COPY shared/ /app/shared/
-COPY ingestion/ .
+COPY ingestion/ /app/ingestion/
+
+# /app → package imports (from ingestion.X, from shared.X)
+# /app/ingestion → sibling imports (from pii_scanner, from quality, etc.)
+# Both forms are used across production + tests, so both must resolve.
+ENV PYTHONPATH=/app/ingestion:/app
 
 EXPOSE 8081
 
-CMD ["uvicorn", "ingestion_api:app", "--host", "0.0.0.0", "--port", "8081"]
+CMD ["uvicorn", "ingestion.ingestion_api:app", "--host", "0.0.0.0", "--port", "8081"]
