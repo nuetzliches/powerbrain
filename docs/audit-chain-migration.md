@@ -52,20 +52,46 @@ walks the whole history.
 Two options depending on your compliance posture:
 
 **Option A — Archive the broken segment and start fresh.**
-Run the retention prune with `retention_days=0` once to write an
-`audit_archive` checkpoint marked `chain_valid=false` and purge the
-broken rows:
+Use the retention prune with the smallest retention permitted
+(`retention_days=1`) during a maintenance window. This writes an
+`audit_archive` row covering every entry older than 24 hours —
+including the broken segment — marked with the verifier's result
+(`chain_valid=false`), then deletes those rows. Anything newer than
+24 hours is preserved.
 
 ```sql
--- INSIDE a maintenance window. Blocks all audit writes briefly.
-SELECT * FROM pb_audit_checkpoint_and_prune(0);
+-- Maintenance window. Blocks audit writes briefly while the
+-- checkpoint runs; run during a low-traffic period.
+SELECT * FROM pb_audit_checkpoint_and_prune(1);
 -- audit_archive now has a row with chain_valid=false recording the
--- exact point of forkage for future forensic review.
+-- extent of the fork for future forensic review; the live log only
+-- contains the past 24 hours.
 ```
 
-After this, `pb_verify_audit_chain()` verifies from the first surviving
-row (or `audit_archive.last_verified_hash` if the table is empty) and
-returns `valid=true`.
+If the entire log is within the last 24 hours and you still need a
+clean slate, stop all ingest traffic, then run a manual truncate in a
+transaction:
+
+```sql
+BEGIN;
+-- Archive the current tail for forensic reference
+INSERT INTO audit_archive (archived_at, last_entry_id, last_verified_hash,
+                           row_count, chain_valid, first_invalid_id,
+                           retention_cutoff)
+SELECT now(), last_entry_id, last_entry_hash,
+       (SELECT count(*) FROM agent_access_log), false, NULL, now()
+  FROM audit_tail WHERE id = 1;
+TRUNCATE agent_access_log RESTART IDENTITY;
+UPDATE audit_tail SET last_entry_hash = last_verified_hash,
+                      last_entry_id   = 0,
+                      updated_at      = now()
+  WHERE id = 1;
+COMMIT;
+```
+
+After either approach, `pb_verify_audit_chain()` verifies from the
+first surviving row (or `audit_archive.last_verified_hash` if the
+table is empty) and returns `valid=true`.
 
 **Option B — Keep the broken rows for forensics, accept valid=false.**
 Do nothing. `get_system_info` keeps reporting `valid=false`. If you

@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS audit_tail (
 
 COMMENT ON TABLE  audit_tail IS 'Single-row tail pointer for the agent_access_log hash chain. Updated atomically via SELECT ... FOR UPDATE to serialize concurrent audit writers (see issue #59).';
 COMMENT ON COLUMN audit_tail.last_entry_hash IS 'SHA-256 entry_hash of the most recently inserted agent_access_log row. Used as prev_hash for the next row.';
-COMMENT ON COLUMN audit_tail.last_entry_id   IS 'BIGSERIAL id of the most recently inserted agent_access_log row. Informational only — verification walks by id.';
+COMMENT ON COLUMN audit_tail.last_entry_id   IS 'id of the most recently inserted agent_access_log row. Assigned atomically by the hash-chain trigger (overrides the BIGSERIAL default) so id order matches chain order under concurrency.';
 
 -- Seed with whichever is available first:
 --   1. The existing tail (entry_hash of the newest agent_access_log row)
