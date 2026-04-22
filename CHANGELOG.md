@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-04-22
+
+Three concurrency and misconfiguration bug fixes filed against the
+0.7.0 production deployment. Each shipped as an independent PR so it
+can be reviewed and reverted separately.
+
+### Fixed
+
+- **`POST /sync` works inside the container again** ([#60](https://github.com/nuetzliches/powerbrain/issues/60),
+  [#61](https://github.com/nuetzliches/powerbrain/pull/61)).
+  The ingestion Dockerfile flattened `ingestion/*` into `/app/`, so
+  `ingestion_api.py`'s deferred `from ingestion.sync_service import …`
+  (and ~40 more absolute imports across `sync_service.py` and the
+  adapters) could never resolve. Preserved the package layout
+  (`COPY ingestion/ /app/ingestion/`), added the missing top-level
+  `__init__.py`, set `PYTHONPATH=/app/ingestion:/app` so sibling
+  imports (`from pii_scanner import …`) keep working without rewriting
+  40+ statements, and switched uvicorn to `ingestion.ingestion_api:app`.
+  Side effect: the pre-existing compose mount
+  `./ingestion/repos.yaml:/app/ingestion/repos.yaml:ro` now targets a
+  real path inside the image.
+
+- **Missing OPA policies surface loudly instead of silently denying**
+  ([#59 part 2](https://github.com/nuetzliches/powerbrain/issues/59),
+  [#62](https://github.com/nuetzliches/powerbrain/pull/62)).
+  Every OPA helper used `resp.json().get("result", {})`, which
+  collapsed an OPA response with no `result` field (policy not
+  loaded) into `allowed=False, min_score=0.0`. That produced the
+  mathematically-impossible rejection log
+  `quality_score 0.629 < required 0.000` and hours of debugging on
+  fresh deployments.
+  - New `shared/opa_client.py` with `opa_query()` that raises
+    `OpaPolicyMissingError` when `result` is absent.
+  - `verify_required_policies()` runs on service startup —
+    ingestion, mcp-server, and pb-proxy refuse to boot if a required
+    policy package is missing. Env var `SKIP_OPA_STARTUP_CHECK=true`
+    opts out for unit tests.
+  - Quality gate now uses `min_score=-1.0` as a sentinel when the
+    policy is missing, so the value itself flags a configuration
+    issue in logs and the `ingestion_rejections` table.
+  - 13 new unit tests for the shared helper, 8 regression tests for
+    the ingestion missing-policy path.
+
+- **Audit hash chain stays valid under concurrent writers**
+  ([#59 part 1](https://github.com/nuetzliches/powerbrain/issues/59),
+  [#63](https://github.com/nuetzliches/powerbrain/pull/63)).
+  `audit_integrity.valid` flipped to `false` after ingesting 4 861
+  documents with concurrency=8, breaking EU AI Act Art. 12
+  tamper-evidence. Two separate root causes:
+  1. `pg_advisory_xact_lock` serialized trigger execution but did
+     not invalidate the parent INSERT's READ COMMITTED snapshot —
+     the waiter's SELECT still read the stale tail hash after the
+     lock was released.
+  2. `BIGSERIAL` assigned `id` via the column DEFAULT *before* the
+     trigger ran, so id order and chain order could diverge under
+     concurrency. `pb_verify_audit_chain()` walks by `id ASC` and
+     flagged any divergence as a break, even when every individual
+     hash was sound.
+  - New migration `init-db/022_audit_tail_pointer.sql` introduces a
+    single-row `audit_tail` table protected by
+    `SELECT … FOR UPDATE`, and derives `NEW.id` from
+    `last_entry_id + 1` atomically inside the lock. id order now
+    matches chain order by construction.
+  - `pb_audit_checkpoint_and_prune()` rewritten to take the same
+    tail lock instead of the advisory lock.
+  - New integration test: 16 writers × 100 rows = 1 600 concurrent
+    inserts → chain `valid=true`.
+  - `docs/audit-chain-migration.md` documents the operator
+    procedure for deployments whose chain is already broken.
+
 ## [0.7.0] - 2026-04-20
 
 One optional precision layer for the PII pipeline, plus the Tab-D
