@@ -28,6 +28,7 @@ import asyncpg
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.config import build_postgres_url
+from shared.opa_client import OpaPolicyMissingError, opa_query
 
 log = logging.getLogger("pb-eval")
 
@@ -135,20 +136,22 @@ async def check_opa_access(client: httpx.AsyncClient,
     if classification in _opa_access_cache:
         return _opa_access_cache[classification]
     try:
-        resp = await client.post(
-            f"{OPA_URL}/v1/data/pb/access/allow",
-            json={"input": {
+        raw = await opa_query(
+            client, OPA_URL, "pb/access/allow",
+            {
                 "agent_id": EVAL_AGENT_ID,
                 "agent_role": EVAL_AGENT_ROLE,
                 "resource": "eval/search",
                 "classification": classification,
                 "action": "read",
-            }},
+            },
         )
-        resp.raise_for_status()
-        result = resp.json().get("result", False)
+        result = bool(raw)
         _opa_access_cache[classification] = result
         return result
+    except OpaPolicyMissingError as exc:
+        log.error("OPA policy %s not loaded — denying eval access", exc.package_path)
+        return False
     except Exception as e:
         log.warning("OPA check failed, denying access: %s", e)
         return False

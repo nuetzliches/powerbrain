@@ -1,5 +1,6 @@
 """Shared fixtures for ingestion tests."""
 
+import os
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -7,6 +8,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# The startup OPA policy verification (issue #59 part 2) requires a live
+# OPA instance. Unit tests that spin up FastAPI's TestClient would
+# otherwise fail during the lifespan event. Set the opt-out before the
+# app is imported anywhere in the test session.
+os.environ.setdefault("SKIP_OPA_STARTUP_CHECK", "true")
 
 
 @pytest.fixture

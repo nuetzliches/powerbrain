@@ -41,6 +41,12 @@ _shared_parent = os.path.join(os.path.dirname(__file__), "..")
 if _shared_parent not in sys.path:
     sys.path.insert(0, _shared_parent)
 
+from shared.opa_client import (
+    OpaPolicyMissingError,
+    opa_query,
+    verify_required_policies,
+)
+
 try:
     from shared.telemetry import (
         init_telemetry, setup_auto_instrumentation, trace_operation,
@@ -184,26 +190,30 @@ provider_key_config: dict[str, str] = {}
 async def check_opa_policy(
     agent_role: str, provider: str, configured_servers: list[str],
 ) -> dict:
-    """Check proxy policies via OPA."""
+    """Check proxy policies via OPA.
+
+    Fail-closed on missing policy: the proxy gates which LLM providers
+    and MCP servers each role may call. A silent permissive default
+    would be a policy-bypass.
+    """
     if http_client is None:
         raise RuntimeError("http_client not initialized (lifespan not started)")
-    opa_input = {
-        "input": {
-            "agent_role": agent_role,
-            "provider": provider,
-            "configured_servers": configured_servers,
-        }
+    input_data = {
+        "agent_role": agent_role,
+        "provider": provider,
+        "configured_servers": configured_servers,
     }
     try:
-        resp = await http_client.post(
-            f"{config.OPA_URL}/v1/data/pb/proxy",
-            json=opa_input,
+        result = await opa_query(http_client, config.OPA_URL, "pb/proxy", input_data)
+        return result if isinstance(result, dict) else {}
+    except OpaPolicyMissingError as exc:
+        log.error(
+            "OPA proxy policy not loaded (%s) — denying provider access",
+            exc.package_path,
         )
-        resp.raise_for_status()
-        return resp.json().get("result", {})
+        return {"provider_allowed": False, "max_iterations": 0}
     except Exception as e:
         log.error("OPA policy check failed: %s", e)
-        # Fail closed: deny if OPA is unreachable
         return {"provider_allowed": False, "max_iterations": 0}
 
 
@@ -305,6 +315,12 @@ async def lifespan(app: FastAPI):
             log.error("Cannot start: MCP server unreachable and FAIL_MODE=closed: %s", e)
             raise
         log.warning("MCP server unreachable, starting in degraded mode: %s", e)
+
+    # Refuse to start if the proxy's OPA policy package is missing — a
+    # permissive silent default would bypass provider/MCP-server gating
+    # (issue #59 part 2).
+    if os.getenv("SKIP_OPA_STARTUP_CHECK", "false").lower() != "true":
+        await verify_required_policies(http_client, config.OPA_URL, ["pb/proxy"])
 
     log.info("pb-proxy started on %s:%d", config.PROXY_HOST, config.PROXY_PORT)
     yield

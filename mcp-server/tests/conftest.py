@@ -1,5 +1,6 @@
 """Shared fixtures for mcp-server tests."""
 
+import os
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -8,6 +9,12 @@ import pytest
 
 # Add mcp-server to path so we can import server, graph_service
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# The lifespan OPA policy verification (issue #59 part 2) requires a
+# running OPA server. Unit tests that exercise the ASGI stack via
+# TestClient would otherwise fail at startup. Set the opt-out before
+# any test imports the module under test.
+os.environ.setdefault("SKIP_OPA_STARTUP_CHECK", "true")
 
 
 @pytest.fixture

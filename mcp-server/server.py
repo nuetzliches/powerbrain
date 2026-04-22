@@ -52,6 +52,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.llm_provider import EmbeddingProvider, CompletionProvider
 from shared.rerank_provider import create_rerank_provider, RerankDocument
 from shared.config import read_secret, build_postgres_url, PG_POOL_MIN, PG_POOL_MAX
+from shared.opa_client import (
+    OpaPolicyMissingError,
+    opa_query,
+    verify_required_policies,
+)
 from shared.telemetry import (
     init_telemetry, setup_auto_instrumentation, trace_operation,
     request_telemetry_context, get_current_telemetry,
@@ -508,39 +513,40 @@ async def check_opa_summarization_policy(
     agent_role: str,
     classification: str,
 ) -> dict:
-    """Check OPA summarization policy. Returns {allowed, required, detail}."""
+    """Check OPA summarization policy. Returns {allowed, required, detail}.
+
+    Fail-closed on missing policy or transport error: summarization is
+    an extra permission, so denying by default is the safe fallback.
+    """
     input_data = {
         "agent_role": agent_role,
         "classification": classification,
     }
     try:
-        allowed_resp = await http.post(
-            f"{OPA_URL}/v1/data/pb/summarization/summarize_allowed",
-            json={"input": input_data},
+        allowed = await opa_query(
+            http, OPA_URL, "pb/summarization/summarize_allowed", input_data,
         )
-        allowed_resp.raise_for_status()
-        allowed = allowed_resp.json().get("result", False)
-
-        required_resp = await http.post(
-            f"{OPA_URL}/v1/data/pb/summarization/summarize_required",
-            json={"input": input_data},
+        required = await opa_query(
+            http, OPA_URL, "pb/summarization/summarize_required", input_data,
         )
-        required_resp.raise_for_status()
-        required = required_resp.json().get("result", False)
-
-        detail_resp = await http.post(
-            f"{OPA_URL}/v1/data/pb/summarization/summarize_detail",
-            json={"input": input_data},
+        detail = await opa_query(
+            http, OPA_URL, "pb/summarization/summarize_detail", input_data,
         )
-        detail_resp.raise_for_status()
-        detail = detail_resp.json().get("result", "standard")
+    except OpaPolicyMissingError as exc:
+        log.error(
+            "OPA summarization policy not loaded (%s) — denying by default",
+            exc.package_path,
+        )
+        return {"allowed": False, "required": False, "detail": "standard"}
     except Exception as e:
-        log.warning(f"OPA summarization policy check failed: {e}")
-        allowed = False
-        required = False
-        detail = "standard"
+        log.warning("OPA summarization policy check failed: %s", e)
+        return {"allowed": False, "required": False, "detail": "standard"}
 
-    return {"allowed": allowed, "required": required, "detail": detail}
+    return {
+        "allowed":  bool(allowed) if allowed is not None else False,
+        "required": bool(required) if required is not None else False,
+        "detail":   detail if isinstance(detail, str) else "standard",
+    }
 
 
 def _apply_heuristic_boosts(
@@ -633,13 +639,22 @@ async def check_opa_policy(agent_id: str, agent_role: str,
             "resource": resource, "classification": classification, "action": action,
         }
         try:
-            resp = await http.post(
-                f"{OPA_URL}/v1/data/pb/access/allow", json={"input": input_data}
+            result = await opa_query(
+                http, OPA_URL, "pb/access/allow", input_data,
             )
-            resp.raise_for_status()
-            allowed = resp.json().get("result", False)
+            allowed = bool(result)
         except (httpx.ConnectError, httpx.TimeoutException):
             raise  # Let tenacity retry these
+        except OpaPolicyMissingError as exc:
+            # The access gate is the MOST critical OPA policy. If it's
+            # not loaded, we MUST fail-closed — a silent default of
+            # "deny" is correct, but surface the cause loudly so
+            # operators can fix the misconfiguration.
+            log.error(
+                "OPA access policy %s not loaded — denying all requests. "
+                "Fix OPA config and restart.", exc.package_path,
+            )
+            allowed = False
         except Exception as e:
             log.warning(f"OPA check failed, defaulting to deny: {e}")
             allowed = False
@@ -766,7 +781,11 @@ async def check_opa_vault_access(
     agent_role: str, purpose: str, classification: str,
     data_category: str, token_valid: bool, token_expired: bool,
 ) -> dict:
-    """Checks via OPA whether vault access is allowed."""
+    """Checks via OPA whether vault access is allowed.
+
+    Fail-closed on missing policy: the vault holds original PII, so a
+    silent default of "allow" would be unacceptable.
+    """
     input_data = {
         "agent_role": agent_role,
         "purpose": purpose,
@@ -776,18 +795,21 @@ async def check_opa_vault_access(
         "token_expired": token_expired,
     }
     try:
-        resp = await http.post(
-            f"{OPA_URL}/v1/data/pb/privacy/vault_access_allowed",
-            json={"input": input_data},
+        allowed_raw = await opa_query(
+            http, OPA_URL, "pb/privacy/vault_access_allowed", input_data,
         )
-        resp.raise_for_status()
-        allowed = resp.json().get("result", False)
-        fields_resp = await http.post(
-            f"{OPA_URL}/v1/data/pb/privacy/vault_fields_to_redact",
-            json={"input": input_data},
+        fields_raw = await opa_query(
+            http, OPA_URL, "pb/privacy/vault_fields_to_redact", input_data,
         )
-        fields_resp.raise_for_status()
-        fields_to_redact = list(fields_resp.json().get("result", []))
+        allowed = bool(allowed_raw)
+        fields_to_redact = list(fields_raw) if isinstance(fields_raw, list) else []
+    except OpaPolicyMissingError as exc:
+        log.error(
+            "OPA vault policy not loaded (%s) — denying vault access",
+            exc.package_path,
+        )
+        allowed = False
+        fields_to_redact = []
     except Exception as e:
         log.warning(f"OPA vault access check failed: {e}")
         allowed = False
@@ -3524,6 +3546,18 @@ if __name__ == "__main__":
         pg_pool = await asyncpg.create_pool(POSTGRES_URL, min_size=PG_POOL_MIN, max_size=PG_POOL_MAX)
         await pg_pool.fetchval("SELECT 1")
         log.info("PostgreSQL pool ready (%s)", POSTGRES_URL.split("@")[-1])
+
+        # Refuse to start if OPA is unreachable or a required policy
+        # package is not loaded (issue #59 part 2).
+        if os.getenv("SKIP_OPA_STARTUP_CHECK", "false").lower() != "true":
+            await verify_required_policies(
+                http, OPA_URL,
+                [
+                    "pb/access/allow",
+                    "pb/summarization/summarize_allowed",
+                    "pb/privacy/vault_access_allowed",
+                ],
+            )
 
         oauth_provider.start_cleanup()
         async with session_manager.run():

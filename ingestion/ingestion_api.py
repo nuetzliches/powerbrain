@@ -75,6 +75,11 @@ from shared.pii_verify_provider import (
     apply_verdicts_to_scan_result,
     VerifyStats,
 )
+from shared.opa_client import (
+    OpaPolicyMissingError,
+    opa_query,
+    verify_required_policies,
+)
 
 POSTGRES_URL = build_postgres_url()
 
@@ -268,6 +273,13 @@ EXTRACT_MAX_BYTES = int(os.getenv("EXTRACT_MAX_BYTES", str(25 * 1024 * 1024)))  
 EXTRACT_TIMEOUT_SECONDS = float(os.getenv("EXTRACT_TIMEOUT_SECONDS", "30"))
 
 
+REQUIRED_OPA_POLICIES = [
+    "pb/ingestion/quality_gate",
+    "pb/privacy",
+    "pb/config/ingestion/pii_verifier",
+]
+
+
 @app.on_event("startup")
 async def startup():
     global qdrant, http_client, pg_pool
@@ -279,6 +291,17 @@ async def startup():
     except Exception as e:
         log.error(f"PostgreSQL connection failed: {e}")
         pg_pool = None
+
+    # Fail loudly if required OPA policies are not loaded — otherwise the
+    # runtime helpers would fail-closed with misleading diagnostics
+    # (see issue #59: "quality_score 0.629 < required 0.000").
+    # Disabled only for test runs where OPA is not reachable.
+    if os.getenv("SKIP_OPA_STARTUP_CHECK", "false").lower() != "true":
+        try:
+            await verify_required_policies(http_client, OPA_URL, REQUIRED_OPA_POLICIES)
+        except Exception as exc:
+            log.error("OPA startup verification failed: %s", exc)
+            raise
 
 
 @app.on_event("shutdown")
@@ -482,27 +505,42 @@ async def check_opa_quality_gate(
     Returns a dict with ``allowed`` (bool), ``min_score`` (float) and
     ``reason`` (str). On OPA failure we fail-closed (allowed=False) so a
     broken policy engine cannot silently bypass the quality gate.
+
+    ``min_score`` uses the sentinel ``-1.0`` when the policy package is
+    not loaded or OPA is unreachable. The normal minimum is never
+    negative, so ``-1.0`` in logs or the ``ingestion_rejections`` table
+    flags a configuration problem rather than a threshold comparison.
     """
     input_data = {
         "source_type":    source_type or "default",
         "quality_score":  float(quality_score),
     }
     try:
-        resp = await http_client.post(
-            f"{OPA_URL}/v1/data/pb/ingestion/quality_gate",
-            json={"input": input_data},
+        result = await opa_query(
+            http_client, OPA_URL, "pb/ingestion/quality_gate", input_data,
         )
-        resp.raise_for_status()
-        result = resp.json().get("result") or {}
+    except OpaPolicyMissingError as exc:
+        log.error("OPA policy missing: %s", exc.package_path)
         return {
-            "allowed":   bool(result.get("allowed", False)),
-            "min_score": float(result.get("min_score", 0.0)),
-            "reason":    result.get("reason", ""),
+            "allowed":   False,
+            "min_score": -1.0,
+            "reason":    f"opa_policy_missing: {exc.package_path}",
         }
     except Exception as e:
-        log.warning(f"OPA quality_gate check failed, fail-closed: {e}")
-        return {"allowed": False, "min_score": 0.0,
+        log.warning("OPA quality_gate check failed, fail-closed: %s", e)
+        return {"allowed": False, "min_score": -1.0,
                 "reason": f"opa_unreachable: {e}"}
+
+    if not isinstance(result, dict):
+        log.warning("OPA quality_gate returned non-dict %r, fail-closed", result)
+        return {"allowed": False, "min_score": -1.0,
+                "reason": "opa_unexpected_shape"}
+
+    return {
+        "allowed":   bool(result.get("allowed", False)),
+        "min_score": float(result.get("min_score", 0.0)),
+        "reason":    result.get("reason", ""),
+    }
 
 
 async def check_opa_pii_verifier() -> dict:
@@ -518,24 +556,29 @@ async def check_opa_pii_verifier() -> dict:
         "min_confidence_keep": 0.5,
     }
     try:
-        resp = await http_client.post(
-            f"{OPA_URL}/v1/data/pb/config/ingestion/pii_verifier",
-            json={"input": {}},
+        data = await opa_query(
+            http_client, OPA_URL, "pb/config/ingestion/pii_verifier",
         )
-        resp.raise_for_status()
-        data = resp.json().get("result") or {}
-        if not isinstance(data, dict):
-            return fallback
-        return {
-            "enabled":  bool(data.get("enabled", fallback["enabled"])),
-            "backend":  str(data.get("backend", fallback["backend"])),
-            "min_confidence_keep": float(
-                data.get("min_confidence_keep", fallback["min_confidence_keep"])
-            ),
-        }
+    except OpaPolicyMissingError as exc:
+        log.warning(
+            "OPA policy %s not loaded — falling back to env defaults "
+            "(enabled=%s, backend=%s)",
+            exc.package_path, fallback["enabled"], fallback["backend"],
+        )
+        return fallback
     except Exception as exc:
         log.warning("OPA pii_verifier policy lookup failed, using env defaults: %s", exc)
         return fallback
+
+    if not isinstance(data, dict):
+        return fallback
+    return {
+        "enabled":  bool(data.get("enabled", fallback["enabled"])),
+        "backend":  str(data.get("backend", fallback["backend"])),
+        "min_confidence_keep": float(
+            data.get("min_confidence_keep", fallback["min_confidence_keep"])
+        ),
+    }
 
 
 async def apply_pii_verifier(
@@ -619,7 +662,9 @@ async def check_opa_privacy(
 ) -> dict:
     """Queries OPA for pii_action and dual_storage_enabled.
 
-    OPA endpoint: /v1/data/pb/privacy/pii_action, /v1/data/pb/privacy/dual_storage_enabled
+    OPA endpoint: /v1/data/pb/privacy. Fail-closed on missing policy or
+    unreachable OPA — privacy decisions must never silently default
+    to a more permissive action than ``block``.
     """
     input_data = {
         "classification": classification,
@@ -628,17 +673,22 @@ async def check_opa_privacy(
     }
     result = {"pii_action": "block", "dual_storage_enabled": False}
     try:
-        resp = await http_client.post(
-            f"{OPA_URL}/v1/data/pb/privacy",
-            json={"input": input_data},
+        data = await opa_query(http_client, OPA_URL, "pb/privacy", input_data)
+    except OpaPolicyMissingError as exc:
+        log.error(
+            "OPA privacy policy not loaded (%s) — defaulting to block",
+            exc.package_path,
         )
-        resp.raise_for_status()
-        data = resp.json().get("result", {})
+        result["reason"] = f"opa_policy_missing: {exc.package_path}"
+        return result
+    except Exception as e:
+        log.warning("OPA privacy check failed, defaulting to block: %s", e)
+        return result
+
+    if isinstance(data, dict):
         result["pii_action"] = data.get("pii_action", "block")
         result["dual_storage_enabled"] = data.get("dual_storage_enabled", False)
         result["retention_days"] = data.get("retention_days", 365)
-    except Exception as e:
-        log.warning(f"OPA privacy check failed, defaulting to block: {e}")
     return result
 
 
@@ -977,10 +1027,13 @@ async def ingest_text_chunks(
     gate = await check_opa_quality_gate(source_type, quality_report.score)
 
     if not gate["allowed"]:
-        log.warning(
-            f"Quality gate rejected document source={source!r} "
-            f"score={quality_report.score:.3f} min={gate['min_score']:.3f} "
-            f"reason={gate['reason']!r}"
+        # `min_score == -1.0` is the sentinel for "policy missing / OPA
+        # unreachable" — log at ERROR so the cause is obvious. Any other
+        # threshold rejection is normal.
+        _log = log.error if gate["min_score"] < 0 else log.warning
+        _log(
+            "Quality gate rejected document source=%r score=%.3f min=%.3f reason=%r",
+            source, quality_report.score, gate["min_score"], gate["reason"],
         )
         # Audit the rejection and remove the pre-created documents_meta row.
         if pg_pool:
