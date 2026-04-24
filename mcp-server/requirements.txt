@@ -1,5 +1,5 @@
 mcp[server]>=1.0
-httpx>=0.28
+httpx>=0.28.1
 asyncpg>=0.30
 qdrant-client>=1.12
 pydantic>=2.0
