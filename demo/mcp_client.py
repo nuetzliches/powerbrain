@@ -178,6 +178,19 @@ class _IngestionClient:
             url or os.environ.get("INGESTION_URL", "http://localhost:8081")
         ).rstrip("/")
         self.timeout = timeout
+        # B-50: optional bearer for the ingestion middleware. Demo
+        # container reads the same Docker Secret as the server.
+        token = os.environ.get("INGESTION_AUTH_TOKEN", "")
+        token_file = os.environ.get("INGESTION_AUTH_TOKEN_FILE", "")
+        if not token and token_file:
+            try:
+                with open(token_file) as fh:
+                    token = fh.read().strip()
+            except FileNotFoundError:
+                token = ""
+        self._auth_headers = (
+            {"Authorization": f"Bearer {token}"} if token else {}
+        )
 
     def ingest(
         self,
@@ -197,7 +210,12 @@ class _IngestionClient:
         }
         if project:
             payload["project"] = project
-        resp = requests.post(f"{self.url}/ingest", json=payload, timeout=self.timeout)
+        resp = requests.post(
+            f"{self.url}/ingest",
+            json=payload,
+            headers=self._auth_headers,
+            timeout=self.timeout,
+        )
         resp.raise_for_status()
         return resp.json()
 
@@ -206,6 +224,7 @@ class _IngestionClient:
         resp = requests.post(
             f"{self.url}/scan",
             json={"text": text},
+            headers=self._auth_headers,
             timeout=self.timeout,
         )
         resp.raise_for_status()
@@ -247,6 +266,7 @@ class _IngestionClient:
         resp = requests.post(
             f"{self.url}/preview",
             json=payload,
+            headers=self._auth_headers,
             timeout=self.timeout,
         )
         resp.raise_for_status()

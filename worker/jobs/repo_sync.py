@@ -11,12 +11,25 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 
 from worker.context import WorkerContext
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from shared.config import read_secret  # noqa: E402
 
 log = logging.getLogger("pb-worker.repo-sync")
 
 INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8081")
+INGESTION_AUTH_TOKEN = read_secret("INGESTION_AUTH_TOKEN", "")
+
+
+def _ingestion_headers() -> dict[str, str]:
+    return (
+        {"Authorization": f"Bearer {INGESTION_AUTH_TOKEN}"}
+        if INGESTION_AUTH_TOKEN
+        else {}
+    )
 
 
 async def run(ctx: WorkerContext) -> dict:
@@ -24,6 +37,7 @@ async def run(ctx: WorkerContext) -> dict:
     try:
         resp = await ctx.http_client.post(
             f"{INGESTION_URL}/sync",
+            headers=_ingestion_headers(),
             timeout=600.0,  # 10min — Office 365 syncs can be slower than Git
         )
         resp.raise_for_status()

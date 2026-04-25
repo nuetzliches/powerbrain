@@ -22,6 +22,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GET /transparency` reports whether the pool is split via
   `models.llm.pool_split`. Closes the follow-up tracked in 0.7.0
   release notes.
+- **Service-token authentication for the ingestion API**
+  ([B-50](docs/BACKLOG.md)). The ingestion service exposed `/extract`,
+  `/pseudonymize`, `/scan`, `/ingest`, `/ingest/chunks`,
+  `/snapshots/create`, `/sync`, `/sync/{repo}`, and `/preview` with no
+  application-level auth — only Docker-network isolation. A new
+  pure-ASGI `IngestionAuthMiddleware` now validates an
+  `Authorization: Bearer <token>` header on every request, with
+  `/health` and `/metrics*` exempt. The token lives in the new
+  `secrets/ingestion_auth_token.txt` Docker Secret (mirrored at
+  `/run/secrets/ingestion_auth_token` and read via
+  `shared.config.read_secret`). All callers — mcp-server, pb-proxy,
+  pb-worker, pb-demo, pb-seed, and the ingestion service's own
+  `/sync` loopback into `_ingest_documents` — pass the token. Token
+  comparison uses `hmac.compare_digest` for constant-time evaluation.
+  Backward-compatible: when the token is empty (e.g. existing
+  deployments mid-upgrade), the middleware logs a loud warning at
+  startup and lets requests through, so rolling out the secret is not
+  a breaking change. `scripts/quickstart.sh` auto-generates a 32-byte
+  hex token alongside the existing secrets.
+- **`pb_ingestion_auth_failures_total{reason}`** Prometheus counter
+  on the new middleware. Labels `missing` (no/invalid header) and
+  `invalid` (wrong token) so operators can distinguish "service down"
+  from "stale token" without log grepping.
 - **Grafana dashboard panels for document extraction**
   ([B-53](docs/BACKLOG.md)). Four new panels appended to the
   *Powerbrain Overview* dashboard under a *Document Extraction* row:

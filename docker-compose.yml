@@ -37,6 +37,8 @@ secrets:
     file: ./secrets/anthropic_api_key.txt
   mcp_auth_token:
     file: ./secrets/mcp_auth_token.txt
+  ingestion_auth_token:
+    file: ./secrets/ingestion_auth_token.txt
 
 services:
 
@@ -263,6 +265,7 @@ services:
       - pg_password
       - vault_hmac_secret
       - forgejo_token
+      - ingestion_auth_token
     environment:
       QDRANT_URL:      http://qdrant:6333
       POSTGRES_HOST:   postgres
@@ -272,6 +275,7 @@ services:
       POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
       OPA_URL:         http://opa:8181
       OLLAMA_URL:      http://ollama:11434
+      INGESTION_AUTH_TOKEN_FILE: /run/secrets/ingestion_auth_token
       EMBEDDING_PROVIDER_URL: ${EMBEDDING_PROVIDER_URL:-http://ollama:11434}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
@@ -343,6 +347,7 @@ services:
       - pg_password
       - forgejo_token
       - github_pat
+      - ingestion_auth_token
     volumes:
       - ./ingestion/repos.yaml:/app/ingestion/repos.yaml:ro
     environment:
@@ -354,6 +359,7 @@ services:
       POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
       OPA_URL:       http://opa:8181
       OLLAMA_URL:    http://ollama:11434
+      INGESTION_AUTH_TOKEN_FILE: /run/secrets/ingestion_auth_token
       EMBEDDING_PROVIDER_URL: ${EMBEDDING_PROVIDER_URL:-http://ollama:11434}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
@@ -398,6 +404,7 @@ services:
     secrets:
       - pg_password
       - github_pat
+      - ingestion_auth_token
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
@@ -407,6 +414,7 @@ services:
       OPA_URL:       http://opa:8181
       QDRANT_URL:    http://qdrant:6333
       INGESTION_URL: http://ingestion:8081
+      INGESTION_AUTH_TOKEN_FILE: /run/secrets/ingestion_auth_token
       GITHUB_PAT_FILE: /run/secrets/github_pat
       REPO_SYNC_INTERVAL_MINUTES: ${REPO_SYNC_INTERVAL_MINUTES:-5}
       AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-365}
@@ -488,8 +496,11 @@ services:
       context: .
       dockerfile: testdata/Dockerfile
     container_name: pb-seed
+    secrets:
+      - ingestion_auth_token
     environment:
       INGESTION_URL:   http://ingestion:8081
+      INGESTION_AUTH_TOKEN_FILE: /run/secrets/ingestion_auth_token
       OLLAMA_URL:      http://ollama:11434
       EMBEDDING_PROVIDER_URL: ${EMBEDDING_PROVIDER_URL:-http://ollama:11434}
       QDRANT_URL:      http://qdrant:6333
@@ -526,9 +537,11 @@ services:
       - "${DEMO_PORT:-8095}:8095"
     secrets:
       - vault_hmac_secret
+      - ingestion_auth_token
     environment:
       MCP_URL:                http://mcp-server:8080
       INGESTION_URL:          http://ingestion:8081
+      INGESTION_AUTH_TOKEN_FILE: /run/secrets/ingestion_auth_token
       # Populated when the `demo` profile brings pb-proxy up alongside;
       # demo/panels/mcp_vs_proxy probes this URL and only renders when
       # the proxy's /health returns an enterprise edition label.
@@ -563,6 +576,7 @@ services:
       - anthropic_api_key
       - pg_password
       - mcp_auth_token
+      - ingestion_auth_token
     environment:
       MCP_SERVER_URL:          http://mcp-server:8080/mcp
       MCP_AUTH_TOKEN_FILE:     /run/secrets/mcp_auth_token
@@ -577,6 +591,7 @@ services:
       FAIL_MODE:               ${FAIL_MODE:-closed}
       METRICS_PORT:            "9092"
       INGESTION_URL:           http://ingestion:8081
+      INGESTION_AUTH_TOKEN_FILE: /run/secrets/ingestion_auth_token
       PII_SCAN_ENABLED:        ${PII_SCAN_ENABLED:-true}
       PII_SCAN_FORCED:         ${PII_SCAN_FORCED:-false}
       TOOL_INJECTION_ENABLED:  ${TOOL_INJECTION_ENABLED:-true}
