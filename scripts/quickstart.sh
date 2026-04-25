@@ -75,6 +75,16 @@ if [ ! -f secrets/mcp_auth_token.txt ]; then
     info "  secrets/mcp_auth_token.txt"
 fi
 
+# Service-to-service token for the ingestion API (B-50). All callers
+# (mcp-server, pb-proxy, pb-worker, pb-demo, pb-seed) read this same
+# secret file and present it as Bearer; the ingestion middleware
+# rejects everything else.
+if [ ! -f secrets/ingestion_auth_token.txt ]; then
+    openssl rand -hex 32 > secrets/ingestion_auth_token.txt
+    chmod 600 secrets/ingestion_auth_token.txt
+    info "  secrets/ingestion_auth_token.txt"
+fi
+
 # ── Start services ──────────────────────────────────────────
 compose_profiles=(--profile local-llm --profile local-reranker)
 if [ "$enable_seed" = "1" ]; then

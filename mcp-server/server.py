@@ -79,6 +79,17 @@ RERANKER_BACKEND = os.getenv("RERANKER_BACKEND", "powerbrain")
 RERANKER_API_KEY = os.getenv("RERANKER_API_KEY", "")
 RERANKER_MODEL_NAME = os.getenv("RERANKER_MODEL", "")
 INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8081")
+# B-50: defense-in-depth bearer for the ingestion service. Read once
+# at startup (Docker Secret /run/secrets/ingestion_auth_token).
+INGESTION_AUTH_TOKEN = read_secret("INGESTION_AUTH_TOKEN", "")
+
+def _ingestion_headers() -> dict[str, str]:
+    """Auth headers for internal ingestion calls; empty when token unset."""
+    return (
+        {"Authorization": f"Bearer {INGESTION_AUTH_TOKEN}"}
+        if INGESTION_AUTH_TOKEN
+        else {}
+    )
 
 # ── Backward-compat fallback ──
 _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
@@ -704,9 +715,11 @@ async def log_access(agent_id: str, agent_role: str,
             scan_resp = None
             for attempt in range(2):  # 1 initial + 1 retry
                 try:
-                    scan_resp = await http.post(f"{INGESTION_URL}/scan", json={
-                        "text": context["query"],
-                    })
+                    scan_resp = await http.post(
+                        f"{INGESTION_URL}/scan",
+                        json={"text": context["query"]},
+                        headers=_ingestion_headers(),
+                    )
                     scan_resp.raise_for_status()
                     break
                 except (httpx.ConnectError, httpx.TimeoutException):
@@ -2220,13 +2233,17 @@ async def _dispatch(name: str, arguments: dict[str, Any],
     # ── ingest_data ──────────────────────────────────────────
     elif name == "ingest_data":
         try:
-            resp = await http.post(f"{INGESTION_URL}/ingest", json={
-                "source": arguments["source"],
-                "source_type": arguments.get("source_type", "text"),
-                "project": arguments.get("project"),
-                "classification": arguments.get("classification", "internal"),
-                "metadata": arguments.get("metadata", {}),
-            })
+            resp = await http.post(
+                f"{INGESTION_URL}/ingest",
+                json={
+                    "source": arguments["source"],
+                    "source_type": arguments.get("source_type", "text"),
+                    "project": arguments.get("project"),
+                    "classification": arguments.get("classification", "internal"),
+                    "metadata": arguments.get("metadata", {}),
+                },
+                headers=_ingestion_headers(),
+            )
             resp.raise_for_status()
             result = resp.json()
         except Exception as e:
@@ -2641,10 +2658,14 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         description   = arguments.get("description", "")
 
         try:
-            resp = await http.post(f"{INGESTION_URL}/snapshots/create", json={
-                "name": snapshot_name, "description": description,
-                "created_by": agent_id,
-            })
+            resp = await http.post(
+                f"{INGESTION_URL}/snapshots/create",
+                json={
+                    "name": snapshot_name, "description": description,
+                    "created_by": agent_id,
+                },
+                headers=_ingestion_headers(),
+            )
             resp.raise_for_status()
             result = resp.json()
         except Exception as e:

@@ -12,25 +12,18 @@ Last updated: 2026-04-17.
 ### B-22: ~~GitHub Actions CI (pre-public)~~
 **Done** — `.github/workflows/pr-validate.yml` with 3 jobs (unit-tests, opa-tests, docker-build).
 
-### B-50: Unified auth layer for internal ingestion endpoints
-**Open** — The ingestion service exposes `/extract`, `/pseudonymize`, `/ingest`,
-`/ingest/chunks`, and `/scan` without application-level authentication. Today
-they are only reachable inside the `pb-net` Docker network, but there is no
-defense-in-depth if the network is ever mis-scoped or a container is exposed
-by accident. Add a service-token check (similar to the existing
-`MCP_AUTH_TOKEN` that pb-proxy sends to mcp-server) as shared middleware on
-the ingestion FastAPI app. Scope includes all internal endpoints, not just
-`/extract`.
-
-**Acceptance criteria:**
-- New env var / Docker Secret (e.g. `INGESTION_AUTH_TOKEN`) read via
-  `shared.config.read_secret()`
-- Pure-ASGI middleware rejects requests without `Authorization: Bearer <token>`
-  on protected paths (exempt: `/health`, `/metrics`, `/metrics/json`)
-- pb-proxy, pb-worker, and adapters pass the token on every call
-- Integration test confirms unauthenticated calls get 401
-- Back-compat: if no token configured, middleware logs a loud warning and
-  allows everything (so existing deployments aren't broken on upgrade)
+### ✅ B-50: Unified auth layer for internal ingestion endpoints (2026-04-25)
+**Done** — `ingestion/auth_middleware.py` now enforces
+`Authorization: Bearer <INGESTION_AUTH_TOKEN>` on every internal
+endpoint (`/health`, `/metrics*` exempt). Token lives in
+`secrets/ingestion_auth_token.txt` (Docker Secret). All six callers —
+mcp-server, pb-proxy, pb-worker, pb-demo, pb-seed, and the
+loopback inside `ingestion/sync_service.py` — present the token.
+Back-compat preserved: empty token → loud warning + allow-all, so
+rolling out the secret on an existing deployment isn't a breaking
+change. 9 unit tests in `ingestion/tests/test_auth_middleware.py`
+cover 401/200 paths, exempt-path bypass, and the warn-and-allow
+fallback.
 
 ### B-51: End-to-end integration test for document attachments
 **Open** — Add `tests/integration/e2e/test_document_attachment.py` that spins

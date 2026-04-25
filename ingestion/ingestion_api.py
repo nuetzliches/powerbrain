@@ -63,7 +63,7 @@ EMBEDDING_API_KEY      = os.getenv("EMBEDDING_API_KEY", "")
 import sys as _sys
 _sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.llm_provider import EmbeddingProvider, CompletionProvider
-from shared.config import build_postgres_url, PG_POOL_MIN, PG_POOL_MAX
+from shared.config import build_postgres_url, read_secret, PG_POOL_MIN, PG_POOL_MAX
 from shared.telemetry import (
     init_telemetry, setup_auto_instrumentation, trace_operation,
     request_telemetry_context, get_current_telemetry,
@@ -223,6 +223,11 @@ except ValueError as e:
 
 # ── FastAPI App ──────────────────────────────────────────────
 app = FastAPI(title="Powerbrain Ingestion API", version="1.0.0")
+
+# ── Service-token auth (B-50, defense-in-depth on top of pb-net) ──
+INGESTION_AUTH_TOKEN = read_secret("INGESTION_AUTH_TOKEN", "")
+from auth_middleware import IngestionAuthMiddleware  # noqa: E402
+app.add_middleware(IngestionAuthMiddleware, expected_token=INGESTION_AUTH_TOKEN)
 
 # ── Telemetry Initialization ─────────────────────────────────
 _ingestion_tracer = init_telemetry("pb-ingestion")
