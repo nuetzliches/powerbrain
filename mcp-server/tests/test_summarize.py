@@ -16,7 +16,7 @@ def _patch_http(monkeypatch):
 
 class TestSummarizeText:
     async def test_returns_summary(self, _patch_http, monkeypatch):
-        monkeypatch.setattr(server, "LLM_MODEL", "qwen2.5:3b")
+        monkeypatch.setattr(server, "SUMMARIZATION_MODEL", "qwen2.5:3b")
 
         response = MagicMock()
         response.raise_for_status = MagicMock()
@@ -33,7 +33,7 @@ class TestSummarizeText:
         assert result == "This is a summary."
 
     async def test_sends_correct_payload(self, _patch_http, monkeypatch):
-        monkeypatch.setattr(server, "LLM_MODEL", "test-model")
+        monkeypatch.setattr(server, "SUMMARIZATION_MODEL", "test-model")
 
         response = MagicMock()
         response.raise_for_status = MagicMock()
@@ -58,7 +58,7 @@ class TestSummarizeText:
         assert "concise" in system_msg.lower() or "brief" in system_msg.lower()
 
     async def test_graceful_fallback_on_error(self, _patch_http, monkeypatch):
-        monkeypatch.setattr(server, "LLM_MODEL", "test-model")
+        monkeypatch.setattr(server, "SUMMARIZATION_MODEL", "test-model")
         _patch_http.post.side_effect = Exception("LLM provider down")
 
         result = await summarize_text(
@@ -69,7 +69,7 @@ class TestSummarizeText:
         assert result is None
 
     async def test_empty_chunks_returns_none(self, _patch_http, monkeypatch):
-        monkeypatch.setattr(server, "LLM_MODEL", "test-model")
+        monkeypatch.setattr(server, "SUMMARIZATION_MODEL", "test-model")
 
         result = await summarize_text(
             chunks=[],
@@ -77,6 +77,33 @@ class TestSummarizeText:
             detail="standard",
         )
         assert result is None
+
+    async def test_uses_dedicated_summarization_provider(
+        self, _patch_http, monkeypatch
+    ):
+        """summarize_text must dispatch via summarization_provider so a
+        split LLM-pool deployment routes to the configured endpoint."""
+        from shared.llm_provider import CompletionProvider
+
+        sentinel_url = "http://summary-sidecar:11434"
+        sidecar = CompletionProvider(base_url=sentinel_url, api_key="")
+        monkeypatch.setattr(server, "summarization_provider", sidecar)
+        monkeypatch.setattr(server, "SUMMARIZATION_MODEL", "qwen2.5:1.5b")
+
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.json.return_value = {
+            "choices": [{"message": {"content": "Summary"}}],
+        }
+        _patch_http.post.return_value = response
+
+        await summarize_text(
+            chunks=["A", "B"], query="q", detail="brief",
+        )
+
+        call_args = _patch_http.post.call_args
+        assert call_args[0][0].startswith(sentinel_url)
+        assert call_args[1]["json"]["model"] == "qwen2.5:1.5b"
 
 
 class TestCheckOpaSummarizationPolicy:

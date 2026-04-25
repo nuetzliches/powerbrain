@@ -185,11 +185,33 @@ LLM exception and the caller keeps the raw chunks — the policy story
 (confidential ⇒ summary preferred) is preserved, but the demo no
 longer deadlocks when summary can't complete in time.
 
-**Follow-up:** a proper separation of LLM pools (summary via a second,
-smaller endpoint like Haiku-mini or a sidecar Ollama with
-qwen2.5:1.5b) removes the contention entirely. Design + work
-breakdown in
-[docs/plans/2026-04-20-separate-summary-llm-pool.md](plans/2026-04-20-separate-summary-llm-pool.md).
+**Permanent fix (shipped):** the MCP server now accepts a separate
+`SUMMARIZATION_PROVIDER_URL` / `SUMMARIZATION_MODEL` /
+`SUMMARIZATION_API_KEY` triplet. These default to the existing `LLM_*`
+values, so single-endpoint deployments need no change. Pointing them at
+a second endpoint removes the contention entirely.
+
+| Topology | Agent loop (pb-proxy) | Summarisation (mcp-server) |
+|---|---|---|
+| Single CPU Ollama (default) | qwen2.5:3b | qwen2.5:3b (contends) |
+| **Sidecar split** | qwen2.5:3b | qwen2.5:1.5b on `ollama-summary` |
+| **Hosted agent** | claude-haiku-4-5 / gpt-4o-mini | qwen2.5:3b local |
+| **Fully hosted** | claude-haiku-4-5 | gpt-4o-mini |
+| **GPU box** | vLLM qwen 14b | TEI / small distilled model |
+
+The sidecar split lights up with two compose profiles:
+
+```bash
+docker compose --profile local-llm --profile summary-llm up -d
+docker exec pb-ollama-summary ollama pull qwen2.5:1.5b
+
+# .env:
+SUMMARIZATION_PROVIDER_URL=http://ollama-summary:11434
+SUMMARIZATION_MODEL=qwen2.5:1.5b
+```
+
+`GET /transparency` exposes whether the pool is split (`models.llm.pool_split`).
+Original design: [docs/plans/2026-04-20-separate-summary-llm-pool.md](plans/2026-04-20-separate-summary-llm-pool.md).
 
 ### Why only 5 MCP tools are injected (context-size constraint)
 

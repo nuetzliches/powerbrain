@@ -15,6 +15,7 @@ volumes:
   qdrant_data:
   pg_data:
   ollama_data:
+  ollama_summary_data:
   prometheus_data:
   grafana_data:
   tempo_data:
@@ -195,6 +196,32 @@ services:
     #           count: 1
     #           capabilities: [gpu]
 
+  # ── Ollama sidecar for summarization (optional) ───────────
+  # Dedicated Ollama instance so MCP summarisation never contends
+  # with the pb-proxy agent loop. Enable with:
+  #   docker compose --profile local-llm --profile summary-llm up -d
+  # Then point the MCP server at it:
+  #   SUMMARIZATION_PROVIDER_URL=http://ollama-summary:11434
+  #   SUMMARIZATION_MODEL=qwen2.5:1.5b
+  # See docs/plans/2026-04-20-separate-summary-llm-pool.md.
+  ollama-summary:
+    profiles: ["summary-llm"]
+    image: ollama/ollama:latest
+    container_name: pb-ollama-summary
+    ports:
+      - "11435:11434"
+    volumes:
+      - ollama_summary_data:/root/.ollama
+    networks:
+      - pb-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
   # ── Reranker (Built-in Cross-Encoder) ──────────────────────
   # Only needed when RERANKER_BACKEND=powerbrain (default).
   # Start explicitly: docker compose --profile local-reranker up
@@ -251,6 +278,12 @@ services:
       LLM_PROVIDER_URL: ${LLM_PROVIDER_URL:-http://ollama:11434}
       LLM_MODEL:       ${LLM_MODEL:-qwen2.5:3b}
       LLM_API_KEY:     ${LLM_API_KEY:-}
+      # Optional: route summarization to a dedicated endpoint so it
+      # never contends with the pb-proxy agent loop on the same model.
+      # Defaults to LLM_* (single-pool) when unset.
+      SUMMARIZATION_PROVIDER_URL: ${SUMMARIZATION_PROVIDER_URL:-${LLM_PROVIDER_URL:-http://ollama:11434}}
+      SUMMARIZATION_MODEL:        ${SUMMARIZATION_MODEL:-${LLM_MODEL:-qwen2.5:3b}}
+      SUMMARIZATION_API_KEY:      ${SUMMARIZATION_API_KEY:-${LLM_API_KEY:-}}
       FORGEJO_URL:     ${FORGEJO_URL:-http://forgejo.local:3000}
       FORGEJO_TOKEN_FILE: /run/secrets/forgejo_token
       VAULT_HMAC_SECRET_FILE: /run/secrets/vault_hmac_secret

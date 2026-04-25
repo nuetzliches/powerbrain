@@ -83,6 +83,17 @@ Any OpenAI-compatible endpoint for embeddings and summarization. Configured via 
 
 Default model: `nomic-embed-text` (768d). For higher accuracy: `mxbai-embed-large` (1024d) — requires adjustment of the Qdrant collection dimension.
 
+**Decoupled summarization pool.** The MCP server consumes an LLM only
+for in-pipeline summarisation; the pb-proxy agent loop runs on its own
+config. To keep the two paths off the same Ollama slot, mcp-server
+accepts `SUMMARIZATION_PROVIDER_URL` / `SUMMARIZATION_MODEL` /
+`SUMMARIZATION_API_KEY` (defaults: `LLM_*` for back-compat).
+An optional sidecar service ships under `--profile summary-llm`
+(`ollama-summary` container, port 11435 on the host) so a smaller
+distilled model — e.g. `qwen2.5:1.5b` — can serve summaries while the
+main `pb-ollama` keeps handling the agent loop. `GET /transparency`
+reports the split via `models.llm.pool_split`.
+
 ### 2.7 Git Server (external, optional)
 
 Any Git server for policy and schema repositories. Configured via `FORGEJO_URL` / `OPAL_POLICY_REPO_URL`. Supports Forgejo, GitHub, GitLab, Gitea, Bitbucket, etc. Repositories:
