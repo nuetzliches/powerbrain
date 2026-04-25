@@ -88,20 +88,33 @@ EMBEDDING_PROVIDER_URL = os.getenv("EMBEDDING_PROVIDER_URL", _OLLAMA_URL)
 EMBEDDING_MODEL        = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 EMBEDDING_API_KEY      = os.getenv("EMBEDDING_API_KEY", "")
 
-# ── LLM / Summarization provider ──
+# ── LLM provider (legacy single-pool fallback) ──
+# Kept as the default for SUMMARIZATION_* below so single-endpoint
+# deployments keep working without env changes. The MCP server itself
+# only consumes an LLM for summarization — agent-loop calls live in
+# pb-proxy, on a separate provider config.
 LLM_PROVIDER_URL       = os.getenv("LLM_PROVIDER_URL", _OLLAMA_URL)
 LLM_MODEL              = os.getenv("LLM_MODEL", "qwen2.5:3b")
 LLM_API_KEY            = os.getenv("LLM_API_KEY", "")
-SUMMARIZATION_ENABLED  = os.getenv("SUMMARIZATION_ENABLED", "true").lower() == "true"
+
+# ── Summarization provider (decoupled pool) ──
+# Setting these lets the in-pipeline summary call route to its own
+# endpoint / model so it never contends with the pb-proxy agent loop
+# on a shared Ollama slot. See
+# docs/plans/2026-04-20-separate-summary-llm-pool.md.
+SUMMARIZATION_PROVIDER_URL = os.getenv("SUMMARIZATION_PROVIDER_URL", LLM_PROVIDER_URL)
+SUMMARIZATION_MODEL        = os.getenv("SUMMARIZATION_MODEL", LLM_MODEL)
+SUMMARIZATION_API_KEY      = os.getenv("SUMMARIZATION_API_KEY", LLM_API_KEY)
+SUMMARIZATION_ENABLED      = os.getenv("SUMMARIZATION_ENABLED", "true").lower() == "true"
 # Per-call timeout for summarization LLM requests. Kept well below the
 # proxy's TOOL_CALL_TIMEOUT so the graceful fallback to raw chunks
 # ([server.py] summarize_text → except → return None) lands before the
 # upstream caller abandons the connection. See
 # docs/playbook-sales-demo.md → "Tuning the local LLM".
-SUMMARIZATION_TIMEOUT  = float(os.getenv("SUMMARIZATION_TIMEOUT", "15"))
+SUMMARIZATION_TIMEOUT      = float(os.getenv("SUMMARIZATION_TIMEOUT", "15"))
 
-embedding_provider = EmbeddingProvider(base_url=EMBEDDING_PROVIDER_URL, api_key=EMBEDDING_API_KEY)
-llm_provider       = CompletionProvider(base_url=LLM_PROVIDER_URL, api_key=LLM_API_KEY)
+embedding_provider     = EmbeddingProvider(base_url=EMBEDDING_PROVIDER_URL, api_key=EMBEDDING_API_KEY)
+summarization_provider = CompletionProvider(base_url=SUMMARIZATION_PROVIDER_URL, api_key=SUMMARIZATION_API_KEY)
 _rerank_provider   = create_rerank_provider(
     backend=RERANKER_BACKEND, base_url=RERANKER_URL,
     api_key=RERANKER_API_KEY, model=RERANKER_MODEL_NAME,
@@ -495,11 +508,11 @@ async def summarize_text(
     user_prompt = f"Query: {query}\n\nText chunks to summarize:\n\n{combined}"
 
     with trace_operation(tracer, "summarization", "mcp-server",
-                         model=LLM_MODEL):
+                         model=SUMMARIZATION_MODEL):
         try:
-            return await llm_provider.generate(
+            return await summarization_provider.generate(
                 http,
-                model=LLM_MODEL,
+                model=SUMMARIZATION_MODEL,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 timeout=SUMMARIZATION_TIMEOUT,
@@ -3446,14 +3459,23 @@ async def _build_transparency_payload() -> dict:
         _transparency_audit_snapshot(),
     )
 
+    summarization_split = (
+        SUMMARIZATION_PROVIDER_URL != LLM_PROVIDER_URL
+        or SUMMARIZATION_MODEL != LLM_MODEL
+    )
     models = {
         "embedding": {
             "name":        EMBEDDING_MODEL,
             "provider_url": EMBEDDING_PROVIDER_URL,
         },
         "llm": {
-            "name":        LLM_MODEL,
-            "provider_url": LLM_PROVIDER_URL,
+            # mcp-server consumes an LLM only for summarization. Field
+            # name kept as "llm" for back-compat with consumers like
+            # compliance_doc.py; the values reflect SUMMARIZATION_*.
+            "name":        SUMMARIZATION_MODEL,
+            "provider_url": SUMMARIZATION_PROVIDER_URL,
+            "purpose":     "summarization",
+            "pool_split":  summarization_split,
         },
         "reranker": {
             "backend":     RERANKER_BACKEND,

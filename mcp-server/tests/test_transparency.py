@@ -139,7 +139,11 @@ class TestBuildTransparencyPayload:
         assert "system_purpose" in payload
         assert isinstance(payload["deployment_constraints"], list)
         assert payload["models"]["embedding"]["name"] == server.EMBEDDING_MODEL
-        assert payload["models"]["llm"]["name"] == server.LLM_MODEL
+        # mcp-server's only LLM consumer is summarization; the field is
+        # kept under "llm" for back-compat (compliance_doc reads it).
+        assert payload["models"]["llm"]["name"] == server.SUMMARIZATION_MODEL
+        assert payload["models"]["llm"]["purpose"] == "summarization"
+        assert payload["models"]["llm"]["pool_split"] is False
         assert payload["opa"]["roles"] == ["viewer", "analyst", "developer", "admin"]
         assert payload["opa"]["audit_retention_days"] == 365
         assert len(payload["collections"]) == 3
