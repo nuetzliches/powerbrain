@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Decoupled summarization LLM pool** ([plan](docs/plans/2026-04-20-separate-summary-llm-pool.md)).
+  MCP server now accepts `SUMMARIZATION_PROVIDER_URL` /
+  `SUMMARIZATION_MODEL` / `SUMMARIZATION_API_KEY` so the in-pipeline
+  summary call can run against its own endpoint instead of competing
+  with the pb-proxy agent loop on a shared Ollama slot. Defaults to
+  the existing `LLM_*` values — single-endpoint deployments need no
+  change. Optional sidecar `pb-ollama-summary` ships under
+  `docker compose --profile summary-llm`, exposing port 11435 on the
+  host and an internal `http://ollama-summary:11434` endpoint suitable
+  for a smaller distilled model (e.g. `qwen2.5:1.5b`).
+  `GET /transparency` reports whether the pool is split via
+  `models.llm.pool_split`. Closes the follow-up tracked in 0.7.0
+  release notes.
+
 ## [0.7.1] - 2026-04-22
 
 Three concurrency and misconfiguration bug fixes filed against the
