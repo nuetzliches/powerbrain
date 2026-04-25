@@ -1,5 +1,5 @@
 fastapi>=0.115
-uvicorn[standard]>=0.34
+uvicorn[standard]>=0.46.0
 litellm>=1.80
 mcp>=1.0
 httpx>=0.28
