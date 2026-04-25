@@ -55,8 +55,19 @@ METRICS_PORT = int(os.getenv("METRICS_PORT", "9092"))
 
 # ── PII Protection ───────────────────────────────────────────
 INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8081")
+# B-50: shared service token to talk to the ingestion service.
+INGESTION_AUTH_TOKEN = _read_secret("INGESTION_AUTH_TOKEN", "")
 PII_SCAN_ENABLED = os.getenv("PII_SCAN_ENABLED", "true").lower() == "true"
 PII_SCAN_FORCED = os.getenv("PII_SCAN_FORCED", "true").lower() == "true"
+
+
+def ingestion_headers() -> dict[str, str]:
+    """Auth headers for internal ingestion calls; empty when unset."""
+    return (
+        {"Authorization": f"Bearer {INGESTION_AUTH_TOKEN}"}
+        if INGESTION_AUTH_TOKEN
+        else {}
+    )
 
 # ── Connection Pool ──────────────────────────────────────────
 PG_POOL_MIN = int(os.getenv("PG_POOL_MIN", "1"))

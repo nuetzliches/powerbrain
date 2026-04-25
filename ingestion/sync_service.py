@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -19,10 +21,27 @@ import yaml
 from ingestion.adapters.base import FileChange
 from ingestion.adapters.git_adapter import GitAdapter, RepoConfig
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from shared.config import read_secret  # noqa: E402
+
 log = logging.getLogger("pb-sync")
 
 REPOS_CONFIG_PATH = Path(__file__).parent / "repos.yaml"
 O365_CONFIG_PATH = Path(__file__).parent / "office365.yaml"
+
+# B-50: loopback bearer for self-calls into the ingestion API. The
+# /sync orchestrator runs inside the ingestion container and POSTs
+# back to its own /ingest endpoint over HTTP, so it must speak the
+# same service-token middleware as remote callers.
+_INGESTION_AUTH_TOKEN = read_secret("INGESTION_AUTH_TOKEN", "")
+
+
+def _loopback_headers() -> dict[str, str]:
+    return (
+        {"Authorization": f"Bearer {_INGESTION_AUTH_TOKEN}"}
+        if _INGESTION_AUTH_TOKEN
+        else {}
+    )
 
 
 def load_repo_configs(path: Path | None = None) -> list[RepoConfig]:
@@ -150,6 +169,7 @@ async def _ingest_documents(
                         "language": doc.language,
                     },
                 },
+                headers=_loopback_headers(),
                 timeout=120.0,
             )
             resp.raise_for_status()
@@ -429,6 +449,7 @@ async def _ingest_o365_documents(
                         "language": doc.language,
                     },
                 },
+                headers=_loopback_headers(),
                 timeout=120.0,
             )
             resp.raise_for_status()

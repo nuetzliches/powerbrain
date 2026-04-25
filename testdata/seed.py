@@ -37,6 +37,21 @@ MCP_API_KEY = os.environ.get(
     "MCP_API_KEY",
     "pb_dev_localonly_do_not_use_in_production",
 )
+
+
+def _read_secret_env(name: str) -> str:
+    """Mini read_secret without dragging in shared.config (seed runs as a thin script)."""
+    file_path = os.environ.get(f"{name}_FILE")
+    if file_path:
+        try:
+            with open(file_path) as fh:
+                return fh.read().strip()
+        except FileNotFoundError:
+            pass
+    return os.environ.get(name, "")
+
+
+INGESTION_AUTH_TOKEN = _read_secret_env("INGESTION_AUTH_TOKEN")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
 
 MAX_WAIT_SECONDS = int(os.environ.get("MAX_WAIT_SECONDS", "120"))
@@ -74,6 +89,8 @@ def http_post(
 
     Pass auth=True when the endpoint requires the MCP bearer token
     (anything under /mcp on the MCP server when AUTH_REQUIRED=true).
+    The ingestion service uses its own bearer (INGESTION_AUTH_TOKEN);
+    that is added automatically when posting to ``INGESTION_URL``.
     """
     data = json.dumps(payload).encode("utf-8")
     headers = {
@@ -82,6 +99,8 @@ def http_post(
     }
     if auth and MCP_API_KEY:
         headers["Authorization"] = f"Bearer {MCP_API_KEY}"
+    elif INGESTION_AUTH_TOKEN and url.startswith(INGESTION_URL):
+        headers["Authorization"] = f"Bearer {INGESTION_AUTH_TOKEN}"
     req = urllib.request.Request(url, data=data, method="POST", headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         body = resp.read().decode()
