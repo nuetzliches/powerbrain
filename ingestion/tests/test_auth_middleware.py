@@ -17,7 +17,15 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from auth_middleware import IngestionAuthMiddleware  # noqa: E402
+from auth_middleware import (  # noqa: E402
+    IngestionAuthMiddleware,
+    pb_ingestion_auth_failures,
+)
+
+
+def _failure_count(reason: str) -> float:
+    """Read the current value of pb_ingestion_auth_failures{reason=...}."""
+    return pb_ingestion_auth_failures.labels(reason=reason)._value.get()
 
 
 @pytest.fixture
@@ -98,6 +106,38 @@ class TestEnforced:
         client = self._client(protected_app)
         resp = client.get("/metrics/extra")
         assert resp.status_code == 200
+
+
+class TestAuthFailureMetric:
+    """pb_ingestion_auth_failures_total{reason} increments on rejection."""
+
+    def _client(self, app: FastAPI, token: str = "secret-token") -> TestClient:
+        app.add_middleware(IngestionAuthMiddleware, expected_token=token)
+        return TestClient(app)
+
+    def test_missing_header_increments_missing_label(self, protected_app):
+        before = _failure_count("missing")
+        client = self._client(protected_app)
+        client.post("/scan", json={})
+        assert _failure_count("missing") == before + 1
+
+    def test_wrong_token_increments_invalid_label(self, protected_app):
+        before = _failure_count("invalid")
+        client = self._client(protected_app)
+        client.post(
+            "/scan", json={}, headers={"Authorization": "Bearer nope"},
+        )
+        assert _failure_count("invalid") == before + 1
+
+    def test_valid_token_does_not_increment(self, protected_app):
+        before_missing = _failure_count("missing")
+        before_invalid = _failure_count("invalid")
+        client = self._client(protected_app)
+        client.post(
+            "/scan", json={}, headers={"Authorization": "Bearer secret-token"},
+        )
+        assert _failure_count("missing") == before_missing
+        assert _failure_count("invalid") == before_invalid
 
 
 class TestBackCompatNoToken:

@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   startup and lets requests through, so rolling out the secret is not
   a breaking change. `scripts/quickstart.sh` auto-generates a 32-byte
   hex token alongside the existing secrets.
+- **`pb_ingestion_auth_failures_total{reason}`** Prometheus counter
+  on the new middleware. Labels `missing` (no/invalid header) and
+  `invalid` (wrong token) so operators can distinguish "service down"
+  from "stale token" without log grepping.
 
 ## [0.7.1] - 2026-04-22
 

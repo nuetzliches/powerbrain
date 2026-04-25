@@ -20,7 +20,32 @@ import hmac
 import json
 import logging
 
+from prometheus_client import Counter, REGISTRY
+
 log = logging.getLogger("pb-ingestion.auth")
+
+
+def _get_or_create_counter() -> Counter:
+    """Idempotent Counter registration so re-imports during tests don't
+    raise ``Duplicated timeseries`` against the global Prometheus
+    registry (mirrors the pattern in ingestion_api.py)."""
+    name = "pb_ingestion_auth_failures_total"
+    try:
+        return Counter(
+            name,
+            "Ingestion service-token auth failures",
+            ["reason"],
+        )
+    except ValueError as exc:
+        if "Duplicated timeseries" not in str(exc):
+            raise
+        for collector in list(REGISTRY._collector_to_names.keys()):
+            if getattr(collector, "_name", None) == name:
+                return collector  # type: ignore[return-value]
+        raise
+
+
+pb_ingestion_auth_failures = _get_or_create_counter()
 
 
 class IngestionAuthMiddleware:
@@ -63,9 +88,11 @@ class IngestionAuthMiddleware:
             bearer_token = auth_value[7:].strip()
 
         if not bearer_token:
+            pb_ingestion_auth_failures.labels(reason="missing").inc()
             return await self._send_401(send, "Authentication required")
 
         if not hmac.compare_digest(bearer_token, self._token):
+            pb_ingestion_auth_failures.labels(reason="invalid").inc()
             return await self._send_401(send, "Invalid service token")
 
         return await self.app(scope, receive, send)
