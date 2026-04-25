@@ -5,7 +5,7 @@
 # 3.x scheduler API used in worker/scheduler.py — keep the `<4.0` ceiling.
 apscheduler>=3.11,<4.0
 asyncpg>=0.31.0,<1.0
-httpx>=0.28,<1.0
+httpx>=0.28.1,<1.0
 prometheus-client>=0.25,<1.0
 qdrant-client>=1.15,<2.0
 python-dotenv>=1.2.2,<2.0
