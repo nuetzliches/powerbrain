@@ -46,30 +46,20 @@ step in `_telemetry`. Include error paths: 413 oversize, 415 wrong MIME,
 - Runs under `RUN_INTEGRATION_TESTS=1 pytest -m integration`
 - Verifies PII inside a PDF is pseudonymized before reaching the LLM mock
 
-### B-52: ADR — evaluate Docling as markitdown replacement
-**Open** — IBM's [Docling](https://github.com/DS4SD/docling) (MIT, 2024+) is a
-more RAG-optimized document extractor with better table/layout understanding
-than markitdown. Write an ADR in `docs/technology-decisions.md` comparing
-markitdown vs. Docling on our corpus (Office handbooks, scanned PDFs,
-tabular XLSX), with a benchmark script that measures quality + latency on
-`testdata/documents/`. Decision: stay with markitdown, adopt Docling, or
-run Docling as an opt-in backend alongside.
+### ✅ B-52: ADR — markitdown vs. Docling (2026-04-25)
+**Done** — ADR captured as **T-6** in
+`docs/technology-decisions.md` (decision: stay with markitdown by
+default, ship Docling as an opt-in second backend when triggers fire).
+Companion harness `scripts/benchmark_extractors.py` runs both
+extractors on `testdata/documents/` (or any path) and prints a
+chars-out + latency table; lives outside the production codepath
+until benchmark data justifies a backend switch.
 
-**Out of scope:** implementation — this ticket is research + ADR only.
-
-### B-53: Grafana dashboard panels for document extraction
-**Open** — The new Prometheus metrics
-(`pb_extract_requests_total`, `pb_extract_duration_seconds`,
-`pb_extract_bytes_in`, `pbproxy_documents_extracted_total`,
-`pbproxy_documents_extracted_bytes`) are scraped but not visualized. Add a
-panel group to `monitoring/grafana-dashboards/` covering:
-- Requests per second by status (`ok` / `error`) and MIME type
-- p50/p95/p99 extraction duration
-- Input-size histogram (log-scale)
-- Proxy-side success vs. error rate over time
-
-Should appear on the existing "Powerbrain Overview" dashboard rather than
-living in its own file.
+### ✅ B-53: Grafana dashboard panels for document extraction (2026-04-25)
+**Done** — Four panels appended to `monitoring/grafana-dashboards/pb-overview.json`
+under a *Document Extraction* row: proxy doc-extract requests/s by
+MIME + status, ingestion /extract duration p50/p95/p99, input-size
+heatmap, and ingestion success vs. error rate.
 
 ---
 

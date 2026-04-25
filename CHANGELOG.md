@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Grafana dashboard panels for document extraction**
+  ([B-53](docs/BACKLOG.md)). Four new panels appended to the
+  *Powerbrain Overview* dashboard under a *Document Extraction* row:
+  proxy doc-extract requests/s by MIME + status
+  (`pbproxy_documents_extracted_total`), ingestion `/extract` duration
+  p50/p95/p99 (`pb_extract_duration_seconds_bucket`), input-size
+  heatmap (`pb_extract_bytes_in_bucket`), and ingestion-side success
+  vs. error rate (`pb_extract_requests_total`). All metrics were
+  already scraped — this just makes them visible.
+- **ADR T-6 — markitdown vs. Docling** ([B-52](docs/BACKLOG.md)).
+  Decision recorded in `docs/technology-decisions.md`: stay with
+  markitdown by default; ship Docling as an opt-in second backend
+  when triggers fire (>20% scanned-PDF corpora, repeat extraction
+  errors on tabular PDFs/XLSX, or a layout-fidelity-driven adapter).
+  Companion benchmark harness `scripts/benchmark_extractors.py` runs
+  both extractors on a directory and prints chars-out + latency for
+  each — staying outside the production codepath until the
+  benchmark data justifies a backend switch.
+
 ## [0.7.1] - 2026-04-22
 
 Three concurrency and misconfiguration bug fixes filed against the
