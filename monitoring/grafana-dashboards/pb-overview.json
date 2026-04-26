@@ -108,6 +108,92 @@
         "expr": "histogram_quantile(0.95, rate(pb_reranker_batch_size_bucket[5m]))",
         "legendFormat": "batch p95"
       }]
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "Document Extraction",
+      "gridPos": { "x": 0, "y": 18, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Proxy doc-extract requests/s (by MIME + status)",
+      "description": "Chat-path attachments processed by pb-proxy. ok = successfully forwarded to ingestion /extract; error = rejected by policy or extractor.",
+      "gridPos": { "x": 0, "y": 19, "w": 12, "h": 8 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "sum by(mime_type, status) (rate(pbproxy_documents_extracted_total[1m]))",
+        "legendFormat": "{{status}} – {{mime_type}}"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "stacking": { "mode": "normal" } }
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Ingestion /extract duration p50 / p95 / p99",
+      "description": "Wall-clock time inside the ingestion service to convert a binary document to plain text (markitdown + format-specific fallbacks).",
+      "gridPos": { "x": 12, "y": 19, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.50, sum by(le) (rate(pb_extract_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.95, sum by(le) (rate(pb_extract_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.99, sum by(le) (rate(pb_extract_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 12,
+      "type": "heatmap",
+      "title": "Document input size distribution",
+      "description": "Bytes received by pb-proxy /extract. Bucketed log-style (1 KB → 25 MB).",
+      "gridPos": { "x": 0, "y": 27, "w": 12, "h": 8 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "sum by(le) (rate(pb_extract_bytes_in_bucket[5m]))",
+        "legendFormat": "{{le}}",
+        "format": "heatmap"
+      }],
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "options": {
+        "calculate": false,
+        "yAxis": { "axisLabel": "size (bytes)", "scale": { "type": "log", "log": 10 } }
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Ingestion /extract success vs error rate",
+      "description": "Outcome of every extractor invocation (markitdown / pdfminer / python-docx / etc.). Sustained error spikes usually point at corrupted source files or a markitdown crash.",
+      "gridPos": { "x": 12, "y": 27, "w": 12, "h": 8 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "sum by(status) (rate(pb_extract_requests_total[1m]))",
+        "legendFormat": "{{status}}"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "stacking": { "mode": "normal" } }
+        }
+      }
     }
   ]
 }
