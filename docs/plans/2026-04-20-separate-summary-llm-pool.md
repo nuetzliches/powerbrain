@@ -1,6 +1,6 @@
 # Plan: Separate LLM Pool for Summarization
 
-**Status:** Backlog — pick up next session
+**Status:** Shipped 2026-04-25 — see CHANGELOG `[Unreleased]`.
 **Origin:** Live sales-demo debug session 2026-04-19/20 (Tab D, pb-proxy MCP vs Proxy)
 
 ## Problem
