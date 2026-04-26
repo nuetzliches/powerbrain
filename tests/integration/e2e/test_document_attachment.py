@@ -50,6 +50,11 @@ pytestmark = [
 ]
 
 PROXY_URL = os.getenv("PROXY_URL", "http://localhost:8090")
+# pb-proxy serves Prometheus exposition on a separate standalone HTTP
+# server (proxy.py: prom_start_http_server). docker-compose maps the
+# default 9092 to the host so this URL is reachable from the test
+# runner. /metrics is NOT mounted on the FastAPI app at PROXY_URL.
+PROXY_METRICS_URL = os.getenv("PROXY_METRICS_URL", "http://localhost:9092")
 FIXTURES_DIR = Path(__file__).resolve().parents[3] / "testdata" / "documents"
 
 # A valid 1×1 PNG (68 bytes) used to provoke a 415 — image/png is not on
@@ -60,6 +65,11 @@ PNG_1X1 = bytes.fromhex(
     "1f15c4890000000b49444154789c6360000200000500017a5eab3f0000"
     "000049454e44ae426082"
 )
+
+# 26 MB of zero bytes — pre-allocated once so the four oversize tests
+# don't re-allocate a fresh buffer per call.
+_OVERSIZE_BYTES = b"\x00" * (26 * 1024 * 1024)
+_OVERSIZE_B64 = base64.b64encode(_OVERSIZE_BYTES).decode()
 
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -133,7 +143,7 @@ def _scrape_counter(name: str, **label_filter: str) -> float:
     Returns 0.0 when the metric line doesn't yet exist (counters are
     created lazily on first ``.inc()``).
     """
-    resp = httpx.get(f"{PROXY_URL}/metrics", timeout=5)
+    resp = httpx.get(f"{PROXY_METRICS_URL}/metrics", timeout=5)
     resp.raise_for_status()
     total = 0.0
     for line in resp.text.splitlines():
@@ -248,11 +258,9 @@ class TestDocumentAttachmentOpenAI:
         assert after_ok > before_ok, "DOCX was not extracted to text"
 
     def test_oversize_attachment_returns_413(self, api_key):
-        # Synthesise a payload larger than the policy cap (25 MB by
-        # default). 26 MB of zero bytes compresses well in base64 but
-        # the proxy compares the *decoded* size, so this trips the
-        # 413 path in document_extraction.py.
-        oversize_b64 = base64.b64encode(b"\x00" * (26 * 1024 * 1024)).decode()
+        # 26 MB of zero bytes — larger than the default 25 MB policy
+        # cap. The proxy compares the *decoded* size, so this trips
+        # the 413 path in document_extraction.py.
         resp = _proxy_post(
             "/v1/chat/completions",
             api_key=api_key["key"],
@@ -263,7 +271,7 @@ class TestDocumentAttachmentOpenAI:
                     "content": [
                         {"type": "text", "text": "Big file"},
                         _openai_file_block(
-                            "big.pdf", "application/pdf", oversize_b64,
+                            "big.pdf", "application/pdf", _OVERSIZE_B64,
                         ),
                     ],
                 }],
@@ -291,6 +299,10 @@ class TestDocumentAttachmentOpenAI:
             timeout=30,
         )
         assert resp.status_code == 415, resp.text
+        # Guard against silent regressions if the OPA allow-list ever
+        # widens to include images: the rejection must reference the
+        # MIME type (or its 'image/png' value) so the test fails loudly.
+        assert "image/png" in resp.text or "MIME" in resp.text or "mime" in resp.text
 
 
 # ── Anthropic shape — POST /v1/messages ─────────────────────
@@ -340,7 +352,6 @@ class TestDocumentAttachmentAnthropic:
         assert after_ok > before_ok, "PDF (Anthropic shape) was not extracted"
 
     def test_oversize_via_messages_returns_413(self, api_key):
-        oversize_b64 = base64.b64encode(b"\x00" * (26 * 1024 * 1024)).decode()
         resp = _proxy_post(
             "/v1/messages",
             api_key=api_key["key"],
@@ -352,7 +363,7 @@ class TestDocumentAttachmentAnthropic:
                     "content": [
                         {"type": "text", "text": "Big PDF"},
                         _anthropic_document_block(
-                            "big.pdf", "application/pdf", oversize_b64,
+                            "big.pdf", "application/pdf", _OVERSIZE_B64,
                         ),
                     ],
                 }],

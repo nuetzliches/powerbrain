@@ -571,6 +571,11 @@ services:
     container_name: pb-proxy
     ports:
       - "${PROXY_PORT:-8090}:8090"
+      # Standalone Prometheus exposition (started by prom_start_http_server
+      # in proxy.py). Mapped so external scrapers and the B-51 E2E test can
+      # read pbproxy_documents_extracted_total / pbproxy_pii_entities_*
+      # without needing to be inside pb-net.
+      - "${PROXY_METRICS_PORT:-9092}:9092"
     secrets:
       - github_pat
       - anthropic_api_key
