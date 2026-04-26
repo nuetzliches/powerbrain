@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/nuetzliches/powerbrain/tree/master/docs
+    about: Read the docs before filing an issue — your question might already be answered.
+  - name: Contributing Guide
+    url: https://github.com/nuetzliches/powerbrain/blob/master/CONTRIBUTING.md
+    about: New to contributing? Start here for development setup and conventions.

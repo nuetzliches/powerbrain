@@ -1,0 +1,98 @@
+name: Bug Report
+description: Report a bug in Powerbrain (unexpected behavior, errors, crashes)
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component
+      description: Which part of Powerbrain is affected?
+      options:
+        - MCP Server
+        - Ingestion Pipeline
+        - Reranker
+        - AI Provider Proxy (pb-proxy)
+        - Worker (pb-worker)
+        - OPA Policies
+        - PostgreSQL / Database Schema
+        - Qdrant / Vector Search
+        - Shared Libraries
+        - Docker / Deployment
+        - Monitoring (Prometheus/Grafana/Tempo)
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Step-by-step instructions to reproduce the behavior.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs or Error Messages
+      description: "Paste any relevant log output. Use `docker compose logs <service>` to retrieve logs."
+      render: shell
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Provide your environment details.
+      value: |
+        - Powerbrain version (git SHA or tag):
+        - Docker version:
+        - Docker Compose version:
+        - OS:
+        - Compose profiles used (tls, proxy, gpu, opal):
+        - Reranker backend (powerbrain/tei/cohere):
+        - LLM provider (ollama/vllm/external):
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant Configuration
+      description: "Any relevant `.env` settings, OPA policy data, or `docker-compose.override.yml` changes. Do NOT paste secrets or API keys."
+      render: yaml
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Screenshots, related issues, or any other context.

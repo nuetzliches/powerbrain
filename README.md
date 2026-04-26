@@ -5,6 +5,8 @@
 [![Docker Compose](https://img.shields.io/badge/Docker_Compose-ready-2496ED?logo=docker)](docker-compose.yml)
 [![MCP](https://img.shields.io/badge/MCP-compatible-green)](https://modelcontextprotocol.io/)
 
+Open source. Closed data. 🔐
+
 > *"AI eats context. We decide what's on the menu."*
 
 Open-source context engine that feeds AI agents with policy-compliant enterprise knowledge — self-hosted, GDPR-native, provider-agnostic.
@@ -209,3 +211,6 @@ Powerbrain is open source ([Apache 2.0](LICENSE)). Contributions welcome — whe
 ## 📄 License
 
 [Apache License 2.0](LICENSE). Dependencies under their respective licenses.
+
+## AI Usage
+Parts of this codebase were developed with the assistance of AI coding tools (e.g. Claude, GitHub Copilot). 
