@@ -53,6 +53,7 @@ async def pseudonymize_messages(
             resp = await http_client.post(
                 f"{config.INGESTION_URL}/pseudonymize",
                 json={"text": content, "salt": session_salt},
+                headers=config.ingestion_headers(),
                 timeout=5.0,
             )
             resp.raise_for_status()
@@ -90,6 +91,7 @@ async def pseudonymize_tool_result(
         resp = await http_client.post(
             f"{config.INGESTION_URL}/pseudonymize",
             json={"text": text, "salt": session_salt},
+            headers=config.ingestion_headers(),
             timeout=5.0,
         )
         resp.raise_for_status()

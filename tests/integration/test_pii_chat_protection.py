@@ -7,11 +7,26 @@ User message with PII -> pseudonymized to LLM -> de-pseudonymized on return.
 Requires: RUN_INTEGRATION_TESTS=1, running pb-proxy + ingestion services.
 """
 
+import os
+
 import pytest
 import httpx
 
 PROXY_URL = "http://localhost:8090"
 INGESTION_URL = "http://localhost:8081"
+
+
+def _ingestion_headers() -> dict[str, str]:
+    """Read INGESTION_AUTH_TOKEN (env or _FILE) for direct calls (B-50)."""
+    token = os.environ.get("INGESTION_AUTH_TOKEN", "")
+    token_file = os.environ.get("INGESTION_AUTH_TOKEN_FILE", "")
+    if not token and token_file:
+        try:
+            with open(token_file) as fh:
+                token = fh.read().strip()
+        except FileNotFoundError:
+            token = ""
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 @pytest.fixture
@@ -42,7 +57,7 @@ async def test_pii_not_in_llm_request(http):
 async def test_pseudonymize_endpoint_directly():
     """Verify the ingestion /pseudonymize endpoint works standalone."""
     async with httpx.AsyncClient(base_url=INGESTION_URL, timeout=10) as client:
-        resp = await client.post("/pseudonymize", json={
+        resp = await client.post("/pseudonymize", headers=_ingestion_headers(), json={
             "text": "Sebastian und Maria arbeiten am Projekt.",
             "salt": "integration-test-salt",
         })
@@ -59,7 +74,7 @@ async def test_pseudonymize_endpoint_directly():
 async def test_pseudonymize_no_pii():
     """Verify the endpoint handles text without PII."""
     async with httpx.AsyncClient(base_url=INGESTION_URL, timeout=10) as client:
-        resp = await client.post("/pseudonymize", json={
+        resp = await client.post("/pseudonymize", headers=_ingestion_headers(), json={
             "text": "Die Datenbank läuft auf Port 5432.",
             "salt": "integration-test-salt",
         })
@@ -76,8 +91,9 @@ async def test_pseudonymize_deterministic():
             "text": "Sebastian sendet eine E-Mail.",
             "salt": "deterministic-test-salt",
         }
-        resp1 = await client.post("/pseudonymize", json=payload)
-        resp2 = await client.post("/pseudonymize", json=payload)
+        headers = _ingestion_headers()
+        resp1 = await client.post("/pseudonymize", headers=headers, json=payload)
+        resp2 = await client.post("/pseudonymize", headers=headers, json=payload)
         assert resp1.status_code == 200
         assert resp2.status_code == 200
         assert resp1.json()["text"] == resp2.json()["text"]

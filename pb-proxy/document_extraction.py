@@ -219,6 +219,7 @@ async def extract_documents_in_messages(
                     "mime_type": mime_type,
                     "max_bytes": max_bytes or None,
                 },
+                headers=config.ingestion_headers(),
                 timeout=60.0,
             )
         except httpx.TimeoutException as exc:
