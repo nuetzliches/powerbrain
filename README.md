@@ -211,3 +211,6 @@ Powerbrain is open source ([Apache 2.0](LICENSE)). Contributions welcome — whe
 ## 📄 License
 
 [Apache License 2.0](LICENSE). Dependencies under their respective licenses.
+
+## AI Usage
+Parts of this codebase were developed with the assistance of AI coding tools (e.g. Claude, GitHub Copilot). 
