@@ -45,6 +45,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the new middleware. Labels `missing` (no/invalid header) and
   `invalid` (wrong token) so operators can distinguish "service down"
   from "stale token" without log grepping.
+- **E2E test for chat-path document attachments** ([B-51](docs/BACKLOG.md)).
+  New suite at `tests/integration/e2e/test_document_attachment.py`
+  covers both block shapes (OpenAI `file` via `/v1/chat/completions`
+  and Anthropic `document` via `/v1/messages`) plus the three policy
+  error paths (413 oversize, 415 disallowed MIME, 403 viewer denied).
+  The "PII pseudonymised before LLM" promise is asserted via
+  Prometheus counters
+  (`pbproxy_documents_extracted_total{status="ok"}` and
+  `pbproxy_pii_entities_pseudonymized_total{entity_type="PERSON"}`),
+  which keeps the test robust to LLM-provider availability while still
+  proving the pipeline ran in order. Pre-generated fixtures live in
+  `testdata/documents/` with a regeneration script for when the corpus
+  needs to change.
 - **Grafana dashboard panels for document extraction**
   ([B-53](docs/BACKLOG.md)). Four new panels appended to the
   *Powerbrain Overview* dashboard under a *Document Extraction* row:
