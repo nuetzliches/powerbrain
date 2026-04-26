@@ -20,8 +20,19 @@ jobs:
     steps:
       - name: Checkout repository
         run: |
-          git clone --depth 2 --branch master \
-            "https://oauth2:${GITHUB_TOKEN}@git.nuetzliche.it/nuts/powerbrain.git" workspace
+          BEFORE="${{ github.event.before }}"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            DEPTH=2
+          else
+            DEPTH=0
+          fi
+          if [ "$DEPTH" -eq 0 ]; then
+            git clone --branch master \
+              "https://oauth2:${GITHUB_TOKEN}@git.nuetzliche.it/nuts/powerbrain.git" workspace
+          else
+            git clone --depth "$DEPTH" --branch master \
+              "https://oauth2:${GITHUB_TOKEN}@git.nuetzliche.it/nuts/powerbrain.git" workspace
+          fi
           cd workspace
 
       - name: Login to Forgejo Registry
@@ -40,6 +51,7 @@ jobs:
           ORG: nuts
           REPO: powerbrain
           FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
+          BEFORE_SHA: ${{ github.event.before }}
 
       - name: Deploy — pull and restart services
         run: |

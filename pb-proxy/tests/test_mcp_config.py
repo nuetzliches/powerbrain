@@ -155,13 +155,13 @@ servers:
   - name: powerbrain
     url: http://mcp:8080/mcp
     pii_status: scanned
-  - name: timecockpit
-    url: http://tc:3000/mcp
-    prefix: tc
+  - name: crm
+    url: http://crm:3000/mcp
+    prefix: crm
     pii_status: mixed
     pii_scanned_tools:
-      - tc_find_similar_entries
-      - tc_analyze_patterns
+      - crm_find_similar_records
+      - crm_analyze_patterns
 """
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(yaml_content)
@@ -174,7 +174,7 @@ servers:
     assert servers[0].pii_scanned_tools is None
 
     assert servers[1].pii_status == "mixed"
-    assert servers[1].pii_scanned_tools == ["tc_find_similar_entries", "tc_analyze_patterns"]
+    assert servers[1].pii_scanned_tools == ["crm_find_similar_records", "crm_analyze_patterns"]
 
 
 def test_pii_status_defaults_to_unscanned():
@@ -232,17 +232,17 @@ def test_tool_entry_needs_pii_scan():
 
     # mixed server, tool in scanned list → no scan
     mixed_config = McpServerConfig(
-        name="tc", url="http://tc:3000/mcp", pii_status="mixed",
-        pii_scanned_tools=["tc_find_similar_entries", "tc_analyze_patterns"],
+        name="crm", url="http://crm:3000/mcp", pii_status="mixed",
+        pii_scanned_tools=["crm_find_similar_records", "crm_analyze_patterns"],
     )
-    entry = ToolEntry(server_name="tc", original_name="tc_find_similar_entries", schema={}, server_config=mixed_config)
+    entry = ToolEntry(server_name="crm", original_name="crm_find_similar_records", schema={}, server_config=mixed_config)
     assert entry.needs_pii_scan is False
 
     # mixed server, tool NOT in scanned list → scan needed
-    entry = ToolEntry(server_name="tc", original_name="tc_list_timesheets", schema={}, server_config=mixed_config)
+    entry = ToolEntry(server_name="crm", original_name="crm_list_contacts", schema={}, server_config=mixed_config)
     assert entry.needs_pii_scan is True
 
     # mixed server, empty scanned list → all need scan
-    mixed_empty = McpServerConfig(name="tc2", url="http://tc:3000/mcp", pii_status="mixed")
-    entry = ToolEntry(server_name="tc2", original_name="any_tool", schema={}, server_config=mixed_empty)
+    mixed_empty = McpServerConfig(name="crm2", url="http://crm:3000/mcp", pii_status="mixed")
+    entry = ToolEntry(server_name="crm2", original_name="any_tool", schema={}, server_config=mixed_empty)
     assert entry.needs_pii_scan is True

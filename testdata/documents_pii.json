@@ -1,0 +1,68 @@
+[
+  {
+    "id": "novatech-customer-001-mueller",
+    "collection": "pb_general",
+    "classification": "confidential",
+    "title": "Kundenprofil — Anna Müller",
+    "source": "crm-sales",
+    "project": "novatech-sales",
+    "type": "customer-record",
+    "data_category": "customer_data",
+    "content": "Kundenprofil NovaTech CRM. Name: Anna Müller. E-Mail: anna.mueller@example-kunde.de. Telefon: +49 30 1234567. Anschrift: Friedrichstraße 145, 10117 Berlin. Bankverbindung: DE89 3704 0044 0532 0130 00 (Commerzbank). Geburtsdatum: 12.04.1985. Vertragsnummer: NT-2024-8812. Jahresumsatz: 45.000 EUR. Letzter Kontakt: 2026-03-18 durch Vertriebsmitarbeiter Tim Heller. Zahlungsstatus: regelmäßig, keine Mahnungen. Notiz: Interesse an Premium-Support-Paket, Angebot folgt im April."
+  },
+  {
+    "id": "novatech-customer-002-schmidt",
+    "collection": "pb_general",
+    "classification": "confidential",
+    "title": "Kundenprofil — Lukas Schmidt",
+    "source": "crm-sales",
+    "project": "novatech-sales",
+    "type": "customer-record",
+    "data_category": "customer_data",
+    "content": "Kundenprofil NovaTech CRM. Name: Lukas Schmidt. E-Mail: lukas.schmidt@muster-firma.de. Telefon: +49 89 9988776. Anschrift: Leopoldstraße 27, 80802 München. Bankverbindung: DE44 5001 0517 5407 3249 31 (ING-DiBa). Geburtsdatum: 03.09.1978. Vertragsnummer: NT-2023-4411. Jahresumsatz: 180.000 EUR. Steuer-ID: 12 345 67890. Letzter Kontakt: 2026-04-02 durch Account Manager Sarah Bach. Zahlungsstatus: Skonto-Kunde. Notiz: Referenzkunde für Logistik-Modul, Case-Study geplant."
+  },
+  {
+    "id": "novatech-customer-003-weber",
+    "collection": "pb_general",
+    "classification": "confidential",
+    "title": "Kundenprofil — Julia Weber",
+    "source": "crm-sales",
+    "project": "novatech-sales",
+    "type": "customer-record",
+    "data_category": "customer_data",
+    "content": "Kundenprofil NovaTech CRM. Name: Julia Weber. E-Mail: j.weber@beispiel-ag.de. Telefon: +49 221 5544321. Anschrift: Hohenzollernring 52, 50672 Köln. Bankverbindung: DE12 3705 0198 0006 8123 45 (Sparkasse KölnBonn). Geburtsdatum: 27.11.1990. Vertragsnummer: NT-2025-0117. Jahresumsatz: 92.500 EUR. Letzter Kontakt: 2026-03-29 durch Key-Account Martin Keller. Zahlungsstatus: regelmäßig. Notiz: Eskalation wegen Integration-Issue gelöst, zufriedener Kunde."
+  },
+  {
+    "id": "novatech-customer-004-becker",
+    "collection": "pb_general",
+    "classification": "confidential",
+    "title": "Kundenprofil — Thomas Becker",
+    "source": "crm-sales",
+    "project": "novatech-sales",
+    "type": "customer-record",
+    "data_category": "customer_data",
+    "content": "Kundenprofil NovaTech CRM. Name: Thomas Becker. E-Mail: thomas.becker@testkonto.de. Telefon: +49 40 3344556. Anschrift: Jungfernstieg 12, 20354 Hamburg. Bankverbindung: DE68 2005 0550 1234 5678 90 (Hamburger Sparkasse). Geburtsdatum: 15.06.1982. Vertragsnummer: NT-2022-7731. Jahresumsatz: 310.000 EUR. Letzter Kontakt: 2026-04-09 durch Geschäftsführer-Termin. Zahlungsstatus: Großkunde, 60 Tage Zahlungsziel. Notiz: Strategischer Partner, gemeinsame Produktentwicklung in Planung."
+  },
+  {
+    "id": "novatech-customer-005-fischer",
+    "collection": "pb_general",
+    "classification": "confidential",
+    "title": "Kundenprofil — Claudia Fischer",
+    "source": "crm-sales",
+    "project": "novatech-sales",
+    "type": "customer-record",
+    "data_category": "customer_data",
+    "content": "Kundenprofil NovaTech CRM. Name: Claudia Fischer. E-Mail: claudia.fischer@demo-firma.de. Telefon: +49 711 6677889. Anschrift: Königstraße 88, 70173 Stuttgart. Bankverbindung: DE22 6005 0101 0012 3456 78 (LBBW). Geburtsdatum: 08.02.1975. Vertragsnummer: NT-2024-2298. Jahresumsatz: 64.200 EUR. Letzter Kontakt: 2026-03-21 durch Support-Team. Zahlungsstatus: regelmäßig. Notiz: Power-User des Analytics-Moduls, Feedback zu Dashboard-Redesign eingeholt."
+  },
+  {
+    "id": "novatech-customer-006-koch",
+    "collection": "pb_general",
+    "classification": "confidential",
+    "title": "Kundenprofil — Daniel Koch",
+    "source": "crm-sales",
+    "project": "novatech-sales",
+    "type": "customer-record",
+    "data_category": "customer_data",
+    "content": "Kundenprofil NovaTech CRM. Name: Daniel Koch. E-Mail: daniel.koch@probekunde.de. Telefon: +49 69 2233445. Anschrift: Zeil 106, 60313 Frankfurt am Main. Bankverbindung: DE33 5005 0201 0200 4567 12 (Frankfurter Sparkasse). Geburtsdatum: 21.10.1988. Vertragsnummer: NT-2025-3390. Jahresumsatz: 128.900 EUR. Letzter Kontakt: 2026-04-11 durch Channel-Partner-Meeting. Zahlungsstatus: regelmäßig. Notiz: Plant Lizenzerweiterung Q3 2026, warmes Upsell-Potential."
+  }
+]

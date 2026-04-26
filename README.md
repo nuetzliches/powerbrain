@@ -79,16 +79,41 @@ Powerbrain is **not itself a high-risk AI system**, but Deployers who operate on
 
 The `pb-worker` maintenance container runs four APScheduler jobs: accuracy metrics refresh (5 min), pending-review timeouts (hourly), GDPR retention cleanup (daily 02:00), audit retention cleanup (daily 03:00).
 
+## 🧩 Editions
+
+Powerbrain ships as two tiers, both Apache-2.0, both self-hosted.
+**Community** is the MCP context engine (search, vault, OPA, audit).
+**Enterprise** adds `pb-proxy` — an OpenAI-compatible chat gateway that
+orchestrates tool-call loops, pseudonymises the wire, and resolves
+vault pseudonyms for chat responses per OPA policy. Full capability
+matrix and migration notes in [docs/editions.md](docs/editions.md).
+
+Edition detection is on every service's `/health` and `/transparency`
+endpoint: `"edition": "community"` on `mcp-server:8080`, `"edition":
+"enterprise"` on `pb-proxy:8090`.
+
+## 🎬 Run a Sales Demo in 5 Minutes
+
+Need to show a decision-maker what Powerbrain does? Spin up the full demo stack (role-aware search, live PII vault, knowledge-graph explorer) with a single command:
+
+```bash
+./scripts/quickstart.sh --demo
+```
+
+The script seeds 21 base documents, 6 customer records with German PII, and an 8-person org-chart graph. When healthchecks finish, open **http://localhost:8095** — a five-tab Streamlit app with inline presenter notes: role-contrast search, live PII vault, knowledge graph, a **MCP vs Proxy** side-by-side that shows the community/enterprise contrast, and a **Pipeline Inspector** that dry-runs any document through the ingestion pipeline. The full 15-minute narrative lives in [docs/playbook-sales-demo.md](docs/playbook-sales-demo.md).
+
 ## 🚀 Quick Start
 
 ```bash
 git clone https://github.com/nuetzliches/powerbrain.git && cd powerbrain
 
 # Automated setup (recommended):
-./scripts/quickstart.sh
+./scripts/quickstart.sh            # base stack, no seed
+./scripts/quickstart.sh --seed     # + 21 sample documents
+./scripts/quickstart.sh --demo     # + PII vault fixtures + graph + demo UI on :8095
 
 # Or manually:
-cp .env.example .env        # Edit: set PG_PASSWORD
+cp .env.example .env        # PG_PASSWORD comes from secrets/pg_password.txt (auto-generated)
 docker compose --profile local-llm --profile local-reranker up -d
 docker exec pb-ollama ollama pull nomic-embed-text
 for col in pb_general pb_code pb_rules; do
@@ -170,6 +195,8 @@ curl http://localhost:8090/v1/chat/completions \
 | [What is Powerbrain?](docs/what-is-powerbrain.md) | Detailed overview and positioning |
 | [Architecture](docs/architecture.md) | Technical deep-dive |
 | [Deployment Guide](docs/deployment.md) | Dev, production, TLS, Docker Secrets |
+| [GitHub Adapter](docs/github-adapter.md) | Sync GitHub repositories into the knowledge base |
+| [Office 365 Adapter](docs/office365-adapter.md) | Sync SharePoint, OneDrive, Outlook, Teams, OneNote |
 | [Technology Decisions](docs/technology-decisions.md) | ADRs and trade-offs |
 | [Risk Register](docs/risk-management.md) | EU AI Act Art. 9 risk register (R-01..R-08) |
 | [EU AI Act Plan](docs/plans/2026-04-08-eu-ai-act-compliance.md) | Implementation plan for B-40..B-46 |

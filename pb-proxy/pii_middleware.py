@@ -53,6 +53,7 @@ async def pseudonymize_messages(
             resp = await http_client.post(
                 f"{config.INGESTION_URL}/pseudonymize",
                 json={"text": content, "salt": session_salt},
+                headers=config.ingestion_headers(),
                 timeout=5.0,
             )
             resp.raise_for_status()
@@ -90,6 +91,7 @@ async def pseudonymize_tool_result(
         resp = await http_client.post(
             f"{config.INGESTION_URL}/pseudonymize",
             json={"text": text, "salt": session_salt},
+            headers=config.ingestion_headers(),
             timeout=5.0,
         )
         resp.raise_for_status()
@@ -185,6 +187,62 @@ def filter_non_text_content(
             ]
 
     return result, had_non_text
+
+
+async def vault_resolve_tool_result(
+    text: str,
+    *,
+    purpose: str,
+    mcp_url: str,
+    mcp_token: str,
+    http_client: httpx.AsyncClient,
+) -> tuple[str, dict[str, int]]:
+    """Call mcp-server's ``POST /vault/resolve`` to turn pseudonyms into originals.
+
+    This is the enterprise feature toggle: a tool result like
+    ``"Kundenprofil von [PERSON:a04de656]"`` comes back from MCP carrying
+    pseudonyms that the proxy's in-memory ``pii_reverse_map`` never saw
+    (the original was stored only in the vault, not in the chat request).
+    Rather than surface ``[PERSON:…]`` to the downstream LLM — which
+    wastes tokens and produces ugly answers — we ask mcp-server to do
+    the vault lookup under a purpose-bound OPA decision.
+
+    Fails open: on any error the original ``text`` comes back so the
+    agent loop keeps running; stats describe how many pseudonyms were
+    resolved for telemetry/demo.
+
+    Returns ``(resolved_text, stats_dict)`` where stats has keys
+    ``total`` / ``resolved`` / ``skipped``.
+    """
+    empty_stats = {"total": 0, "resolved": 0, "skipped": 0}
+    if not text or "[" not in text:
+        return text, empty_stats
+
+    # Quick local match: skip the HTTP call entirely when no pseudonym
+    # pattern is present. Keeps the hot path (most tool results have no
+    # pseudonyms) free of extra network hops.
+    if not re.search(PII_PSEUDONYM_PATTERN, text):
+        return text, empty_stats
+
+    try:
+        resp = await http_client.post(
+            f"{mcp_url.rstrip('/')}/vault/resolve",
+            json={"text": text, "purpose": purpose},
+            headers={"Authorization": f"Bearer {mcp_token}"},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        log.warning("vault_resolve_tool_result failed: %s", exc)
+        return text, empty_stats
+
+    stats = {
+        "total":    int(data.get("total", 0)),
+        "resolved": int(data.get("resolved", 0)),
+        "skipped":  int(data.get("skipped", 0)),
+    }
+    return data.get("text", text), stats
 
 
 def build_system_hint(entity_types: list[str]) -> str:

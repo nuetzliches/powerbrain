@@ -83,6 +83,17 @@ Any OpenAI-compatible endpoint for embeddings and summarization. Configured via 
 
 Default model: `nomic-embed-text` (768d). For higher accuracy: `mxbai-embed-large` (1024d) — requires adjustment of the Qdrant collection dimension.
 
+**Decoupled summarization pool.** The MCP server consumes an LLM only
+for in-pipeline summarisation; the pb-proxy agent loop runs on its own
+config. To keep the two paths off the same Ollama slot, mcp-server
+accepts `SUMMARIZATION_PROVIDER_URL` / `SUMMARIZATION_MODEL` /
+`SUMMARIZATION_API_KEY` (defaults: `LLM_*` for back-compat).
+An optional sidecar service ships under `--profile summary-llm`
+(`ollama-summary` container, port 11435 on the host) so a smaller
+distilled model — e.g. `qwen2.5:1.5b` — can serve summaries while the
+main `pb-ollama` keeps handling the agent loop. `GET /transparency`
+reports the split via `models.llm.pool_split`.
+
 ### 2.7 Git Server (external, optional)
 
 Any Git server for policy and schema repositories. Configured via `FORGEJO_URL` / `OPAL_POLICY_REPO_URL`. Supports Forgejo, GitHub, GitLab, Gitea, Bitbucket, etc. Repositories:
@@ -115,6 +126,39 @@ repos.yaml → GitAdapter → GitHubProvider (REST API)
 **Auth:** PAT (Docker Secret) or GitHub App (JWT → installation token). **Config:** `ingestion/repos.yaml` with per-repo settings (branch, collection, classification, include/exclude patterns).
 
 The adapter framework is extensible — future providers (GitLab, Bitbucket) implement the same `SourceAdapter` interface.
+
+### 2.9 Document Extraction (shared across adapters + chat path)
+
+Binary documents (PDF, DOCX, XLSX, PPTX, MSG, EML, RTF) are converted to text
+by a shared `ContentExtractor` in `ingestion/content_extraction/`, primarily
+via Microsoft [markitdown](https://github.com/microsoft/markitdown) with
+per-format fallbacks (`python-docx`, `openpyxl`, `python-pptx`).
+
+Three consumers share the extractor:
+
+1. **Office 365 adapter** — original user, unchanged behavior (the module it
+   used to host was moved up; `office365/content.py` is now a back-compat shim).
+2. **GitHub adapter** — opt-in per repo via `allow_documents: true` in
+   `repos.yaml`. Fetches documents as bytes (`get_file_bytes`) and extracts
+   them before ingestion (`source_type="github-document"`).
+3. **pb-proxy chat path** — when a user attaches a file/document block to a
+   chat message (`/v1/chat/completions` or `/v1/messages`), the proxy calls
+   `POST /extract` on the ingestion service and replaces the block with the
+   extracted text so the PII pseudonymizer and the LLM see plain text.
+
+**Policy gates** (OPA `pb.proxy.documents`):
+
+| Key | Default | Purpose |
+|---|---|---|
+| `allowed_roles` | `analyst`, `developer`, `admin` | Roles allowed to attach docs |
+| `max_bytes` | 25 MB | Per-file size cap |
+| `allowed_mime_types` | 15 canonical types | Explicit MIME allowlist |
+| `max_files_per_request` | 3 (default) / 10 (elevated) | Prevents abuse via many attachments |
+
+**OCR fallback** (opt-in) for scanned PDFs: build the ingestion image with
+`--build-arg WITH_OCR=true` (adds Tesseract + poppler, ~120 MB) and set
+`OCR_FALLBACK_ENABLED=true` at runtime. The fallback kicks in when a PDF's
+extracted text is below `OCR_FALLBACK_MIN_CHARS` (default 50).
 
 ## 3. Search Pipeline
 

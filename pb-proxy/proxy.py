@@ -41,6 +41,12 @@ _shared_parent = os.path.join(os.path.dirname(__file__), "..")
 if _shared_parent not in sys.path:
     sys.path.insert(0, _shared_parent)
 
+from shared.opa_client import (
+    OpaPolicyMissingError,
+    opa_query,
+    verify_required_policies,
+)
+
 try:
     from shared.telemetry import (
         init_telemetry, setup_auto_instrumentation, trace_operation,
@@ -109,6 +115,10 @@ from pii_middleware import (
     generate_session_salt,
     build_system_hint,
 )
+from document_extraction import (
+    extract_documents_in_messages,
+    DocumentExtractionError,
+)
 from auth import ProxyKeyVerifier
 from middleware import ProxyAuthMiddleware
 
@@ -151,6 +161,16 @@ PII_SCAN_FAILURES = Counter(
     "PII scan failures (ingestion service unreachable)",
     ["fail_mode"],
 )
+DOC_EXTRACT_REQUESTS = Counter(
+    "pbproxy_documents_extracted_total",
+    "Chat-path document extractions",
+    ["status", "mime_type"],
+)
+DOC_EXTRACT_BYTES = Histogram(
+    "pbproxy_documents_extracted_bytes",
+    "Chat-path extracted document size in bytes",
+    buckets=[1024, 10_000, 100_000, 500_000, 1_000_000, 5_000_000, 10_000_000, 25_000_000],
+)
 
 # ── Globals ──────────────────────────────────────────────────
 
@@ -170,26 +190,30 @@ provider_key_config: dict[str, str] = {}
 async def check_opa_policy(
     agent_role: str, provider: str, configured_servers: list[str],
 ) -> dict:
-    """Check proxy policies via OPA."""
+    """Check proxy policies via OPA.
+
+    Fail-closed on missing policy: the proxy gates which LLM providers
+    and MCP servers each role may call. A silent permissive default
+    would be a policy-bypass.
+    """
     if http_client is None:
         raise RuntimeError("http_client not initialized (lifespan not started)")
-    opa_input = {
-        "input": {
-            "agent_role": agent_role,
-            "provider": provider,
-            "configured_servers": configured_servers,
-        }
+    input_data = {
+        "agent_role": agent_role,
+        "provider": provider,
+        "configured_servers": configured_servers,
     }
     try:
-        resp = await http_client.post(
-            f"{config.OPA_URL}/v1/data/pb/proxy",
-            json=opa_input,
+        result = await opa_query(http_client, config.OPA_URL, "pb/proxy", input_data)
+        return result if isinstance(result, dict) else {}
+    except OpaPolicyMissingError as exc:
+        log.error(
+            "OPA proxy policy not loaded (%s) — denying provider access",
+            exc.package_path,
         )
-        resp.raise_for_status()
-        return resp.json().get("result", {})
+        return {"provider_allowed": False, "max_iterations": 0}
     except Exception as e:
         log.error("OPA policy check failed: %s", e)
-        # Fail closed: deny if OPA is unreachable
         return {"provider_allowed": False, "max_iterations": 0}
 
 
@@ -292,6 +316,12 @@ async def lifespan(app: FastAPI):
             raise
         log.warning("MCP server unreachable, starting in degraded mode: %s", e)
 
+    # Refuse to start if the proxy's OPA policy package is missing — a
+    # permissive silent default would bypass provider/MCP-server gating
+    # (issue #59 part 2).
+    if os.getenv("SKIP_OPA_STARTUP_CHECK", "false").lower() != "true":
+        await verify_required_policies(http_client, config.OPA_URL, ["pb/proxy"])
+
     log.info("pb-proxy started on %s:%d", config.PROXY_HOST, config.PROXY_PORT)
     yield
 
@@ -322,6 +352,13 @@ async def health():
     tools_loaded = len(tool_injector.tool_names)
     status = "healthy" if tools_loaded > 0 else "degraded"
     return {
+        "service": "pb-proxy",
+        # pb-proxy turns the policy-compliant MCP layer into a full
+        # chat-native experience: tool injection, multi-provider routing,
+        # PII pseudonymisation on the chat path, and optional vault
+        # resolution of tool results. Anything running pb-proxy is the
+        # enterprise deployment tier.
+        "edition": "enterprise",
         "status": status,
         "tools_loaded": tools_loaded,
         "fail_mode": config.FAIL_MODE,
@@ -510,6 +547,63 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
 
         allowed_servers = policy.get("mcp_servers_allowed", tool_injector.server_names)
 
+        # ── Document Attachments (before PII scan) ────────────────
+        # Converts file/document blocks in messages[].content to plain text so
+        # the PII scanner and the LLM both see the extracted content.
+        t0_docs = time.perf_counter()
+        doc_status = "skipped"
+        doc_meta: dict[str, Any] = {}
+        try:
+            rewritten_messages, doc_result = await extract_documents_in_messages(
+                request.messages, pii_http_client, policy,
+            )
+            if doc_result.files > 0:
+                doc_status = "ok"
+                request.messages = rewritten_messages
+                avg_size = doc_result.bytes_in_total // max(doc_result.files, 1)
+                for mime in doc_result.mime_types:
+                    DOC_EXTRACT_REQUESTS.labels(status="ok", mime_type=mime).inc()
+                    DOC_EXTRACT_BYTES.observe(avg_size)
+                log.info(
+                    "Document extraction: files=%d bytes_in=%d chars_out=%d extractors=%s",
+                    doc_result.files, doc_result.bytes_in_total,
+                    doc_result.chars_out_total, doc_result.extractors,
+                )
+            doc_meta = {
+                "files": doc_result.files,
+                "bytes_in": doc_result.bytes_in_total,
+                "chars_out": doc_result.chars_out_total,
+                "extractors": doc_result.extractors,
+                "mime_types": doc_result.mime_types,
+            }
+        except DocumentExtractionError as exc:
+            doc_status = "error"
+            doc_meta = {
+                "status_code": exc.status_code,
+                "detail": exc.detail,
+                "mime_type": exc.mime_type,
+            }
+            DOC_EXTRACT_REQUESTS.labels(
+                status="error", mime_type=exc.mime_type,
+            ).inc()
+            rt_err = get_current_telemetry()
+            if rt_err is not None:
+                rt_err.add_step(PipelineStep(
+                    name="document_extract", service="pb-proxy",
+                    duration_ms=round((time.perf_counter() - t0_docs) * 1000, 2),
+                    status="error", metadata=doc_meta,
+                ))
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+        finally:
+            if doc_status != "error":
+                rt = get_current_telemetry()
+                if rt is not None:
+                    rt.add_step(PipelineStep(
+                        name="document_extract", service="pb-proxy",
+                        duration_ms=round((time.perf_counter() - t0_docs) * 1000, 2),
+                        status=doc_status, metadata=doc_meta,
+                    ))
+
         # ── PII Protection ───────────────────────────────────────
         pii_reverse_map: dict[str, str] = {}
         pii_enabled = policy.get("pii_scan_enabled", config.PII_SCAN_ENABLED)
@@ -640,6 +734,32 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
         )
         litellm_kwargs.update(routing_kwargs)
 
+        # ── Enterprise: vault-resolve tool-result pseudonyms ─────
+        # OPA gate: pb.proxy.pii_resolve_tool_results controls whether
+        # the proxy calls mcp-server /vault/resolve. Client supplies
+        # the purpose via `X-Purpose` header; falls back to the
+        # configured default purpose when absent.
+        resolve_cfg = policy.get("pii_resolve_tool_results") or {}
+        resolve_enabled_cfg = resolve_cfg.get("enabled", False)
+        requested_purpose = (raw_request.headers.get("x-purpose") or "").strip()
+        effective_purpose = (
+            requested_purpose
+            or resolve_cfg.get("default_purpose") or ""
+        )
+        allowed_roles = resolve_cfg.get("allowed_roles") or []
+        allowed_purposes = resolve_cfg.get("allowed_purposes") or []
+        vault_resolve_enabled = bool(
+            resolve_enabled_cfg
+            and agent_role in allowed_roles
+            and effective_purpose
+            and (
+                # If the client explicitly supplied a purpose, it must be
+                # on the allow list. Falling back to default_purpose is
+                # always OK because it was vetted at config time.
+                not requested_purpose or effective_purpose in allowed_purposes
+            )
+        )
+
         # Run agent loop
         with trace_operation(_proxy_tracer, "agent_loop", "pb-proxy", model=request.model):
             loop = AgentLoop(
@@ -654,6 +774,11 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
                     k: v for k, v in raw_request.headers.items()
                     if k in tool_injector.forwardable_headers
                 },
+                vault_resolve_enabled=vault_resolve_enabled,
+                vault_resolve_purpose=effective_purpose,
+                vault_resolve_mcp_url=config.MCP_SERVER_URL.rsplit("/mcp", 1)[0]
+                    if vault_resolve_enabled else None,
+                vault_resolve_mcp_token=user_api_key if vault_resolve_enabled else None,
             )
             try:
                 result: AgentLoopResult = await asyncio.wait_for(
@@ -698,11 +823,27 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
                 rt.finish()
                 response_data["_telemetry"] = rt.to_dict()
 
+        # Surface proxy-edition specifics so clients (e.g. the sales-demo
+        # UI's "MCP vs Proxy" panel) can show the effect without parsing
+        # Prometheus. Only populated when vault resolution actually ran.
+        if vault_resolve_enabled and result.vault_resolutions["total"] > 0:
+            response_data.setdefault("_proxy", {})["vault_resolutions"] = {
+                **result.vault_resolutions,
+                "purpose": effective_purpose,
+            }
+
         # Add proxy metadata headers
         headers = {
             "X-Proxy-Iterations": str(result.iterations),
             "X-Proxy-Tool-Calls": str(result.tool_calls_executed),
         }
+        if vault_resolve_enabled and result.vault_resolutions["total"] > 0:
+            headers["X-Proxy-Vault-Resolved"] = str(
+                result.vault_resolutions["resolved"]
+            )
+            headers["X-Proxy-Vault-Total"] = str(
+                result.vault_resolutions["total"]
+            )
         if result.max_iterations_reached:
             headers["X-Proxy-Max-Iterations-Reached"] = "true"
 
@@ -867,6 +1008,8 @@ async def messages(request: MessagesRequest, raw_request: Request):
         allowed_servers = policy.get("mcp_servers_allowed", tool_injector.server_names)
 
         # ── Convert Anthropic messages to OpenAI format ─────────────
+        # `document` blocks (PDF/DOCX/...) are normalized to OpenAI `file` blocks
+        # by anthropic_format.py so the extractor below can handle them.
         openai_messages = anthropic_messages_to_openai(request.messages)
 
         # Prepend system message if provided
@@ -874,6 +1017,51 @@ async def messages(request: MessagesRequest, raw_request: Request):
             system_text = request.system if isinstance(request.system, str) else \
                 "\n".join(b.get("text", "") for b in request.system if isinstance(b, dict))
             openai_messages.insert(0, {"role": "system", "content": system_text})
+
+        # ── Document Attachments (before PII scan) ────────────────
+        t0_docs_msg = time.perf_counter()
+        try:
+            rewritten_msg, doc_result_msg = await extract_documents_in_messages(
+                openai_messages, pii_http_client, policy,
+            )
+        except DocumentExtractionError as exc:
+            DOC_EXTRACT_REQUESTS.labels(
+                status="error", mime_type=exc.mime_type,
+            ).inc()
+            rt_err = get_current_telemetry()
+            if rt_err is not None:
+                rt_err.add_step(PipelineStep(
+                    name="document_extract", service="pb-proxy",
+                    duration_ms=round((time.perf_counter() - t0_docs_msg) * 1000, 2),
+                    status="error",
+                    metadata={
+                        "status_code": exc.status_code,
+                        "detail": exc.detail,
+                        "mime_type": exc.mime_type,
+                    },
+                ))
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+        if doc_result_msg.files > 0:
+            openai_messages = rewritten_msg
+            avg_size = doc_result_msg.bytes_in_total // max(doc_result_msg.files, 1)
+            for mime in doc_result_msg.mime_types:
+                DOC_EXTRACT_REQUESTS.labels(status="ok", mime_type=mime).inc()
+                DOC_EXTRACT_BYTES.observe(avg_size)
+        rt_msg = get_current_telemetry()
+        if rt_msg is not None:
+            rt_msg.add_step(PipelineStep(
+                name="document_extract", service="pb-proxy",
+                duration_ms=round((time.perf_counter() - t0_docs_msg) * 1000, 2),
+                status="ok" if doc_result_msg.files else "skipped",
+                metadata={
+                    "files": doc_result_msg.files,
+                    "bytes_in": doc_result_msg.bytes_in_total,
+                    "chars_out": doc_result_msg.chars_out_total,
+                    "extractors": doc_result_msg.extractors,
+                    "mime_types": doc_result_msg.mime_types,
+                },
+            ))
 
         # ── PII Protection ──────────────────────────────────────────
         pii_reverse_map: dict[str, str] = {}

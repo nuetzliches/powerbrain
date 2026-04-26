@@ -49,7 +49,9 @@ jobs:
           chmod +x opa
 
       - name: Run OPA policy tests
-        run: ./opa test opa-policies/pb/ -v
+        # Pass the whole opa-policies/ tree so OPA loads the root data.json
+        # alongside the pb/ rule package.
+        run: ./opa test opa-policies/ -v
 
   docker-build:
     runs-on: ubuntu-latest

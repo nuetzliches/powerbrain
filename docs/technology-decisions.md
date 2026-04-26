@@ -597,6 +597,96 @@ docker compose --profile gpu up -d
 
 ---
 
+## T-6: Document extraction — markitdown vs. Docling (B-52)
+
+### Question
+
+Microsoft [markitdown](https://github.com/microsoft/markitdown) is the
+default extractor in `ingestion/content_extraction/`. IBM's
+[Docling](https://github.com/DS4SD/docling) (MIT, 2024+) advertises
+better table/layout understanding and explicit RAG-readiness. Should
+we **stay with markitdown**, **switch to Docling**, or **run Docling as
+an opt-in backend alongside**?
+
+### Decision framework
+
+The choice is data-driven, not philosophical. Three observable axes:
+
+| Axis | Markitdown | Docling | Why it matters |
+|---|---|---|---|
+| **Plain Office handbooks** (DOCX, PPTX, XLSX) | Strong, used in production today. Fallbacks (`python-docx`, `openpyxl`, `python-pptx`) cover edge cases. | Comparable on simple docs; outperforms on heavily formatted XLSX with merged cells / multi-sheet refs. | Most enterprise corpora. |
+| **Scanned / image-heavy PDFs** | OCR via optional Tesseract fallback (`OCR_FALLBACK_ENABLED`). Layout reflows poorly. | Built-in TableFormer + DocLayNet models — recovers tables and reading order. | Pharma SOPs, insurance, legal. Where the difference is largest. |
+| **Tabular HTML / rich PDFs with tables** | Good for HTML, weak for PDF tables (linearises). | Reconstructs tables into structured Markdown / HTML rows. | Financial reports, research papers. |
+
+Cost axes that pull the other way:
+
+| Axis | Markitdown | Docling | Notes |
+|---|---|---|---|
+| **Latency (CPU)** | ~10–200 ms / doc (fast path) | ~1–10 s / doc (model inference) | Docling is order-of-magnitude slower without GPU. |
+| **Container size** | ~50 MB | ~700 MB (PyTorch + DocLayNet + TableFormer) | Affects pull time, not ongoing footprint. |
+| **GPU benefit** | None (CPU work) | 5–10× speedup with CUDA | Lifts Docling into "fast enough" only on GPU hosts. |
+| **Maintenance surface** | One Python lib, MIT, Microsoft. | Multiple ML model artifacts, MIT, IBM. | Both well-maintained; Docling has more moving parts. |
+
+### Decision: **stay with markitdown by default; ship Docling as an opt-in second backend later**
+
+The current production corpus (German Office handbooks, Confluence
+exports, GitHub Markdown) is markitdown's sweet spot. Docling's
+advantage materialises only when the corpus shifts toward scanned
+PDFs and tabular reports. Until that shift is *measured* we don't
+spend the +650 MB image / +1 s latency every existing user pays.
+
+The opt-in path matches our existing `ContentExtractor` shape: a new
+`DOCUMENT_EXTRACTOR_BACKEND` env variable can route to either backend,
+and Docling can land alongside markitdown in
+`ingestion/content_extraction/` without touching the public
+`extract()` signature. This mirrors the `RERANKER_BACKEND` and
+`LLM_PROVIDER_URL` patterns that already exist.
+
+### When to revisit (triggers)
+
+- A pilot customer hits >20% of their corpus on scanned PDFs with
+  tables, and `OCR_FALLBACK_ENABLED=true` produces unreadable output.
+- A repeat support ticket on `pb_extract_requests_total{status="error"}`
+  tied to PDFs/XLSX with merged cells.
+- A second adapter (legal, insurance, healthcare) lands where layout
+  fidelity is part of the value proposition.
+
+Any of those should rerun the benchmark in
+`scripts/benchmark_extractors.py` (see below) on the customer's actual
+documents, then drive the implementation ticket.
+
+### Benchmark harness
+
+`scripts/benchmark_extractors.py` is the harness that produces the
+data this ADR is missing today. It runs both extractors against
+`testdata/documents/` (or any directory the user passes), and prints
+per-file output size, character count, and wall-clock latency for each
+extractor. The script self-installs neither Docling nor markitdown —
+operators run it inside an environment where both are available
+(typically the ingestion image with `pip install docling` added
+ad-hoc, or a temporary venv).
+
+```bash
+# In a Python 3.12+ venv with both installed:
+pip install markitdown docling
+python3 scripts/benchmark_extractors.py testdata/documents/
+```
+
+The harness deliberately stays out of the production codepath — there
+is no Docker image, no compose service, no runtime dependency. It
+exists purely to support the next iteration of this ADR.
+
+### Out of scope
+
+- Implementation of the second backend. This ticket (B-52) is
+  research only; the implementation lands in a separate ticket once
+  benchmark data justifies it.
+- A "smart" extractor that picks markitdown vs. Docling per document.
+  Premature; the benchmark will tell us whether one strictly dominates
+  on the corpus that matters.
+
+---
+
 ## Summary of recommendations
 
 | Topic           | Dev (CPU)                                | Prod (GPU)              | Effort                         |
@@ -607,6 +697,7 @@ docker compose --profile gpu up -d
 | Git server      | Adapter layer with provider abstraction  | ← same                  | Medium                         |
 | Monitoring      | Local OTel+Grafana stack                 | External OTel Collector | Medium                         |
 | Adapter layer   | Before PII scanner, `NormalizedDocument` | ← same                  | Large                          |
+| Doc extraction  | markitdown (default)                     | markitdown + opt-in Docling on GPU | Small (when triggers fire — see T-6) |
 
 The **provider abstraction (T-5)** and the **adapter layer (T-4)** are
 the two strategically most important extensions: T-5 decouples the inference

@@ -13,7 +13,11 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from tool_injection import ToolInjector
-from pii_middleware import depseudonymize_tool_arguments, pseudonymize_tool_result
+from pii_middleware import (
+    depseudonymize_tool_arguments,
+    pseudonymize_tool_result,
+    vault_resolve_tool_result,
+)
 import config
 
 # Try to import telemetry - fallback if not available (for tests)
@@ -44,6 +48,12 @@ class AgentLoopResult:
     tool_calls_executed: int = 0            # Total tool calls executed
     max_iterations_reached: bool = False    # True if loop was cut short
     tools_used: list[str] = field(default_factory=list)
+    # Aggregate of /vault/resolve stats across all tool results in the loop.
+    # Surfaces in the proxy response's `_telemetry` block so clients (e.g.
+    # the sales-demo UI) can show "resolved 3 of 7 pseudonyms" counters.
+    vault_resolutions: dict[str, int] = field(
+        default_factory=lambda: {"total": 0, "resolved": 0, "skipped": 0}
+    )
 
 
 class AgentLoop:
@@ -61,6 +71,13 @@ class AgentLoop:
         pii_session_salt: str | None = None,
         user_token: str | None = None,
         client_headers: dict[str, str] | None = None,
+        # Enterprise-tier vault resolution of tool-result pseudonyms.
+        # All four are required together; missing mcp_url/token disables
+        # resolution even when `vault_resolve_enabled=True`.
+        vault_resolve_enabled: bool = False,
+        vault_resolve_purpose: str | None = None,
+        vault_resolve_mcp_url: str | None = None,
+        vault_resolve_mcp_token: str | None = None,
     ) -> None:
         self._injector = tool_injector
         self._acompletion = acompletion
@@ -71,6 +88,16 @@ class AgentLoop:
         self._pii_session_salt = pii_session_salt
         self._user_token = user_token
         self._client_headers = client_headers
+        self._vault_resolve_enabled = bool(
+            vault_resolve_enabled
+            and vault_resolve_purpose
+            and vault_resolve_mcp_url
+            and vault_resolve_mcp_token
+            and pii_http_client
+        )
+        self._vault_resolve_purpose = vault_resolve_purpose or ""
+        self._vault_resolve_mcp_url = vault_resolve_mcp_url or ""
+        self._vault_resolve_mcp_token = vault_resolve_mcp_token or ""
 
     async def run(
         self,
@@ -192,6 +219,29 @@ class AgentLoop:
                         )
                     except Exception as e:
                         log.warning("PII scan of tool result failed (continuing): %s", e)
+
+                # Enterprise: ask mcp-server /vault/resolve to replace
+                # pseudonyms the proxy's own session never saw (knowledge-
+                # base-side pseudonyms) with vault-resolved originals.
+                # Runs AFTER pseudonymize so resolved values stay intact
+                # (pseudonymize only extends reverse_map, never rewrites
+                # tokens that don't look like PII).
+                if self._vault_resolve_enabled:
+                    try:
+                        tool_result, vr_stats = await vault_resolve_tool_result(
+                            tool_result,
+                            purpose=self._vault_resolve_purpose,
+                            mcp_url=self._vault_resolve_mcp_url,
+                            mcp_token=self._vault_resolve_mcp_token,
+                            http_client=self._pii_http_client,
+                        )
+                        for k in ("total", "resolved", "skipped"):
+                            result.vault_resolutions[k] += vr_stats.get(k, 0)
+                    except Exception as e:
+                        log.warning(
+                            "Vault resolution of tool result failed "
+                            "(continuing with pseudonyms): %s", e
+                        )
 
                 working_messages.append({
                     "role": "tool",

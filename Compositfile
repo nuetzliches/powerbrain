@@ -1,0 +1,127 @@
+# powerbrain Compositfile
+#
+# Governance-as-code for a public, MCP-native knowledge context engine.
+# This file is the SHOULD-state; `composit scan` produces the IS-state
+# (composit-report.yaml), and `composit diff` surfaces drift.
+#
+# Unlike a private ops repo, the value here is two-sided:
+#
+#   1. Internal check — catch accidental config explosion
+#      (a compose file with 50 services, a new observability stack
+#      bolted on, etc.) before it lands on main.
+#
+#   2. External documentation — adopters of powerbrain can see the
+#      canonical topology declared as code instead of discovered
+#      from the compose file.
+#
+# Current scan (see docs/composit/README.md for reproduction):
+#   1 docker_compose, 20 docker_services, 7 Dockerfiles, 1 Caddyfile,
+#   1 caddy_site, 1 prometheus_config, 4 workflows, 2 env_files.
+
+workspace "powerbrain" {
+
+  # --- Approved Providers ---
+  # powerbrain is itself an MCP provider, but it consumes none.
+  # Keep the block empty rather than omit it — an empty list is a
+  # stronger declaration than silence. Any provider discovered in
+  # future scans will be flagged as unapproved_provider.
+
+  # (no provider blocks — powerbrain operates standalone)
+
+  # --- Budget ---
+  # OSS project, no billing concern. Budget is set high as an escape
+  # hatch for adopters who attach a cost-adapter to their deployment.
+
+  budget "workspace" {
+    max_monthly = "1000 EUR"
+    alert_at    = "80%"
+  }
+
+  # --- Resource Constraints ---
+  # Calibrated from the live scan: 1 compose file with 20 services, 7
+  # Dockerfiles, 4 workflows. Slack is ~30% — we'd rather catch a
+  # genuine change than warn every time someone adds a helper service.
+
+  resources {
+    max_total = 50
+
+    allow "docker_compose" {
+      max = 3  # main + ghcr override + optional demo overlay
+    }
+
+    allow "docker_service" {
+      max = 30
+    }
+
+    allow "dockerfile" {
+      max = 10
+    }
+
+    allow "caddyfile" {
+      max = 2
+    }
+
+    allow "caddy_site" {
+      max = 5
+    }
+
+    allow "env_file" {
+      max = 5
+    }
+
+    allow "workflow" {
+      max = 8
+    }
+
+    allow "prometheus_config" {
+      max = 3
+    }
+
+    # Observability is part of the architecture, not optional.
+    # If prometheus.yml disappears from a PR, `composit diff` errors.
+    require "prometheus_config" {
+      min = 1
+    }
+
+    # Every PR should go through the CI gate, so workflows MUST exist.
+    require "workflow" {
+      min = 1
+    }
+  }
+
+  # --- Policies ---
+  # powerbrain already ships OPA policies under opa-policies/pb/ —
+  # referencing them here documents the governance surface. Runtime
+  # evaluation through composit is future work; the rules are
+  # enforced today inside the powerbrain runtime itself (OPA at :8181).
+
+  policy "access-control" {
+    source      = "opa-policies/pb/access.rego"
+    description = "Role- and classification-based access to knowledge resources"
+  }
+
+  policy "ingestion-quality" {
+    source      = "opa-policies/pb/ingestion.rego"
+    description = "EU AI Act Art. 10: data quality and governance gate"
+  }
+
+  policy "human-oversight" {
+    source      = "opa-policies/pb/oversight.rego"
+    description = "EU AI Act Art. 14: approval queue for high-risk operations"
+  }
+
+  policy "privacy" {
+    source      = "opa-policies/pb/privacy.rego"
+    description = "PII handling and vault access controls"
+  }
+
+  policy "proxy-limits" {
+    source      = "opa-policies/pb/proxy.rego"
+    description = "Rate and budget limits on the AI provider proxy"
+  }
+
+  policy "summarization" {
+    source      = "opa-policies/pb/summarization.rego"
+    description = "Summarization quality and source-citation rules"
+  }
+}

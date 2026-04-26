@@ -189,6 +189,9 @@ class TestBuildRiskHealthPayload:
 
         payload = await _build_risk_health_payload()
         assert payload["service"] == "mcp-server"
+        # Edition advertised on both /health and /transparency so demos /
+        # observability stacks can detect whether pb-proxy is in front.
+        assert payload["edition"] == "community"
         assert payload["status"] == "info"  # circuit_breaker indicator is info
         names = {i["name"] for i in payload["indicators"]}
         assert names == {

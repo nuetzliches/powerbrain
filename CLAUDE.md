@@ -144,9 +144,20 @@ powerbrain/
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── scripts/
-│   ├── quickstart.sh          ← Automated first-time setup
+│   ├── quickstart.sh          ← Automated first-time setup (--seed / --demo flags)
 │   ├── build-images.sh        ← Docker image build script
+│   ├── seed_graph.py          ← Knowledge-graph seed (used by pb-seed in demo mode)
 │   └── seed_*.py              ← Test data seeding scripts
+├── demo/
+│   ├── app.py                 ← Streamlit entry (pb-demo container)
+│   ├── mcp_client.py          ← MCP HTTP wrapper + vault-token builder
+│   ├── panels/
+│   │   ├── search_roles.py    ← Tab A — OPA role contrast
+│   │   ├── pii_vault.py       ← Tab B — scan/ingest/reveal vault flow
+│   │   └── knowledge_graph.py ← Tab C — NovaTech org-chart (streamlit-agraph)
+│   ├── assets/talk_track.md   ← Presenter cheat-sheet (rendered in sidebar)
+│   ├── Dockerfile
+│   └── requirements.txt
 ├── tests/
 │   ├── integration/           ← E2E smoke tests (gated behind RUN_INTEGRATION_TESTS=1)
 │   └── load/
@@ -155,6 +166,7 @@ powerbrain/
 ├── SECURITY.md                ← Vulnerability reporting policy
 └── docs/
     ├── getting-started.md          ← Step-by-step tutorial for newcomers
+    ├── playbook-sales-demo.md      ← 15-min decision-maker demo script (Tabs A/B/C)
     ├── mcp-tools.md                ← All 23 MCP tools with parameters and access roles
     ├── what-is-powerbrain.md       ← Detailed overview and positioning
     ├── deployment.md               ← Dev, prod, TLS, Docker Secrets guide
@@ -416,7 +428,7 @@ curl http://localhost:11434/api/tags       # Ollama
 ### OPA Policy Tests
 ```bash
 # Run all OPA tests (85 tests: access, privacy, rules, summarization, proxy)
-docker exec pb-opa /opa test /policies/pb/ -v
+docker exec pb-opa /opa test /policies/ -v
 
 # Evaluate a specific policy
 docker exec pb-opa /opa eval \
@@ -448,7 +460,7 @@ The `docker_stack` fixture calls `docker compose down -v` before and after the t
 ### CI / PR Validation
 PR workflow (`.github/workflows/pr-validate.yml`) runs on every PR to `master`:
 - **unit-tests** — All service tests in `python:3.12-slim` container (`-m "not integration"`), coverage threshold 80% (`--cov-fail-under=80`)
-- **opa-tests** — OPA policy tests (`opa test opa-policies/pb/`)
+- **opa-tests** — OPA policy tests (`opa test opa-policies/`)
 - **docker-build** — Build all 5 images (no push)
 - **security-scan** — `pip-audit` (dependency vulnerabilities) + `bandit` (static analysis), non-blocking
 
@@ -525,6 +537,16 @@ All 4 services (mcp-server, proxy, reranker, ingestion) share a common telemetry
 29. ✅ **GitHub Adapter** — First source adapter. Syncs GitHub repos into KB with incremental updates (commit SHA tracking). Configurable include/exclude patterns, PAT + GitHub App auth. Polling via pb-worker + `POST /sync/{repo}` endpoint for manual/webhook triggers. All content flows through full pipeline (PII, OPA, quality gate, embedding). Removed files cascade-delete across Qdrant, PG, vault, graph. Config: `ingestion/repos.yaml`.
 
 30. ✅ **Office 365 Adapter** — Second source adapter. Syncs SharePoint, OneDrive, Outlook Mail, Teams Messages, and OneNote into KB via Microsoft Graph API. Delta Queries for incremental sync (except OneNote: timestamp-based). OAuth2 Client Credentials (app-only) + Delegated Auth (OneNote, post-March-2025). Content extraction via Microsoft `markitdown`. Site-level classification in YAML. Teams-SharePoint deduplication (file attachments as refs only). Resource Unit budget tracking + `$batch` API. Config: `ingestion/office365.yaml`.
+
+31. ✅ **Shared Document Extraction + Chat Attachments** — `ContentExtractor` lifted into `ingestion/content_extraction/` (markitdown + python-docx/openpyxl/python-pptx/BeautifulSoup fallbacks). New `POST /extract` endpoint on the ingestion service converts base64-encoded documents (PDF/DOCX/XLSX/PPTX/MSG/EML/RTF/...) to text. The pb-proxy chat path (`/v1/chat/completions` and `/v1/messages`) extracts attached files from multimodal message content before PII scanning and LLM forwarding — both OpenAI `file`/`input_file` blocks and Anthropic `document` blocks are supported. The GitHub adapter can optionally ingest Office documents via `allow_documents: true` in `repos.yaml` (default off; ingested with `source_type="github-document"`). OPA-gated via new `pb.proxy.documents` policy section (allowed roles, max bytes, mime allowlist, max files per request). Optional Tesseract OCR fallback for scanned PDFs via `OCR_FALLBACK_ENABLED` + `WITH_OCR=true` Docker build arg (default off). Office 365 adapter switches to a thin shim that re-exports from the shared package — fully backward compatible.
+
+32. ✅ **Decision-Maker Sales-Demo Package** — Opt-in Streamlit app `pb-demo` (port 8095, profile `demo`) with three tabs showcasing the differentiators: (A) role-aware search with side-by-side analyst/viewer columns, (B) live PII vault scan/ingest/reveal with HMAC-signed tokens, (C) NovaTech org-chart via `graph_query get_neighbors` rendered through `streamlit-agraph`. Backed by two pre-seeded demo keys in `init-db/010_api_keys.sql` (`pb_demo_analyst_localonly`, `pb_demo_viewer_localonly`), 6 German-PII customer records (`testdata/documents_pii.json`), and an 8-employee graph seed (`testdata/graph_seed.json` → `scripts/seed_graph.py`). Quickstart polished: auto-generates passwords, drops the manual-edit block, runs a post-seed smoke query, advertises Demo UI/Grafana/MCP endpoints. New `--seed` / `--demo` flags. Plus migration `init-db/020_viewer_role.sql` widens the `agent_role` CHECK to accept `viewer`, and `docs/playbook-sales-demo.md` provides a 15-min presenter narrative.
+
+33. ✅ **Editions (Community vs Enterprise) + Vault Resolution for Chat** — Every service advertises `"edition": "community"` on `mcp-server` / `"edition": "enterprise"` on `pb-proxy` through `/health` + `/transparency`. New mcp-server endpoint `POST /vault/resolve` does text-level de-pseudonymisation (regex-extract `[ENTITY_TYPE:hash]` → SQL lookup in `pii_vault.pseudonym_mapping` → hash-match against `original_content.pii_entities` → `check_opa_vault_access` per document classification + data_category → `vault_fields_to_redact` per purpose → `log_vault_access`). The pb-proxy agent loop calls it after every tool result under the OPA-gated `pb.proxy.pii_resolve_tool_results` policy (enabled/allowed_roles/allowed_purposes/default_purpose), surfacing stats via `X-Proxy-Vault-Resolved` headers and a `_proxy.vault_resolutions` block in the response. Client declares purpose via `X-Purpose` header (OpenAI-compat extension). Demo Tab D "MCP vs Proxy" renders both paths side-by-side on the same query so decision-makers see the edition effect directly. Docs: `docs/editions.md` with capability matrix + deployment topology.
+
+34. ✅ **Pipeline Inspector (Demo Tab E) + `/preview` endpoint** — New dry-run endpoint `POST /preview` on the ingestion service runs the full pipeline (optional extract from base64 → Presidio scan → quality-score + OPA ingestion gate → OPA privacy decision) without persisting to PostgreSQL or Qdrant. Returns a structured `{extract, scan, quality, privacy, summary}` payload with per-phase timings. Demo Tab E renders the phases as a narrative with fixture docs representing the main adapter types (`demo/fixtures/sharepoint_rahmenvertrag.md`, `outlook_support_request.txt`, `github_readme.md`) plus optional file upload. Classification / source_type / legal_basis are editable per run so a presenter can toggle between `encrypt_and_store` (vault) and `block` (missing legal basis) live. 8 new unit tests in `ingestion/tests/test_preview_endpoint.py` cover the contract + validation + quality-gate + privacy-action paths.
+
+35. ✅ **Semantic PII Verifier** — Optional precision layer that sits between Presidio's `scan_text` output and the rest of the pipeline. Presidio is excellent at recall but flags German compound nouns (`Zahlungsstatus`, `Geschäftsführer`, `Sparkasse Köln`) as PERSON/LOCATION. The verifier catches those false positives without touching recall. New `shared/pii_verify_provider.py` abstraction (same factory pattern as `rerank_provider.py`) with two backends: `noop` (community default, pass-through) and `llm` (OpenAI-compatible chat, e.g. Ollama/qwen2.5:3b). Pattern types (IBAN, email, phone, DOB) skip the verifier — their Presidio score is already trustworthy. Ambiguous types batch into a single low-temperature chat call per document with ±60-char context windows. Fail-open on any error: unreachable LLM, malformed JSON, timeout → keep every candidate Presidio generated. OPA-policy-driven backend via `pb.config.ingestion.pii_verifier.{enabled,backend,min_confidence_keep}` so admins flip runtime behaviour through `manage_policies` without restarting ingestion. Prometheus: `pb_ingestion_pii_verifier_calls_total{entity_type,backend,result}` + `pb_ingestion_pii_verifier_duration_seconds{backend}`. Applied both in the production `ingest_text_chunks` per-chunk loop and in the `/preview` dry-run so demo Tab E can render `{input, forwarded, reviewed, kept, reverted}` stats live, with a `verifier.before` snapshot for contrast. Live verification on the NovaTech SharePoint fixture: 9 raw Presidio candidates → 6 after verifier (3 false positives removed) in ~12 s on qwen2.5:3b CPU. Docs: `docs/pii-verifier.md` (architecture + configuration) + `docs/pii-custom-model.md` (long-horizon roadmap for a fine-tuned German PII model — triggers, phases, why we're not building it today).
 
 Details on all features: see `docs/architecture.md`
 

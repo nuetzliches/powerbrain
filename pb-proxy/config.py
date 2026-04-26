@@ -29,7 +29,14 @@ LITELLM_CONFIG = os.getenv("LITELLM_CONFIG", "/app/litellm_config.yaml")
 
 # ── Agent Loop ───────────────────────────────────────────────
 MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "10"))
-TOOL_CALL_TIMEOUT = int(os.getenv("TOOL_CALL_TIMEOUT", "30"))
+# Per-tool-call deadline for MCP round-trips from the agent loop.
+# Must sit **above** the MCP server's SUMMARIZATION_TIMEOUT (default
+# 15 s) so the graceful "summary failed → raw chunks" fallback in
+# mcp-server/server.py:summarize_text() reliably lands before the proxy
+# abandons the connection. With a local Ollama LLM on CPU, 60 s gives
+# enough headroom for the summary attempt + fallback + response. Lower
+# it only when pointing at a hosted provider with sub-second latency.
+TOOL_CALL_TIMEOUT = int(os.getenv("TOOL_CALL_TIMEOUT", "60"))
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "120"))
 
 # ── Tool Injection ───────────────────────────────────────────
@@ -48,8 +55,19 @@ METRICS_PORT = int(os.getenv("METRICS_PORT", "9092"))
 
 # ── PII Protection ───────────────────────────────────────────
 INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8081")
+# B-50: shared service token to talk to the ingestion service.
+INGESTION_AUTH_TOKEN = _read_secret("INGESTION_AUTH_TOKEN", "")
 PII_SCAN_ENABLED = os.getenv("PII_SCAN_ENABLED", "true").lower() == "true"
 PII_SCAN_FORCED = os.getenv("PII_SCAN_FORCED", "true").lower() == "true"
+
+
+def ingestion_headers() -> dict[str, str]:
+    """Auth headers for internal ingestion calls; empty when unset."""
+    return (
+        {"Authorization": f"Bearer {INGESTION_AUTH_TOKEN}"}
+        if INGESTION_AUTH_TOKEN
+        else {}
+    )
 
 # ── Connection Pool ──────────────────────────────────────────
 PG_POOL_MIN = int(os.getenv("PG_POOL_MIN", "1"))

@@ -132,11 +132,18 @@ class TestBuildTransparencyPayload:
         payload = await _build_transparency_payload()
 
         assert payload["service"] == "mcp-server"
+        # mcp-server always labels itself community; pb-proxy labels
+        # enterprise. Demos detect the pair by hitting both endpoints.
+        assert payload["edition"] == "community"
         assert "report_version" in payload and len(payload["report_version"]) == 16
         assert "system_purpose" in payload
         assert isinstance(payload["deployment_constraints"], list)
         assert payload["models"]["embedding"]["name"] == server.EMBEDDING_MODEL
-        assert payload["models"]["llm"]["name"] == server.LLM_MODEL
+        # mcp-server's only LLM consumer is summarization; the field is
+        # kept under "llm" for back-compat (compliance_doc reads it).
+        assert payload["models"]["llm"]["name"] == server.SUMMARIZATION_MODEL
+        assert payload["models"]["llm"]["purpose"] == "summarization"
+        assert payload["models"]["llm"]["pool_split"] is False
         assert payload["opa"]["roles"] == ["viewer", "analyst", "developer", "admin"]
         assert payload["opa"]["audit_retention_days"] == 365
         assert len(payload["collections"]) == 3
@@ -144,6 +151,38 @@ class TestBuildTransparencyPayload:
         assert payload["audit_integrity"]["valid"] is True
         assert payload["audit_integrity"]["total_checked"] == 10
         assert payload["risk_register"] == "docs/risk-management.md"
+
+    async def test_pool_split_reported_when_summary_endpoint_differs(
+        self, _patch_globals, monkeypatch
+    ):
+        """models.llm.pool_split flips to True when SUMMARIZATION_*
+        diverges from LLM_* (e.g. sidecar Ollama for summarisation)."""
+        mock_http, mock_pool, _ = _patch_globals
+
+        async def _get(url, **kwargs):
+            if "opa" in url or "8181" in url or "/v1/data/pb/config" in url:
+                return _opa_config_response()
+            if "ingestion" in url or "8081" in url:
+                return _ingestion_health_response()
+            raise AssertionError(f"unexpected URL: {url}")
+        mock_http.get.side_effect = _get
+        mock_pool.fetchrow.return_value = _chain_row()
+
+        monkeypatch.setattr(server, "LLM_PROVIDER_URL", "http://ollama:11434")
+        monkeypatch.setattr(server, "LLM_MODEL", "qwen2.5:3b")
+        monkeypatch.setattr(
+            server, "SUMMARIZATION_PROVIDER_URL", "http://ollama-summary:11434"
+        )
+        monkeypatch.setattr(server, "SUMMARIZATION_MODEL", "qwen2.5:1.5b")
+
+        payload = await _build_transparency_payload()
+
+        assert payload["models"]["llm"]["pool_split"] is True
+        assert payload["models"]["llm"]["name"] == "qwen2.5:1.5b"
+        assert (
+            payload["models"]["llm"]["provider_url"]
+            == "http://ollama-summary:11434"
+        )
 
     async def test_opa_down_graceful(self, _patch_globals):
         mock_http, mock_pool, _ = _patch_globals

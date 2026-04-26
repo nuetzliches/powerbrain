@@ -7,7 +7,7 @@
       "access_matrix": {
         "public":       ["viewer", "analyst", "developer", "admin"],
         "internal":     ["analyst", "developer", "admin"],
-        "confidential": ["admin"],
+        "confidential": ["analyst", "developer", "admin"],
         "restricted":   ["admin"]
       },
       "write_roles": ["admin", "developer"],
@@ -50,6 +50,15 @@
 
       "pii_entity_types": ["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "IBAN_CODE", "LOCATION"],
 
+      "graph_pii_keys": {
+        "name":      "PERSON",
+        "fullname":  "PERSON",
+        "firstname": "PERSON",
+        "lastname":  "PERSON",
+        "email":     "EMAIL_ADDRESS",
+        "phone":     "PHONE_NUMBER"
+      },
+
       "audit": {
         "retention_days": 365,
         "advisory_lock_id": 847291,
@@ -69,7 +78,12 @@
           "teams":     0.4,
           "onenote":   0.4
         },
-        "duplicate_threshold": 0.95
+        "duplicate_threshold": 0.95,
+        "pii_verifier": {
+          "enabled":              false,
+          "backend":              "noop",
+          "min_confidence_keep":  0.5
+        }
       },
 
       "human_oversight": {
@@ -99,7 +113,35 @@
         "required_tools": ["search_knowledge", "check_policy"],
         "max_iterations": { "default": 5, "elevated": 10 },
         "elevated_roles": ["developer", "admin"],
-        "default_mcp_servers": ["powerbrain"]
+        "default_mcp_servers": ["powerbrain"],
+        "pii_resolve_tool_results": {
+          "enabled": true,
+          "allowed_roles": ["analyst", "developer", "admin"],
+          "allowed_purposes": ["support", "billing", "contract_fulfillment", "hr_management", "payroll"],
+          "default_purpose": "support"
+        },
+        "documents": {
+          "allowed_roles": ["analyst", "developer", "admin"],
+          "max_bytes": 25000000,
+          "allowed_mime_types": [
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-powerpoint",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.ms-outlook",
+            "message/rfc822",
+            "application/rtf",
+            "text/rtf",
+            "text/plain",
+            "text/markdown",
+            "text/csv",
+            "text/html"
+          ],
+          "max_files_per_request": { "default": 3, "elevated": 10 }
+        }
       },
 
       "summarization": {

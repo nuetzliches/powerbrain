@@ -1,0 +1,4 @@
+streamlit>=1.32
+streamlit-agraph>=0.0.45
+requests>=2.32
+pydantic>=2.5

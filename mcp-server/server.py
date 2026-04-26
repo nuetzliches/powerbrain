@@ -14,6 +14,7 @@ import asyncio
 import os
 import json
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -51,6 +52,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.llm_provider import EmbeddingProvider, CompletionProvider
 from shared.rerank_provider import create_rerank_provider, RerankDocument
 from shared.config import read_secret, build_postgres_url, PG_POOL_MIN, PG_POOL_MAX
+from shared.opa_client import (
+    OpaPolicyMissingError,
+    opa_query,
+    verify_required_policies,
+)
 from shared.telemetry import (
     init_telemetry, setup_auto_instrumentation, trace_operation,
     request_telemetry_context, get_current_telemetry,
@@ -73,6 +79,17 @@ RERANKER_BACKEND = os.getenv("RERANKER_BACKEND", "powerbrain")
 RERANKER_API_KEY = os.getenv("RERANKER_API_KEY", "")
 RERANKER_MODEL_NAME = os.getenv("RERANKER_MODEL", "")
 INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8081")
+# B-50: defense-in-depth bearer for the ingestion service. Read once
+# at startup (Docker Secret /run/secrets/ingestion_auth_token).
+INGESTION_AUTH_TOKEN = read_secret("INGESTION_AUTH_TOKEN", "")
+
+def _ingestion_headers() -> dict[str, str]:
+    """Auth headers for internal ingestion calls; empty when token unset."""
+    return (
+        {"Authorization": f"Bearer {INGESTION_AUTH_TOKEN}"}
+        if INGESTION_AUTH_TOKEN
+        else {}
+    )
 
 # ── Backward-compat fallback ──
 _OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
@@ -82,14 +99,33 @@ EMBEDDING_PROVIDER_URL = os.getenv("EMBEDDING_PROVIDER_URL", _OLLAMA_URL)
 EMBEDDING_MODEL        = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 EMBEDDING_API_KEY      = os.getenv("EMBEDDING_API_KEY", "")
 
-# ── LLM / Summarization provider ──
+# ── LLM provider (legacy single-pool fallback) ──
+# Kept as the default for SUMMARIZATION_* below so single-endpoint
+# deployments keep working without env changes. The MCP server itself
+# only consumes an LLM for summarization — agent-loop calls live in
+# pb-proxy, on a separate provider config.
 LLM_PROVIDER_URL       = os.getenv("LLM_PROVIDER_URL", _OLLAMA_URL)
 LLM_MODEL              = os.getenv("LLM_MODEL", "qwen2.5:3b")
 LLM_API_KEY            = os.getenv("LLM_API_KEY", "")
-SUMMARIZATION_ENABLED  = os.getenv("SUMMARIZATION_ENABLED", "true").lower() == "true"
 
-embedding_provider = EmbeddingProvider(base_url=EMBEDDING_PROVIDER_URL, api_key=EMBEDDING_API_KEY)
-llm_provider       = CompletionProvider(base_url=LLM_PROVIDER_URL, api_key=LLM_API_KEY)
+# ── Summarization provider (decoupled pool) ──
+# Setting these lets the in-pipeline summary call route to its own
+# endpoint / model so it never contends with the pb-proxy agent loop
+# on a shared Ollama slot. See
+# docs/plans/2026-04-20-separate-summary-llm-pool.md.
+SUMMARIZATION_PROVIDER_URL = os.getenv("SUMMARIZATION_PROVIDER_URL", LLM_PROVIDER_URL)
+SUMMARIZATION_MODEL        = os.getenv("SUMMARIZATION_MODEL", LLM_MODEL)
+SUMMARIZATION_API_KEY      = os.getenv("SUMMARIZATION_API_KEY", LLM_API_KEY)
+SUMMARIZATION_ENABLED      = os.getenv("SUMMARIZATION_ENABLED", "true").lower() == "true"
+# Per-call timeout for summarization LLM requests. Kept well below the
+# proxy's TOOL_CALL_TIMEOUT so the graceful fallback to raw chunks
+# ([server.py] summarize_text → except → return None) lands before the
+# upstream caller abandons the connection. See
+# docs/playbook-sales-demo.md → "Tuning the local LLM".
+SUMMARIZATION_TIMEOUT      = float(os.getenv("SUMMARIZATION_TIMEOUT", "15"))
+
+embedding_provider     = EmbeddingProvider(base_url=EMBEDDING_PROVIDER_URL, api_key=EMBEDDING_API_KEY)
+summarization_provider = CompletionProvider(base_url=SUMMARIZATION_PROVIDER_URL, api_key=SUMMARIZATION_API_KEY)
 _rerank_provider   = create_rerank_provider(
     backend=RERANKER_BACKEND, base_url=RERANKER_URL,
     api_key=RERANKER_API_KEY, model=RERANKER_MODEL_NAME,
@@ -483,13 +519,14 @@ async def summarize_text(
     user_prompt = f"Query: {query}\n\nText chunks to summarize:\n\n{combined}"
 
     with trace_operation(tracer, "summarization", "mcp-server",
-                         model=LLM_MODEL):
+                         model=SUMMARIZATION_MODEL):
         try:
-            return await llm_provider.generate(
+            return await summarization_provider.generate(
                 http,
-                model=LLM_MODEL,
+                model=SUMMARIZATION_MODEL,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                timeout=SUMMARIZATION_TIMEOUT,
             )
         except Exception as e:
             log.warning(f"Summarization failed, returning raw chunks: {e}")
@@ -500,39 +537,40 @@ async def check_opa_summarization_policy(
     agent_role: str,
     classification: str,
 ) -> dict:
-    """Check OPA summarization policy. Returns {allowed, required, detail}."""
+    """Check OPA summarization policy. Returns {allowed, required, detail}.
+
+    Fail-closed on missing policy or transport error: summarization is
+    an extra permission, so denying by default is the safe fallback.
+    """
     input_data = {
         "agent_role": agent_role,
         "classification": classification,
     }
     try:
-        allowed_resp = await http.post(
-            f"{OPA_URL}/v1/data/pb/summarization/summarize_allowed",
-            json={"input": input_data},
+        allowed = await opa_query(
+            http, OPA_URL, "pb/summarization/summarize_allowed", input_data,
         )
-        allowed_resp.raise_for_status()
-        allowed = allowed_resp.json().get("result", False)
-
-        required_resp = await http.post(
-            f"{OPA_URL}/v1/data/pb/summarization/summarize_required",
-            json={"input": input_data},
+        required = await opa_query(
+            http, OPA_URL, "pb/summarization/summarize_required", input_data,
         )
-        required_resp.raise_for_status()
-        required = required_resp.json().get("result", False)
-
-        detail_resp = await http.post(
-            f"{OPA_URL}/v1/data/pb/summarization/summarize_detail",
-            json={"input": input_data},
+        detail = await opa_query(
+            http, OPA_URL, "pb/summarization/summarize_detail", input_data,
         )
-        detail_resp.raise_for_status()
-        detail = detail_resp.json().get("result", "standard")
+    except OpaPolicyMissingError as exc:
+        log.error(
+            "OPA summarization policy not loaded (%s) — denying by default",
+            exc.package_path,
+        )
+        return {"allowed": False, "required": False, "detail": "standard"}
     except Exception as e:
-        log.warning(f"OPA summarization policy check failed: {e}")
-        allowed = False
-        required = False
-        detail = "standard"
+        log.warning("OPA summarization policy check failed: %s", e)
+        return {"allowed": False, "required": False, "detail": "standard"}
 
-    return {"allowed": allowed, "required": required, "detail": detail}
+    return {
+        "allowed":  bool(allowed) if allowed is not None else False,
+        "required": bool(required) if required is not None else False,
+        "detail":   detail if isinstance(detail, str) else "standard",
+    }
 
 
 def _apply_heuristic_boosts(
@@ -625,13 +663,22 @@ async def check_opa_policy(agent_id: str, agent_role: str,
             "resource": resource, "classification": classification, "action": action,
         }
         try:
-            resp = await http.post(
-                f"{OPA_URL}/v1/data/pb/access/allow", json={"input": input_data}
+            result = await opa_query(
+                http, OPA_URL, "pb/access/allow", input_data,
             )
-            resp.raise_for_status()
-            allowed = resp.json().get("result", False)
+            allowed = bool(result)
         except (httpx.ConnectError, httpx.TimeoutException):
             raise  # Let tenacity retry these
+        except OpaPolicyMissingError as exc:
+            # The access gate is the MOST critical OPA policy. If it's
+            # not loaded, we MUST fail-closed — a silent default of
+            # "deny" is correct, but surface the cause loudly so
+            # operators can fix the misconfiguration.
+            log.error(
+                "OPA access policy %s not loaded — denying all requests. "
+                "Fix OPA config and restart.", exc.package_path,
+            )
+            allowed = False
         except Exception as e:
             log.warning(f"OPA check failed, defaulting to deny: {e}")
             allowed = False
@@ -681,9 +728,11 @@ async def log_access(agent_id: str, agent_role: str,
             scan_resp = None
             for attempt in range(2):  # 1 initial + 1 retry
                 try:
-                    scan_resp = await http.post(f"{INGESTION_URL}/scan", json={
-                        "text": context["query"],
-                    })
+                    scan_resp = await http.post(
+                        f"{INGESTION_URL}/scan",
+                        json={"text": context["query"]},
+                        headers=_ingestion_headers(),
+                    )
                     scan_resp.raise_for_status()
                     break
                 except (httpx.ConnectError, httpx.TimeoutException):
@@ -758,7 +807,11 @@ async def check_opa_vault_access(
     agent_role: str, purpose: str, classification: str,
     data_category: str, token_valid: bool, token_expired: bool,
 ) -> dict:
-    """Checks via OPA whether vault access is allowed."""
+    """Checks via OPA whether vault access is allowed.
+
+    Fail-closed on missing policy: the vault holds original PII, so a
+    silent default of "allow" would be unacceptable.
+    """
     input_data = {
         "agent_role": agent_role,
         "purpose": purpose,
@@ -768,18 +821,21 @@ async def check_opa_vault_access(
         "token_expired": token_expired,
     }
     try:
-        resp = await http.post(
-            f"{OPA_URL}/v1/data/pb/privacy/vault_access_allowed",
-            json={"input": input_data},
+        allowed_raw = await opa_query(
+            http, OPA_URL, "pb/privacy/vault_access_allowed", input_data,
         )
-        resp.raise_for_status()
-        allowed = resp.json().get("result", False)
-        fields_resp = await http.post(
-            f"{OPA_URL}/v1/data/pb/privacy/vault_fields_to_redact",
-            json={"input": input_data},
+        fields_raw = await opa_query(
+            http, OPA_URL, "pb/privacy/vault_fields_to_redact", input_data,
         )
-        fields_resp.raise_for_status()
-        fields_to_redact = list(fields_resp.json().get("result", []))
+        allowed = bool(allowed_raw)
+        fields_to_redact = list(fields_raw) if isinstance(fields_raw, list) else []
+    except OpaPolicyMissingError as exc:
+        log.error(
+            "OPA vault policy not loaded (%s) — denying vault access",
+            exc.package_path,
+        )
+        allowed = False
+        fields_to_redact = []
     except Exception as e:
         log.warning(f"OPA vault access check failed: {e}")
         allowed = False
@@ -792,18 +848,20 @@ async def check_opa_vault_access(
 
 def redact_fields(text: str, pii_entities: list[dict], fields_to_redact: set[str]) -> str:
     """Redacts specific PII entity types in the text based on OPA policy."""
-    # Mapping from OPA field names to Presidio entity types
-    field_to_entity = {
-        "email": "EMAIL_ADDRESS",
-        "phone": "PHONE_NUMBER",
-        "iban": "IBAN_CODE",
-        "birthdate": "DATE_OF_BIRTH",
-        "address": "LOCATION",
-        "person": "PERSON",
+    # Mapping from OPA field names to one or more Presidio entity types.
+    # Custom recognizers (e.g. DE_DATE_OF_BIRTH) map to the same category as
+    # their built-in counterpart so purpose-based redaction stays consistent.
+    field_to_entities: dict[str, tuple[str, ...]] = {
+        "email":     ("EMAIL_ADDRESS",),
+        "phone":     ("PHONE_NUMBER",),
+        "iban":      ("IBAN_CODE",),
+        "birthdate": ("DATE_OF_BIRTH", "DE_DATE_OF_BIRTH"),
+        "address":   ("LOCATION",),
+        "person":    ("PERSON",),
     }
-    entities_to_redact = {
-        field_to_entity[f] for f in fields_to_redact if f in field_to_entity
-    }
+    entities_to_redact: set[str] = set()
+    for f in fields_to_redact:
+        entities_to_redact.update(field_to_entities.get(f, ()))
 
     if not entities_to_redact:
         return text
@@ -821,54 +879,85 @@ def redact_fields(text: str, pii_entities: list[dict], fields_to_redact: set[str
 
 
 # ── B-30: PII masking for graph query results ──────────────
+#
+# Graph properties carry their semantics in the key name — a key called
+# "email" is an email, period. That's a deterministic classification, so
+# we don't need (and shouldn't pay for) per-value Presidio NER:
+#
+#   * Presidio is probabilistic. spaCy-DE flagged "Elena_Hartmann" as
+#     PERSON, "Tim_Heller" below threshold, "Sarah_Bach" as LOCATION —
+#     producing visually inconsistent output across a single graph.
+#   * Every call crossed the Docker network to ingestion/scan, making
+#     graph_query latency depend on an unrelated service.
+#
+# We replace this with a config-driven key → entity-type-tag mapping
+# loaded from data.pb.config.graph_pii_keys. The result is fully
+# deterministic, audit-friendly, and editable at runtime via the
+# manage_policies MCP tool.
 
-_GRAPH_PII_KEYS = frozenset({"firstname", "lastname", "email", "phone", "name"})
+_graph_pii_keys_cache: dict[str, str] = {}
+_graph_pii_keys_loaded = False
+
+
+async def _get_graph_pii_keys() -> dict[str, str]:
+    """Load the graph-key → entity-type-tag mapping from OPA config.
+
+    Cached for the process lifetime. Use manage_policies (which clears the
+    OPA cache) or a process restart to pick up edits. Graceful fallback to
+    the hardcoded default if OPA is unreachable at startup.
+    """
+    global _graph_pii_keys_loaded, _graph_pii_keys_cache
+    if _graph_pii_keys_loaded:
+        return _graph_pii_keys_cache
+
+    default = {
+        "name":      "PERSON",
+        "fullname":  "PERSON",
+        "firstname": "PERSON",
+        "lastname":  "PERSON",
+        "email":     "EMAIL_ADDRESS",
+        "phone":     "PHONE_NUMBER",
+    }
+    try:
+        resp = await http.get(f"{OPA_URL}/v1/data/pb/config/graph_pii_keys")
+        resp.raise_for_status()
+        cfg = resp.json().get("result")
+        if isinstance(cfg, dict) and cfg:
+            _graph_pii_keys_cache = {k.lower(): v for k, v in cfg.items()}
+        else:
+            _graph_pii_keys_cache = default
+    except Exception as exc:
+        log.warning("OPA graph_pii_keys load failed, using default: %s", exc)
+        _graph_pii_keys_cache = default
+    _graph_pii_keys_loaded = True
+    return _graph_pii_keys_cache
 
 
 async def _mask_graph_pii(data: Any) -> Any:
     """Recursively mask PII in graph query result dicts.
 
-    Walks dicts/lists, finds string values whose key (lower-cased)
-    is in _GRAPH_PII_KEYS, and replaces them with PII-scanner output.
-    On scanner failure, returns data unchanged (graceful degradation).
+    Walks dicts/lists. String values whose lower-cased key matches a
+    configured graph_pii_keys entry are replaced with ``<ENTITY_TYPE>``.
     """
+    keys = await _get_graph_pii_keys()
+    return _mask_walk(data, keys)
+
+
+def _mask_walk(data: Any, keys: dict[str, str]) -> Any:
     if isinstance(data, list):
-        return [await _mask_graph_pii(item) for item in data]
+        return [_mask_walk(item, keys) for item in data]
     if not isinstance(data, dict):
         return data
 
-    # Collect PII-candidate key/value pairs from this dict level
-    candidates: list[tuple[str, str]] = []
+    result: dict[str, Any] = {}
     for key, value in data.items():
-        if isinstance(value, str) and key.lower() in _GRAPH_PII_KEYS and value:
-            candidates.append((key, value))
-
-    # Recurse into nested dicts/lists
-    result = {}
-    for key, value in data.items():
-        if isinstance(value, (dict, list)):
-            result[key] = await _mask_graph_pii(value)
+        if isinstance(value, str) and value:
+            entity = keys.get(key.lower())
+            result[key] = f"<{entity}>" if entity else value
+        elif isinstance(value, (dict, list)):
+            result[key] = _mask_walk(value, keys)
         else:
             result[key] = value
-
-    if not candidates:
-        return result
-
-    # Batch all candidate values into a single scan call
-    delim = "\n---PII_DELIM---\n"
-    combined = delim.join(v for _, v in candidates)
-    try:
-        resp = await http.post(f"{INGESTION_URL}/scan", json={"text": combined})
-        resp.raise_for_status()
-        scan = resp.json()
-        if scan.get("contains_pii"):
-            masked_parts = scan["masked_text"].split(delim)
-            for i, (key, _original) in enumerate(candidates):
-                if i < len(masked_parts):
-                    result[key] = masked_parts[i]
-    except Exception as exc:
-        log.warning("PII scan for graph results failed, returning unmasked: %s", exc)
-
     return result
 
 
@@ -963,6 +1052,182 @@ async def log_vault_access(
             (agent_id, document_id, chunk_index, purpose, token_hash)
         VALUES ($1, $2, $3, $4, $5)
     """, agent_id, document_id, chunk_index, purpose, token_hash)
+
+
+# ── Text-level vault resolution (pb-proxy enterprise edition) ────────────
+
+# Regex matching the pseudonyms emitted by ingestion's
+# pseudonymize_text(): [ENTITY_TYPE:8-hex-chars].
+_VAULT_PSEUDONYM_RE = re.compile(r"\[([A-Z_]+):([a-f0-9]{8})\]")
+
+
+async def vault_resolve_pseudonyms(
+    text: str,
+    *,
+    purpose: str,
+    agent_role: str,
+    agent_id: str,
+    token_hash: str,
+) -> dict:
+    """Resolve ``[ENTITY_TYPE:hash]`` pseudonyms in ``text`` back to originals.
+
+    Callers (notably pb-proxy's agent loop) hand in a tool result that may
+    contain pseudonyms produced during ingestion. This function:
+
+    1. Extracts every pseudonym via the canonical regex.
+    2. Batches a single ``pseudonym_mapping`` lookup to resolve each one
+       to ``(document_id, chunk_index, salt, entity_type)``.
+    3. Loads the referenced vault chunks once per ``(document_id,
+       chunk_index)`` pair and hashes each entity in ``pii_entities``
+       against the requested pseudonym hash to recover the original value.
+    4. Gates each resolution through ``pb.privacy.vault_access_allowed``
+       using the document's classification and data_category — silently
+       skipping resolutions whose OPA decision denies access.
+    5. Applies ``pb.privacy.vault_fields_to_redact`` for the purpose, so
+       purposes like ``billing`` still blank IBAN/address fields even when
+       a resolution is allowed.
+    6. Logs every *successful* resolution via ``log_vault_access`` so the
+       audit chain matches the search_knowledge vault path.
+
+    Returns a dict summarising the outcome — useful for diagnostics and
+    for surfaces like the demo that want to show counts without digging
+    into audit tables.
+    """
+    if not text:
+        return {"text": text, "resolved": 0, "total": 0, "skipped": 0}
+
+    matches = list(_VAULT_PSEUDONYM_RE.finditer(text))
+    if not matches:
+        return {"text": text, "resolved": 0, "total": 0, "skipped": 0}
+
+    pseudonyms = list({m.group(0) for m in matches})
+
+    pool = await get_pg_pool()
+    mapping_rows = await pool.fetch("""
+        SELECT pm.pseudonym, pm.document_id, pm.chunk_index,
+               pm.entity_type, pm.salt,
+               oc.original_text, oc.pii_entities,
+               dm.classification, dm.metadata
+        FROM pii_vault.pseudonym_mapping pm
+        JOIN pii_vault.original_content oc
+             ON pm.document_id = oc.document_id
+            AND pm.chunk_index = oc.chunk_index
+        JOIN documents_meta dm
+             ON dm.id = pm.document_id
+        WHERE pm.pseudonym = ANY($1)
+    """, pseudonyms)
+
+    # Cache of pseudonym → original string (only for resolutions the
+    # policy allowed). This is what we substitute back into the text.
+    resolved: dict[str, str] = {}
+    # Per-(doc_id, chunk_index) we only log once regardless of how many
+    # pseudonyms landed on the same chunk.
+    audited: set[tuple[str, int]] = set()
+
+    for row in mapping_rows:
+        pseudonym = row["pseudonym"]
+        if pseudonym in resolved:
+            continue  # already handled via an earlier mapping row
+
+        doc_id = str(row["document_id"])
+        chunk_index = row["chunk_index"]
+        classification = row["classification"] or "internal"
+
+        # The document's data_category lives in metadata JSONB alongside
+        # other ingestion hints. Default empty → OPA purpose-binding fails.
+        meta = row["metadata"] or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except json.JSONDecodeError:
+                meta = {}
+        data_category = meta.get("data_category", "")
+
+        vault_policy = await check_opa_vault_access(
+            agent_role, purpose, classification,
+            data_category, True, False,
+        )
+        if not vault_policy.get("allowed"):
+            continue
+
+        # Reverse-hash the pseudonym against the entities stored with the
+        # chunk. Entities are {type, text, start, end, score}; only the
+        # ``text`` field produces the pseudonym's hash for this salt.
+        entities = row["pii_entities"]
+        if isinstance(entities, str):
+            try:
+                entities = json.loads(entities)
+            except json.JSONDecodeError:
+                entities = []
+        salt = row["salt"]
+        target_type = row["entity_type"]
+        target_hash = pseudonym.rsplit(":", 1)[-1].rstrip("]")
+
+        recovered = None
+        for ent in entities or []:
+            if ent.get("type") != target_type:
+                continue
+            candidate = ent.get("text", "")
+            digest = hashlib.sha256(
+                f"{salt}:{candidate}".encode()
+            ).hexdigest()[:8]
+            if digest == target_hash:
+                recovered = candidate
+                break
+
+        if recovered is None:
+            continue
+
+        # Apply purpose-based field redaction. The mapping PERSON →
+        # `person`, EMAIL_ADDRESS → `email` etc. lives in redact_fields's
+        # field_to_entities table — we reuse it by asking: does the
+        # policy say to redact this entity type?
+        fields_to_redact = set(vault_policy.get("fields_to_redact") or [])
+        if _entity_type_in_redact_set(target_type, fields_to_redact):
+            continue  # policy says: stay pseudonymous for this field
+
+        resolved[pseudonym] = recovered
+        key = (doc_id, chunk_index)
+        if key not in audited:
+            audited.add(key)
+            await log_vault_access(agent_id, doc_id, chunk_index,
+                                   purpose, token_hash)
+
+    if not resolved:
+        return {"text": text, "resolved": 0, "total": len(pseudonyms),
+                "skipped": len(pseudonyms)}
+
+    # Longest-first replacement avoids clashing suffix hashes eating each
+    # other mid-substitution.
+    out = text
+    for pseudo in sorted(resolved, key=len, reverse=True):
+        out = out.replace(pseudo, resolved[pseudo])
+
+    return {
+        "text":      out,
+        "resolved":  len(resolved),
+        "total":     len(pseudonyms),
+        "skipped":   len(pseudonyms) - len(resolved),
+    }
+
+
+def _entity_type_in_redact_set(entity_type: str, fields: set[str]) -> bool:
+    """Does the OPA ``fields_to_redact`` list cover this entity type?"""
+    if not fields:
+        return False
+    # Invert the mapping used by redact_fields() so we can ask
+    # "should I keep this pseudonym for this purpose?".
+    entity_to_field = {
+        "EMAIL_ADDRESS":     "email",
+        "PHONE_NUMBER":      "phone",
+        "IBAN_CODE":         "iban",
+        "DATE_OF_BIRTH":     "birthdate",
+        "DE_DATE_OF_BIRTH":  "birthdate",
+        "LOCATION":          "address",
+        "PERSON":            "person",
+    }
+    field = entity_to_field.get(entity_type)
+    return field is not None and field in fields
 
 
 async def check_feedback_warning(query: str, pool: asyncpg.Pool):
@@ -1396,7 +1661,7 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "source_type": {"type": "string",
-                                    "description": "Filter by source_type (e.g. 'timesheet', 'git-commit')"},
+                                    "description": "Filter by source_type (e.g. 'document', 'git-commit')"},
                     "project":     {"type": "string",
                                     "description": "Filter by project ID"},
                     "confirm":     {"type": "boolean",
@@ -1981,13 +2246,17 @@ async def _dispatch(name: str, arguments: dict[str, Any],
     # ── ingest_data ──────────────────────────────────────────
     elif name == "ingest_data":
         try:
-            resp = await http.post(f"{INGESTION_URL}/ingest", json={
-                "source": arguments["source"],
-                "source_type": arguments.get("source_type", "text"),
-                "project": arguments.get("project"),
-                "classification": arguments.get("classification", "internal"),
-                "metadata": arguments.get("metadata", {}),
-            })
+            resp = await http.post(
+                f"{INGESTION_URL}/ingest",
+                json={
+                    "source": arguments["source"],
+                    "source_type": arguments.get("source_type", "text"),
+                    "project": arguments.get("project"),
+                    "classification": arguments.get("classification", "internal"),
+                    "metadata": arguments.get("metadata", {}),
+                },
+                headers=_ingestion_headers(),
+            )
             resp.raise_for_status()
             result = resp.json()
         except Exception as e:
@@ -2402,10 +2671,14 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         description   = arguments.get("description", "")
 
         try:
-            resp = await http.post(f"{INGESTION_URL}/snapshots/create", json={
-                "name": snapshot_name, "description": description,
-                "created_by": agent_id,
-            })
+            resp = await http.post(
+                f"{INGESTION_URL}/snapshots/create",
+                json={
+                    "name": snapshot_name, "description": description,
+                    "created_by": agent_id,
+                },
+                headers=_ingestion_headers(),
+            )
             resp.raise_for_status()
             result = resp.json()
         except Exception as e:
@@ -3077,6 +3350,7 @@ async def _build_risk_health_payload() -> dict:
 
     return {
         "service": "mcp-server",
+        "edition": "community",
         "status": combined,
         "indicators": safe_indicators,
         "risk_register": "docs/risk-management.md",
@@ -3206,14 +3480,23 @@ async def _build_transparency_payload() -> dict:
         _transparency_audit_snapshot(),
     )
 
+    summarization_split = (
+        SUMMARIZATION_PROVIDER_URL != LLM_PROVIDER_URL
+        or SUMMARIZATION_MODEL != LLM_MODEL
+    )
     models = {
         "embedding": {
             "name":        EMBEDDING_MODEL,
             "provider_url": EMBEDDING_PROVIDER_URL,
         },
         "llm": {
-            "name":        LLM_MODEL,
-            "provider_url": LLM_PROVIDER_URL,
+            # mcp-server consumes an LLM only for summarization. Field
+            # name kept as "llm" for back-compat with consumers like
+            # compliance_doc.py; the values reflect SUMMARIZATION_*.
+            "name":        SUMMARIZATION_MODEL,
+            "provider_url": SUMMARIZATION_PROVIDER_URL,
+            "purpose":     "summarization",
+            "pool_split":  summarization_split,
         },
         "reranker": {
             "backend":     RERANKER_BACKEND,
@@ -3228,6 +3511,7 @@ async def _build_transparency_payload() -> dict:
 
     return {
         "service":        "mcp-server",
+        "edition":        "community",
         "report_version": version,
         "system_purpose": (
             "Powerbrain feeds AI agents with policy-compliant enterprise "
@@ -3306,6 +3590,18 @@ if __name__ == "__main__":
         await pg_pool.fetchval("SELECT 1")
         log.info("PostgreSQL pool ready (%s)", POSTGRES_URL.split("@")[-1])
 
+        # Refuse to start if OPA is unreachable or a required policy
+        # package is not loaded (issue #59 part 2).
+        if os.getenv("SKIP_OPA_STARTUP_CHECK", "false").lower() != "true":
+            await verify_required_policies(
+                http, OPA_URL,
+                [
+                    "pb/access/allow",
+                    "pb/summarization/summarize_allowed",
+                    "pb/privacy/vault_access_allowed",
+                ],
+            )
+
         oauth_provider.start_cleanup()
         async with session_manager.run():
             yield
@@ -3377,6 +3673,67 @@ if __name__ == "__main__":
         """
         payload = await _get_transparency_report()
         return JSONResponse(payload)
+
+    async def vault_resolve_endpoint(request):
+        """POST /vault/resolve — text-level pseudonym resolution.
+
+        Primary caller is pb-proxy's agent loop: after a tool response
+        comes back containing ``[ENTITY_TYPE:hash]`` pseudonyms (because
+        the knowledge base stores pseudonyms, not originals), the proxy
+        asks this endpoint to replace them with vault-resolved originals
+        before handing the text to the LLM. Same OPA policy, same audit
+        trail as search_knowledge's inline vault lookup — just over plain
+        text instead of per-chunk metadata.
+
+        Body: ``{"text": str, "purpose": str}``.
+        Auth: any valid ``pb_`` key. OPA still gates per (role, purpose,
+        classification, data_category) so this doesn't widen the vault
+        surface.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
+        text = body.get("text")
+        purpose = body.get("purpose")
+        if not isinstance(text, str) or not purpose:
+            return JSONResponse(
+                {"error": "body must contain 'text' (str) and 'purpose' (str)"},
+                status_code=400,
+            )
+
+        agent_id, role = _auth_user(request)
+        if not role:
+            return JSONResponse(
+                {"error": "authentication required"},
+                status_code=401,
+            )
+
+        # Use the authenticated-agent's identifier as the token_hash for
+        # auditing; these calls are not vault-token-bound but signed via
+        # the API key the caller already presented, so we record that
+        # association instead of a detached HMAC token fingerprint.
+        token_hash = hashlib.sha256(
+            f"vault-resolve:{agent_id}".encode()
+        ).hexdigest()[:16]
+
+        try:
+            result = await vault_resolve_pseudonyms(
+                text,
+                purpose=purpose,
+                agent_role=role,
+                agent_id=agent_id or "unknown",
+                token_hash=token_hash,
+            )
+        except Exception as exc:
+            log.warning("vault_resolve_pseudonyms failed: %s", exc)
+            return JSONResponse(
+                {"error": f"resolution failed: {exc}"},
+                status_code=500,
+            )
+
+        return JSONResponse(result)
 
     async def health_check(request):
         """Content-negotiated health endpoint.
@@ -3529,6 +3886,7 @@ if __name__ == "__main__":
             Route("/health", endpoint=health_check),
             Route("/metrics/json", endpoint=metrics_json),
             Route("/transparency", endpoint=transparency_endpoint),
+            Route("/vault/resolve", endpoint=vault_resolve_endpoint, methods=["POST"]),
             Route("/circuit-breaker", endpoint=circuit_breaker_get, methods=["GET"]),
             Route("/circuit-breaker", endpoint=circuit_breaker_post, methods=["POST"]),
             # OAuth discovery (at stripped paths AND full RFC 9728 paths)

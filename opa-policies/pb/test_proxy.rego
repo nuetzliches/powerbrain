@@ -153,3 +153,97 @@ test_mcp_servers_admin_all if {
         "configured_servers": ["powerbrain", "github", "tools"],
     }
 }
+
+# ── Document Attachments ─────────────────────────────────────
+
+test_documents_allowed_for_analyst if {
+    proxy.documents_allowed with input as {"agent_role": "analyst"}
+}
+
+test_documents_allowed_for_developer if {
+    proxy.documents_allowed with input as {"agent_role": "developer"}
+}
+
+test_documents_allowed_for_admin if {
+    proxy.documents_allowed with input as {"agent_role": "admin"}
+}
+
+test_documents_denied_for_viewer if {
+    not proxy.documents_allowed with input as {"agent_role": "viewer"}
+}
+
+test_documents_max_bytes_for_analyst if {
+    proxy.documents_max_bytes == 25000000 with input as {"agent_role": "analyst"}
+}
+
+test_documents_max_bytes_zero_for_viewer if {
+    proxy.documents_max_bytes == 0 with input as {"agent_role": "viewer"}
+}
+
+test_documents_allowed_mime_types_contains_pdf if {
+    "application/pdf" in proxy.documents_allowed_mime_types with input as {
+        "agent_role": "analyst",
+    }
+}
+
+test_documents_allowed_mime_types_empty_for_viewer if {
+    proxy.documents_allowed_mime_types == set() with input as {"agent_role": "viewer"}
+}
+
+test_documents_max_files_default_for_analyst if {
+    proxy.documents_max_files == 3 with input as {"agent_role": "analyst"}
+}
+
+test_documents_max_files_elevated_for_developer if {
+    proxy.documents_max_files == 10 with input as {"agent_role": "developer"}
+}
+
+test_documents_max_files_elevated_for_admin if {
+    proxy.documents_max_files == 10 with input as {"agent_role": "admin"}
+}
+
+test_documents_max_files_zero_for_viewer if {
+    proxy.documents_max_files == 0 with input as {"agent_role": "viewer"}
+}
+
+# ── pii_resolve_tool_results (enterprise) ────────────────────
+
+test_pii_resolve_allowed_for_analyst_with_allowed_purpose if {
+    proxy.pii_resolve_tool_results_allowed with input as {
+        "agent_role": "analyst",
+        "purpose": "support",
+    }
+}
+
+test_pii_resolve_allowed_for_developer_with_billing_purpose if {
+    proxy.pii_resolve_tool_results_allowed with input as {
+        "agent_role": "developer",
+        "purpose": "billing",
+    }
+}
+
+test_pii_resolve_denied_for_viewer if {
+    # viewer is not in proxy.pii_resolve_tool_results.allowed_roles
+    not proxy.pii_resolve_tool_results_allowed with input as {
+        "agent_role": "viewer",
+        "purpose": "support",
+    }
+}
+
+test_pii_resolve_denied_for_unknown_purpose if {
+    # "marketing" is not in allowed_purposes — policy still has final say
+    not proxy.pii_resolve_tool_results_allowed with input as {
+        "agent_role": "analyst",
+        "purpose": "marketing",
+    }
+}
+
+test_pii_resolve_denied_when_no_purpose if {
+    not proxy.pii_resolve_tool_results_allowed with input as {
+        "agent_role": "analyst",
+    }
+}
+
+test_pii_resolve_default_purpose_populated if {
+    proxy.pii_resolve_tool_results_default_purpose == "support" with input as {}
+}

@@ -20,6 +20,9 @@ import json
 import logging
 import uuid
 import time
+import asyncio
+import base64
+import binascii
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -37,6 +40,12 @@ from prometheus_client import Counter, Histogram, make_asgi_app as prom_make_asg
 
 from pii_scanner import get_scanner
 from snapshot_service import create_snapshot
+from content_extraction import (
+    ContentExtractor,
+    detect_content_type,
+    mime_type_to_extension,
+    should_skip_file,
+)
 
 # ── Configuration ────────────────────────────────────────────
 QDRANT_URL   = os.getenv("QDRANT_URL",   "http://qdrant:6333")
@@ -54,11 +63,22 @@ EMBEDDING_API_KEY      = os.getenv("EMBEDDING_API_KEY", "")
 import sys as _sys
 _sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.llm_provider import EmbeddingProvider, CompletionProvider
-from shared.config import build_postgres_url, PG_POOL_MIN, PG_POOL_MAX
+from shared.config import build_postgres_url, read_secret, PG_POOL_MIN, PG_POOL_MAX
 from shared.telemetry import (
     init_telemetry, setup_auto_instrumentation, trace_operation,
     request_telemetry_context, get_current_telemetry,
     MetricsAggregator, TELEMETRY_IN_RESPONSE,
+)
+from shared.pii_verify_provider import (
+    create_pii_verify_provider,
+    build_candidates_from_locations,
+    apply_verdicts_to_scan_result,
+    VerifyStats,
+)
+from shared.opa_client import (
+    OpaPolicyMissingError,
+    opa_query,
+    verify_required_policies,
 )
 
 POSTGRES_URL = build_postgres_url()
@@ -80,6 +100,41 @@ completion_provider = CompletionProvider(
     base_url=LLM_PROVIDER_URL, api_key=LLM_API_KEY
 )
 
+# ── PII Verifier (Presidio precision filter) ──────────────────
+# ``noop`` keeps the pre-existing Presidio-only behaviour (community
+# default). ``llm`` sends ambiguous candidates (PERSON / LOCATION /
+# ORGANIZATION) to the chat endpoint for context-aware filtering.
+# The *backend* is OPA-policy-driven at runtime so admins can flip
+# via manage_policies without restarting ingestion. The env vars only
+# describe WHERE the LLM lives, not WHETHER to call it.
+PII_VERIFIER_URL            = os.getenv("PII_VERIFIER_URL", LLM_PROVIDER_URL)
+PII_VERIFIER_MODEL          = os.getenv("PII_VERIFIER_MODEL", LLM_MODEL)
+PII_VERIFIER_API_KEY        = os.getenv("PII_VERIFIER_API_KEY", LLM_API_KEY)
+PII_VERIFIER_ENABLED_DEFAULT = os.getenv("PII_VERIFIER_ENABLED", "false").lower() == "true"
+PII_VERIFIER_BACKEND_DEFAULT = os.getenv("PII_VERIFIER_BACKEND", "noop")
+PII_VERIFIER_TIMEOUT        = float(os.getenv("PII_VERIFIER_TIMEOUT_SECONDS", "15"))
+
+# Lazily-initialised per-backend singletons. OPA policy picks which one
+# runs for a given request; we keep the LLM provider warm to avoid
+# reconnect costs on repeated ingests.
+_pii_verifier_providers: dict[str, Any] = {}
+
+
+def _get_pii_verifier_provider(backend: str):
+    """Return (and cache) the provider instance for the requested backend."""
+    key = (backend or "noop").lower()
+    prov = _pii_verifier_providers.get(key)
+    if prov is not None:
+        return prov
+    prov = create_pii_verify_provider(
+        backend=key,
+        base_url=PII_VERIFIER_URL,
+        api_key=PII_VERIFIER_API_KEY,
+        model=PII_VERIFIER_MODEL,
+    )
+    _pii_verifier_providers[key] = prov
+    return prov
+
 DEFAULT_COLLECTION = "pb_general"
 
 logging.basicConfig(level=logging.INFO)
@@ -92,6 +147,8 @@ pb_ingestion_duration = None
 pb_ingestion_chunks = None
 pb_ingestion_pii_entities = None
 pb_ingestion_embedding_batch = None
+pb_ingestion_pii_verifier_calls = None
+pb_ingestion_pii_verifier_duration = None
 
 # Try to create metrics, handle duplicate registration gracefully
 try:
@@ -112,6 +169,29 @@ try:
         "pb_ingestion_embedding_batch_size", "Embedding batch size",
         buckets=[1, 5, 10, 20, 50, 100],
     )
+    pb_extract_requests = Counter(
+        "pb_extract_requests_total", "Document extraction requests",
+        ["status", "extractor"],
+    )
+    pb_extract_duration = Histogram(
+        "pb_extract_duration_seconds", "Document extraction duration",
+        buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
+    )
+    pb_extract_bytes_in = Histogram(
+        "pb_extract_bytes_in", "Document extraction input size in bytes",
+        buckets=[1024, 10_000, 100_000, 500_000, 1_000_000, 5_000_000, 10_000_000, 25_000_000],
+    )
+    pb_ingestion_pii_verifier_calls = Counter(
+        "pb_ingestion_pii_verifier_calls_total",
+        "Semantic PII verifier decisions (per candidate)",
+        ["entity_type", "backend", "result"],
+    )
+    pb_ingestion_pii_verifier_duration = Histogram(
+        "pb_ingestion_pii_verifier_duration_seconds",
+        "Semantic PII verifier round-trip duration",
+        ["backend"],
+        buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
+    )
 except ValueError as e:
     if "Duplicated timeseries" in str(e):
         # Metrics already registered, get them from registry
@@ -128,11 +208,26 @@ except ValueError as e:
                     pb_ingestion_pii_entities = collector
                 elif collector._name == "pb_ingestion_embedding_batch_size":
                     pb_ingestion_embedding_batch = collector
+                elif collector._name == "pb_extract_requests_total":
+                    pb_extract_requests = collector
+                elif collector._name == "pb_extract_duration_seconds":
+                    pb_extract_duration = collector
+                elif collector._name == "pb_extract_bytes_in":
+                    pb_extract_bytes_in = collector
+                elif collector._name == "pb_ingestion_pii_verifier_calls_total":
+                    pb_ingestion_pii_verifier_calls = collector
+                elif collector._name == "pb_ingestion_pii_verifier_duration_seconds":
+                    pb_ingestion_pii_verifier_duration = collector
     else:
         raise
 
 # ── FastAPI App ──────────────────────────────────────────────
 app = FastAPI(title="Powerbrain Ingestion API", version="1.0.0")
+
+# ── Service-token auth (B-50, defense-in-depth on top of pb-net) ──
+INGESTION_AUTH_TOKEN = read_secret("INGESTION_AUTH_TOKEN", "")
+from auth_middleware import IngestionAuthMiddleware  # noqa: E402
+app.add_middleware(IngestionAuthMiddleware, expected_token=INGESTION_AUTH_TOKEN)
 
 # ── Telemetry Initialization ─────────────────────────────────
 _ingestion_tracer = init_telemetry("pb-ingestion")
@@ -177,6 +272,18 @@ qdrant: AsyncQdrantClient | None = None
 http_client: httpx.AsyncClient | None = None
 pg_pool: asyncpg.Pool | None = None
 
+# ── Document extraction (shared singleton, markitdown lazy-init on first use) ──
+_content_extractor = ContentExtractor()
+EXTRACT_MAX_BYTES = int(os.getenv("EXTRACT_MAX_BYTES", str(25 * 1024 * 1024)))  # 25 MB
+EXTRACT_TIMEOUT_SECONDS = float(os.getenv("EXTRACT_TIMEOUT_SECONDS", "30"))
+
+
+REQUIRED_OPA_POLICIES = [
+    "pb/ingestion/quality_gate",
+    "pb/privacy",
+    "pb/config/ingestion/pii_verifier",
+]
+
 
 @app.on_event("startup")
 async def startup():
@@ -189,6 +296,17 @@ async def startup():
     except Exception as e:
         log.error(f"PostgreSQL connection failed: {e}")
         pg_pool = None
+
+    # Fail loudly if required OPA policies are not loaded — otherwise the
+    # runtime helpers would fail-closed with misleading diagnostics
+    # (see issue #59: "quality_score 0.629 < required 0.000").
+    # Disabled only for test runs where OPA is not reachable.
+    if os.getenv("SKIP_OPA_STARTUP_CHECK", "false").lower() != "true":
+        try:
+            await verify_required_policies(http_client, OPA_URL, REQUIRED_OPA_POLICIES)
+        except Exception as exc:
+            log.error("OPA startup verification failed: %s", exc)
+            raise
 
 
 @app.on_event("shutdown")
@@ -249,6 +367,84 @@ class ChunkIngestRequest(BaseModel):
     metadata: dict[str, Any] = {}
     source: str
     source_type: str = "text"
+
+
+class ExtractRequest(BaseModel):
+    """Request for binary document extraction.
+
+    Called primarily by pb-proxy for chat attachments, but also usable by any
+    adapter that needs to convert a binary blob to text via the shared pipeline.
+    """
+    data: str = Field(
+        min_length=1,
+        description="Base64-encoded raw bytes of the file",
+    )
+    filename: str = Field(
+        min_length=1,
+        description="Filename including extension (used to select the extractor)",
+    )
+    mime_type: str | None = Field(
+        default=None,
+        description="Optional MIME hint (not authoritative; extension takes precedence)",
+    )
+    max_bytes: int | None = Field(
+        default=None,
+        description="Optional per-request size cap. Always capped by EXTRACT_MAX_BYTES.",
+    )
+
+
+class ExtractResponse(BaseModel):
+    text: str
+    content_type: str
+    extractor: str = Field(
+        description="Backend used: markitdown | fallback | text | ocr | skipped | failed"
+    )
+    bytes_in: int
+    chars_out: int
+    truncated: bool = False
+
+
+class PreviewRequest(BaseModel):
+    """Dry-run request for the pipeline inspector (demo surface).
+
+    Either supply extracted ``text`` directly, or pass base64 ``data``
+    plus ``filename`` to run the same extractor that a real ingest
+    would use. No data is persisted — the call touches only the
+    in-process scanner, quality module, and OPA.
+    """
+    text:           str | None = None
+    data:           str | None = Field(default=None, description="Base64 bytes; alternative to `text`")
+    filename:       str | None = None
+    mime_type:      str | None = None
+    language:       str = Field(default="de")
+    classification: str = Field(default="internal")
+    source_type:    str = Field(default="default")
+    metadata:       dict[str, Any] = Field(default_factory=dict)
+    legal_basis:    str | None = Field(
+        default=None,
+        description="Optional hint for OPA privacy.pii_action on confidential data",
+    )
+
+
+class PreviewResponse(BaseModel):
+    """Flattened view of what every pipeline step would do.
+
+    Shape is intentionally optimised for a demo UI — grouped by phase
+    with booleans / counts the UI can render as badges.
+
+    ``verifier`` is populated when the semantic PII verifier
+    (``pb.config.ingestion.pii_verifier.enabled=true``) ran between
+    the raw Presidio scan and the rest of the pipeline. ``scan``
+    reflects the post-verifier state so downstream consumers stay
+    consistent — the ``verifier.before`` sub-field holds the raw
+    Presidio output for comparison in the demo panel.
+    """
+    extract:  dict = Field(default_factory=dict)
+    scan:     dict = Field(default_factory=dict)
+    verifier: dict = Field(default_factory=dict)
+    quality:  dict = Field(default_factory=dict)
+    privacy:  dict = Field(default_factory=dict)
+    summary:  dict = Field(default_factory=dict)
 
 
 # ── Helper Functions ────────────────────────────────────────
@@ -314,27 +510,156 @@ async def check_opa_quality_gate(
     Returns a dict with ``allowed`` (bool), ``min_score`` (float) and
     ``reason`` (str). On OPA failure we fail-closed (allowed=False) so a
     broken policy engine cannot silently bypass the quality gate.
+
+    ``min_score`` uses the sentinel ``-1.0`` when the policy package is
+    not loaded or OPA is unreachable. The normal minimum is never
+    negative, so ``-1.0`` in logs or the ``ingestion_rejections`` table
+    flags a configuration problem rather than a threshold comparison.
     """
     input_data = {
         "source_type":    source_type or "default",
         "quality_score":  float(quality_score),
     }
     try:
-        resp = await http_client.post(
-            f"{OPA_URL}/v1/data/pb/ingestion/quality_gate",
-            json={"input": input_data},
+        result = await opa_query(
+            http_client, OPA_URL, "pb/ingestion/quality_gate", input_data,
         )
-        resp.raise_for_status()
-        result = resp.json().get("result") or {}
+    except OpaPolicyMissingError as exc:
+        log.error("OPA policy missing: %s", exc.package_path)
         return {
-            "allowed":   bool(result.get("allowed", False)),
-            "min_score": float(result.get("min_score", 0.0)),
-            "reason":    result.get("reason", ""),
+            "allowed":   False,
+            "min_score": -1.0,
+            "reason":    f"opa_policy_missing: {exc.package_path}",
         }
     except Exception as e:
-        log.warning(f"OPA quality_gate check failed, fail-closed: {e}")
-        return {"allowed": False, "min_score": 0.0,
+        log.warning("OPA quality_gate check failed, fail-closed: %s", e)
+        return {"allowed": False, "min_score": -1.0,
                 "reason": f"opa_unreachable: {e}"}
+
+    if not isinstance(result, dict):
+        log.warning("OPA quality_gate returned non-dict %r, fail-closed", result)
+        return {"allowed": False, "min_score": -1.0,
+                "reason": "opa_unexpected_shape"}
+
+    return {
+        "allowed":   bool(result.get("allowed", False)),
+        "min_score": float(result.get("min_score", 0.0)),
+        "reason":    result.get("reason", ""),
+    }
+
+
+async def check_opa_pii_verifier() -> dict:
+    """Fetch the semantic verifier policy from OPA.
+
+    Returns ``{enabled, backend, min_confidence_keep}``. Defaults match
+    the noop backend so an outage can't accidentally widen what the
+    verifier drops — fail-closed on policy unreachability.
+    """
+    fallback = {
+        "enabled":  PII_VERIFIER_ENABLED_DEFAULT,
+        "backend":  PII_VERIFIER_BACKEND_DEFAULT,
+        "min_confidence_keep": 0.5,
+    }
+    try:
+        data = await opa_query(
+            http_client, OPA_URL, "pb/config/ingestion/pii_verifier",
+        )
+    except OpaPolicyMissingError as exc:
+        log.warning(
+            "OPA policy %s not loaded — falling back to env defaults "
+            "(enabled=%s, backend=%s)",
+            exc.package_path, fallback["enabled"], fallback["backend"],
+        )
+        return fallback
+    except Exception as exc:
+        log.warning("OPA pii_verifier policy lookup failed, using env defaults: %s", exc)
+        return fallback
+
+    if not isinstance(data, dict):
+        return fallback
+    return {
+        "enabled":  bool(data.get("enabled", fallback["enabled"])),
+        "backend":  str(data.get("backend", fallback["backend"])),
+        "min_confidence_keep": float(
+            data.get("min_confidence_keep", fallback["min_confidence_keep"])
+        ),
+    }
+
+
+async def apply_pii_verifier(
+    text: str,
+    contains_pii: bool,
+    entity_counts: dict[str, int],
+    entity_locations: list[dict],
+) -> tuple[bool, dict[str, int], list[dict], dict]:
+    """Run the verifier on a scan result, returning filtered data + stats.
+
+    Wraps :meth:`_BasePIIVerifyProvider.verify` with OPA policy,
+    Prometheus counters, and the telemetry trace span. Safe to call
+    unconditionally: when the verifier is disabled (noop backend) the
+    returned arrays are unchanged and ``stats["enabled"]`` is False.
+    """
+    stats_dict: dict = {"enabled": False, "backend": "noop",
+                         "input_count": len(entity_locations)}
+
+    policy = await check_opa_pii_verifier()
+    if not policy["enabled"] or policy["backend"] == "noop" or not entity_locations:
+        return contains_pii, entity_counts, entity_locations, {
+            **stats_dict,
+            "enabled": policy["enabled"],
+            "backend": policy["backend"],
+        }
+
+    # Build candidates + run. Provider handles pattern vs ambiguous split.
+    # The *backend* is decided by OPA, so the singleton is looked up per
+    # call — admins can flip from noop → llm at runtime without needing
+    # an ingestion restart.
+    candidates = build_candidates_from_locations(text, entity_locations)
+    provider = _get_pii_verifier_provider(policy["backend"])
+    t0 = time.perf_counter()
+    try:
+        with trace_operation(_ingestion_tracer, "pii_verify", "ingestion",
+                             backend=policy["backend"],
+                             input_count=len(candidates)):
+            keep, stats = await provider.verify(
+                http_client, text, candidates,
+            )
+    except Exception as exc:
+        log.warning("pii_verify_provider raised — falling back to noop: %s", exc)
+        return contains_pii, entity_counts, entity_locations, {
+            **stats_dict, "enabled": True, "backend": policy["backend"],
+            "error": str(exc),
+        }
+    duration = time.perf_counter() - t0
+
+    # Prometheus
+    if pb_ingestion_pii_verifier_duration:
+        pb_ingestion_pii_verifier_duration.labels(backend=stats.backend).observe(duration)
+    if pb_ingestion_pii_verifier_calls:
+        for etype, bucket in stats.by_entity_type.items():
+            for result_name in ("kept", "reverted", "forwarded"):
+                count = int(bucket.get(result_name, 0))
+                if count:
+                    pb_ingestion_pii_verifier_calls.labels(
+                        entity_type=etype, backend=stats.backend,
+                        result=result_name,
+                    ).inc(count)
+
+    new_contains, new_counts, new_locs = apply_verdicts_to_scan_result(
+        entity_counts, entity_locations, keep,
+    )
+    return new_contains, new_counts, new_locs, {
+        "enabled":       True,
+        "backend":       stats.backend,
+        "input_count":   stats.input_count,
+        "forwarded":     stats.forwarded,
+        "reviewed":      stats.reviewed,
+        "kept":          stats.kept,
+        "reverted":      stats.reverted,
+        "errors":        stats.errors,
+        "duration_ms":   round(duration * 1000, 2),
+        "by_entity_type": stats.by_entity_type,
+    }
 
 
 async def check_opa_privacy(
@@ -342,7 +667,9 @@ async def check_opa_privacy(
 ) -> dict:
     """Queries OPA for pii_action and dual_storage_enabled.
 
-    OPA endpoint: /v1/data/pb/privacy/pii_action, /v1/data/pb/privacy/dual_storage_enabled
+    OPA endpoint: /v1/data/pb/privacy. Fail-closed on missing policy or
+    unreachable OPA — privacy decisions must never silently default
+    to a more permissive action than ``block``.
     """
     input_data = {
         "classification": classification,
@@ -351,17 +678,22 @@ async def check_opa_privacy(
     }
     result = {"pii_action": "block", "dual_storage_enabled": False}
     try:
-        resp = await http_client.post(
-            f"{OPA_URL}/v1/data/pb/privacy",
-            json={"input": input_data},
+        data = await opa_query(http_client, OPA_URL, "pb/privacy", input_data)
+    except OpaPolicyMissingError as exc:
+        log.error(
+            "OPA privacy policy not loaded (%s) — defaulting to block",
+            exc.package_path,
         )
-        resp.raise_for_status()
-        data = resp.json().get("result", {})
+        result["reason"] = f"opa_policy_missing: {exc.package_path}"
+        return result
+    except Exception as e:
+        log.warning("OPA privacy check failed, defaulting to block: %s", e)
+        return result
+
+    if isinstance(data, dict):
         result["pii_action"] = data.get("pii_action", "block")
         result["dual_storage_enabled"] = data.get("dual_storage_enabled", False)
         result["retention_days"] = data.get("retention_days", 365)
-    except Exception as e:
-        log.warning(f"OPA privacy check failed, defaulting to block: {e}")
     return result
 
 
@@ -564,6 +896,24 @@ async def ingest_text_chunks(
         scan_result = scanner.scan_text(chunk)
         vault_ref = None
 
+        # Apply semantic verifier when policy enables it. Noop-default
+        # preserves the pre-existing behaviour for every community
+        # deployment.
+        if scan_result.contains_pii:
+            contains_v, counts_v, locs_v, _vstats = await apply_pii_verifier(
+                chunk,
+                scan_result.contains_pii,
+                dict(scan_result.entity_counts),
+                list(scan_result.entity_locations),
+            )
+            # Replace the scan_result view downstream uses with the
+            # verifier-filtered one (or keep the original when disabled).
+            scan_result = type(scan_result)(
+                contains_pii=contains_v,
+                entity_counts=counts_v,
+                entity_locations=locs_v,
+            )
+
         if scan_result.contains_pii:
             pii_detected = True
             total_pii_entities += sum(int(c) for c in scan_result.entity_counts.values())
@@ -682,10 +1032,13 @@ async def ingest_text_chunks(
     gate = await check_opa_quality_gate(source_type, quality_report.score)
 
     if not gate["allowed"]:
-        log.warning(
-            f"Quality gate rejected document source={source!r} "
-            f"score={quality_report.score:.3f} min={gate['min_score']:.3f} "
-            f"reason={gate['reason']!r}"
+        # `min_score == -1.0` is the sentinel for "policy missing / OPA
+        # unreachable" — log at ERROR so the cause is obvious. Any other
+        # threshold rejection is normal.
+        _log = log.error if gate["min_score"] < 0 else log.warning
+        _log(
+            "Quality gate rejected document source=%r score=%.3f min=%.3f reason=%r",
+            source, quality_report.score, gate["min_score"], gate["reason"],
         )
         # Audit the rejection and remove the pre-created documents_meta row.
         if pg_pool:
@@ -958,6 +1311,309 @@ async def pseudonymize(req: PseudonymizeRequest) -> PseudonymizeResponse:
         mapping=mapping,
         contains_pii=scan_result.contains_pii,
         entity_types=entity_types,
+    )
+
+
+@app.post("/extract", response_model=ExtractResponse)
+async def extract_document(req: ExtractRequest) -> ExtractResponse:
+    """Extract text from a binary document (PDF, DOCX, XLSX, PPTX, MSG, ...).
+
+    Called by pb-proxy for chat attachments and by adapters that need to
+    convert binary blobs to text. Runs the sync markitdown call off the
+    event loop so the service stays responsive.
+    """
+    t0 = time.perf_counter()
+    extractor_used = "unknown"
+    status_label = "error"
+
+    try:
+        # ── Pre-decode size guard (reject giant base64 strings before we
+        #    allocate the decoded bytes — base64 is ~4/3× the raw size, so
+        #    this caps the encoded input at 4/3× EXTRACT_MAX_BYTES). ──────
+        encoded_cap = (EXTRACT_MAX_BYTES * 4) // 3 + 16  # +16 padding slack
+        if len(req.data) > encoded_cap:
+            status_label = "too_large"
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"Encoded payload too large ({len(req.data)} > {encoded_cap} chars). "
+                    f"Raw document must not exceed {EXTRACT_MAX_BYTES} bytes."
+                ),
+            )
+
+        # ── Decode base64 ────────────────────────────────────────
+        try:
+            raw = base64.b64decode(req.data, validate=False)
+        except (binascii.Error, ValueError) as exc:
+            status_label = "bad_base64"
+            raise HTTPException(status_code=400, detail=f"Invalid base64 payload: {exc}")
+
+        bytes_in = len(raw)
+        if pb_extract_bytes_in:
+            pb_extract_bytes_in.observe(bytes_in)
+
+        # ── Size caps ───────────────────────────────────────────
+        hard_cap = EXTRACT_MAX_BYTES
+        effective_cap = min(req.max_bytes, hard_cap) if req.max_bytes else hard_cap
+        if bytes_in > effective_cap:
+            status_label = "too_large"
+            raise HTTPException(
+                status_code=413,
+                detail=f"Payload exceeds limit ({bytes_in} > {effective_cap} bytes)",
+            )
+
+        # ── File-type gating ────────────────────────────────────
+        filename = req.filename.strip()
+        if not filename:
+            status_label = "bad_filename"
+            raise HTTPException(
+                status_code=400,
+                detail="Filename must not be empty after trimming whitespace",
+            )
+        if should_skip_file(filename):
+            status_label = "skipped"
+            raise HTTPException(
+                status_code=415,
+                detail=f"File type not supported for extraction: {filename}",
+            )
+
+        # If the caller provided a mime type but no extension, append one
+        if "." not in os.path.basename(filename) and req.mime_type:
+            ext = mime_type_to_extension(req.mime_type)
+            if ext:
+                filename = filename + ext
+
+        # ── Run extraction (sync markitdown in thread; bounded by timeout) ──
+        async def _run_extraction() -> tuple[str | None, str]:
+            return await asyncio.to_thread(
+                _content_extractor.extract_from_bytes_detailed, raw, filename
+            )
+
+        with trace_operation(
+            _ingestion_tracer, "extract", "ingestion",
+            mime_type=req.mime_type or "", bytes_in=bytes_in,
+        ):
+            try:
+                text, extractor_used = await asyncio.wait_for(
+                    _run_extraction(), timeout=EXTRACT_TIMEOUT_SECONDS
+                )
+            except asyncio.TimeoutError:
+                status_label = "timeout"
+                raise HTTPException(
+                    status_code=504,
+                    detail=f"Extraction timed out after {EXTRACT_TIMEOUT_SECONDS:.0f}s",
+                )
+            except HTTPException:
+                raise
+            except Exception as exc:
+                log.warning("Extraction error for %s: %s", filename, exc, exc_info=True)
+                status_label = "error"
+                raise HTTPException(status_code=500, detail=f"Extraction failed: {exc}")
+
+        if extractor_used == "skipped":
+            status_label = "skipped"
+            raise HTTPException(
+                status_code=415,
+                detail=f"File type not supported for extraction: {filename}",
+            )
+
+        if not text or not text.strip():
+            status_label = "empty"
+            raise HTTPException(
+                status_code=422,
+                detail=f"Extraction produced no text ({extractor_used})",
+            )
+
+        status_label = "ok"
+        return ExtractResponse(
+            text=text,
+            content_type=detect_content_type(filename),
+            extractor=extractor_used,
+            bytes_in=bytes_in,
+            chars_out=len(text),
+            truncated=False,
+        )
+    finally:
+        if pb_extract_requests:
+            pb_extract_requests.labels(status=status_label, extractor=extractor_used).inc()
+        if pb_extract_duration:
+            pb_extract_duration.observe(time.perf_counter() - t0)
+
+
+@app.post("/preview", response_model=PreviewResponse)
+async def preview(req: PreviewRequest) -> PreviewResponse:
+    """Dry-run the ingestion pipeline without persisting.
+
+    Powers the sales-demo Pipeline Inspector: a decision-maker uploads
+    a representative document (or picks a fixture) and sees exactly
+    what each phase — extract, PII scan, quality gate, OPA privacy
+    decision — would do, with timings. Nothing is written to
+    PostgreSQL or Qdrant; the call is idempotent and cheap.
+
+    Input is either pre-extracted ``text`` or base64 ``data`` +
+    ``filename`` for end-to-end visualisation starting from the
+    binary.
+    """
+    overall_t0 = time.perf_counter()
+
+    # ── Phase 1: extract (only if a binary was supplied) ────────
+    extract_info: dict[str, Any] = {"status": "skipped"}
+    text = req.text or ""
+    if not text:
+        if not (req.data and req.filename):
+            raise HTTPException(
+                status_code=400,
+                detail="provide either 'text' or ('data' + 'filename')",
+            )
+        try:
+            raw = base64.b64decode(req.data, validate=False)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=400,
+                                detail=f"Invalid base64 payload: {exc}")
+        if len(raw) > EXTRACT_MAX_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Payload exceeds limit ({len(raw)} > {EXTRACT_MAX_BYTES} bytes)",
+            )
+        filename = (req.filename or "").strip()
+        t_ex = time.perf_counter()
+        try:
+            text, extractor = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _content_extractor.extract_from_bytes_detailed,
+                    raw, filename,
+                ),
+                timeout=EXTRACT_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504,
+                                detail="Extraction timed out")
+        extract_info = {
+            "status":     "ok" if text else "empty",
+            "extractor":  extractor,
+            "bytes_in":   len(raw),
+            "chars_out":  len(text or ""),
+            "duration_ms": round((time.perf_counter() - t_ex) * 1000, 2),
+        }
+        if not text:
+            # Nothing to scan — return the extraction summary and stop.
+            return PreviewResponse(
+                extract=extract_info,
+                scan={"status": "skipped", "reason": "empty extraction"},
+                quality={"status": "skipped"},
+                privacy={"status": "skipped"},
+                summary={"would_ingest": False,
+                         "reason": "extractor produced no text",
+                         "duration_ms": round(
+                             (time.perf_counter() - overall_t0) * 1000, 2)},
+            )
+
+    # ── Phase 2: PII scan (deterministic, no network) ──────────
+    t_scan = time.perf_counter()
+    scanner = get_scanner()
+    scan_result = scanner.scan_text(text, language=req.language)
+    raw_contains = scan_result.contains_pii
+    raw_counts = dict(scan_result.entity_counts)
+    raw_locations = list(scan_result.entity_locations)
+    scan_duration_ms = round((time.perf_counter() - t_scan) * 1000, 2)
+
+    # ── Phase 2b: semantic verifier (OPA-gated; community default=off) ──
+    contains_after, counts_after, locs_after, verifier_info = \
+        await apply_pii_verifier(text, raw_contains, raw_counts, raw_locations)
+    if verifier_info.get("enabled"):
+        verifier_info["before"] = {
+            "contains_pii":  raw_contains,
+            "entity_counts": raw_counts,
+        }
+
+    scan_info = {
+        "contains_pii":     contains_after,
+        "entity_counts":    counts_after,
+        "entity_locations": locs_after[:20],  # cap UI noise
+        "duration_ms":      scan_duration_ms,
+    }
+    # Replace scan_result fields so downstream quality scoring sees
+    # the post-verifier entity density (matches what /ingest will use).
+    scan_result = type(scan_result)(
+        contains_pii=contains_after,
+        entity_counts=counts_after,
+        entity_locations=locs_after,
+    )
+
+    # ── Phase 3: quality gate (standalone compute + OPA check) ──
+    t_q = time.perf_counter()
+    try:
+        from quality import compute_quality_score  # local import mirrors /ingest
+        quality_report = compute_quality_score(
+            text,
+            metadata=req.metadata,
+            source_type=req.source_type,
+            pii_entity_count=sum(scan_result.entity_counts.values()),
+        )
+        gate = await check_opa_quality_gate(req.source_type, quality_report.score)
+        quality_info = {
+            **quality_report.to_dict(),
+            "gate_allowed":   bool(gate.get("allowed")),
+            "gate_min_score": gate.get("min_score"),
+            "gate_reason":    gate.get("reason"),
+            "duration_ms":    round((time.perf_counter() - t_q) * 1000, 2),
+        }
+    except Exception as exc:
+        quality_info = {
+            "error":       str(exc),
+            "duration_ms": round((time.perf_counter() - t_q) * 1000, 2),
+        }
+
+    # ── Phase 4: OPA privacy decision ───────────────────────────
+    t_p = time.perf_counter()
+    try:
+        priv = await check_opa_privacy(
+            req.classification, scan_result.contains_pii, req.legal_basis,
+        )
+        privacy_info = {
+            "classification":       req.classification,
+            "pii_action":           priv.get("pii_action", "unknown"),
+            "dual_storage_enabled": bool(priv.get("dual_storage_enabled")),
+            "retention_days":       priv.get("retention_days"),
+            "legal_basis_supplied": bool(req.legal_basis),
+            "duration_ms":          round((time.perf_counter() - t_p) * 1000, 2),
+        }
+    except Exception as exc:
+        privacy_info = {
+            "error":       str(exc),
+            "duration_ms": round((time.perf_counter() - t_p) * 1000, 2),
+        }
+
+    pii_action = privacy_info.get("pii_action")
+    gate_allowed = quality_info.get("gate_allowed", False)
+    would_ingest = (
+        gate_allowed
+        and pii_action not in (None, "block")
+    )
+    reason_parts: list[str] = []
+    if not gate_allowed:
+        reason_parts.append(
+            f"quality gate: {quality_info.get('gate_reason', 'denied')}"
+        )
+    if pii_action == "block":
+        reason_parts.append("pii_action=block")
+
+    summary = {
+        "would_ingest": would_ingest,
+        "pii_action":   pii_action,
+        "target_collection": req.metadata.get("collection") or "pb_general",
+        "reasons":      reason_parts,
+        "duration_ms":  round((time.perf_counter() - overall_t0) * 1000, 2),
+        "chars":        len(text),
+    }
+
+    return PreviewResponse(
+        extract=extract_info,
+        scan=scan_info,
+        verifier=verifier_info,
+        quality=quality_info,
+        privacy=privacy_info,
+        summary=summary,
     )
 
 

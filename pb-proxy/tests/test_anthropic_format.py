@@ -91,6 +91,44 @@ class TestAnthropicToOpenai:
         result = anthropic_messages_to_openai(msgs)
         assert result == [{"role": "assistant", "content": "Sure!"}]
 
+    def test_document_block_normalized_to_openai_file(self):
+        """Anthropic document blocks become OpenAI file blocks with a data URL."""
+        msgs = [{"role": "user", "content": [
+            {"type": "text", "text": "What does this say?"},
+            {
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": "aGVsbG8=",
+                },
+                "title": "report",
+            },
+        ]}]
+        result = anthropic_messages_to_openai(msgs)
+        assert len(result) == 1
+        content = result[0]["content"]
+        # content is now a list (multimodal), not a flat string
+        assert isinstance(content, list)
+        assert content[0] == {"type": "text", "text": "What does this say?"}
+        file_block = content[1]
+        assert file_block["type"] == "file"
+        assert file_block["file"]["filename"] == "report.pdf"
+        assert file_block["file"]["file_data"].startswith("data:application/pdf;base64,")
+
+    def test_document_block_without_base64_source_skipped(self):
+        """URL sources aren't fetched by the extractor — skip them."""
+        msgs = [{"role": "user", "content": [
+            {"type": "text", "text": "link"},
+            {
+                "type": "document",
+                "source": {"type": "url", "url": "https://example.com/x.pdf"},
+            },
+        ]}]
+        result = anthropic_messages_to_openai(msgs)
+        # Only the text block survives → flattened to a string
+        assert result == [{"role": "user", "content": "link"}]
+
 
 # ── OpenAI → Anthropic ────────────────────────────────────
 

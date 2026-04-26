@@ -11,3 +11,9 @@ build/
 secrets/*.txt
 nul
 =5.3
+
+# composit scan/diff outputs — regenerated on demand, not committed.
+composit-report.yaml
+composit-report.json
+composit-report.html
+composit-diff.html

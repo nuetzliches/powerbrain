@@ -116,3 +116,14 @@ class TestRedactFields:
         result = redact_fields(text, entities, {"email"})
         # bounds check: end > len(text), skipped
         assert result == text
+
+    def test_birthdate_maps_to_both_builtin_and_custom(self):
+        # `birthdate` must redact Presidio's DATE_OF_BIRTH (built-in, unused but
+        # kept for back-compat) AND our DE_DATE_OF_BIRTH custom recognizer.
+        text = "DOB: 03.07.1991 — onboarded"
+        entities = [
+            {"type": "DE_DATE_OF_BIRTH", "start": 5, "end": 15},
+        ]
+        result = redact_fields(text, entities, {"birthdate"})
+        assert "<DE_DATE_OF_BIRTH>" in result
+        assert "03.07.1991" not in result

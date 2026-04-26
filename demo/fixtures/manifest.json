@@ -1,0 +1,34 @@
+[
+  {
+    "id": "sharepoint-rahmenvertrag",
+    "title": "SharePoint — Rahmenvertrag 2026",
+    "adapter": "Office 365 (SharePoint)",
+    "description": "Contract document typical for the Office 365 / SharePoint adapter. Contains customer PII (name, email, address, IBAN, tax ID) and justifies vault storage.",
+    "classification": "confidential",
+    "data_category": "customer_data",
+    "source_type": "office365",
+    "legal_basis": "contract_fulfillment",
+    "file": "sharepoint_rahmenvertrag.md"
+  },
+  {
+    "id": "outlook-support-request",
+    "title": "Outlook — Customer support request",
+    "adapter": "Office 365 (Outlook Mail)",
+    "description": "Customer-support inbox message with PII (sender, phone, DOB). A typical item synced by the Outlook adapter.",
+    "classification": "internal",
+    "data_category": "customer_data",
+    "source_type": "email",
+    "legal_basis": "legitimate_interest",
+    "file": "outlook_support_request.txt"
+  },
+  {
+    "id": "github-readme",
+    "title": "GitHub — adapter-template README",
+    "adapter": "GitHub",
+    "description": "Public README-style document synced by the GitHub adapter. No PII — demonstrates the 'public' classification path.",
+    "classification": "public",
+    "data_category": "",
+    "source_type": "github",
+    "file": "github_readme.md"
+  }
+]

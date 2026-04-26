@@ -222,6 +222,7 @@ The adapter syncs incrementally — only changed files are re-processed. The pb-
 
 ## Next Steps
 
+- **[Sales-Demo Playbook](playbook-sales-demo.md)** — 15-minute walkthrough for decision-makers (role-aware search, PII vault, org-chart). Launch with `./scripts/quickstart.sh --demo` → visit `http://localhost:8095`.
 - **[MCP Tool Reference](mcp-tools.md)** — All 23 tools with parameters
 - **[Architecture](architecture.md)** — How the components interact
 - **[Deployment Guide](deployment.md)** — Production setup, TLS, Docker Secrets

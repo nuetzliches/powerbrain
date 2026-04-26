@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     key_hash      TEXT NOT NULL UNIQUE,
     agent_id      TEXT NOT NULL UNIQUE,
     agent_role    TEXT NOT NULL DEFAULT 'analyst'
-                  CHECK (agent_role IN ('analyst', 'developer', 'admin')),
+                  CHECK (agent_role IN ('viewer', 'analyst', 'developer', 'admin')),
     description   TEXT,
     active        BOOLEAN NOT NULL DEFAULT true,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -34,5 +34,27 @@ VALUES (
     'dev-agent',
     'admin',
     'Default development key — DO NOT use in production'
+)
+ON CONFLICT (agent_id) DO NOTHING;
+
+-- Demo keys for the sales-demo UI (docker compose --profile demo)
+-- Key: pb_demo_analyst_localonly — role analyst (sees public/internal/confidential)
+-- Key: pb_demo_viewer_localonly  — role viewer  (sees public only)
+-- Both are safe only on local/demo machines. Never enable in production.
+INSERT INTO api_keys (key_hash, agent_id, agent_role, description)
+VALUES (
+    'da9884aad20814b700683b9780603734ded1980030c08488e5c4a7c3fac37f9a',
+    'demo-analyst',
+    'analyst',
+    'Sales-demo analyst key — DO NOT use in production'
+)
+ON CONFLICT (agent_id) DO NOTHING;
+
+INSERT INTO api_keys (key_hash, agent_id, agent_role, description)
+VALUES (
+    '4ffba85aded3963ce4f8320cf611fc57d6abbbf361227289274326f449acc4cc',
+    'demo-viewer',
+    'viewer',
+    'Sales-demo viewer key — DO NOT use in production'
 )
 ON CONFLICT (agent_id) DO NOTHING;
