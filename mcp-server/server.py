@@ -3419,15 +3419,43 @@ async def _transparency_pii_snapshot() -> dict:
 
 
 async def _transparency_audit_snapshot() -> dict:
-    """Short audit-chain integrity status for the transparency report."""
+    """Audit-chain integrity from the worker-maintained cache.
+
+    Reads `audit_integrity_status` (single-row table refreshed by the
+    `audit_integrity_status_refresh` worker job, ~ every 60 s by
+    default). Decoupling the snapshot from the request path means the
+    reported state is always *committed* and not affected by the
+    request's own audit-log INSERT (issue #95). Consumers see
+    `checked_at` and can decide for themselves how stale is too stale;
+    a live answer is available through the `verify_audit_integrity`
+    MCP tool.
+    """
     try:
         pool = await get_pg_pool()
         row = await pool.fetchrow(
-            "SELECT valid, total_checked FROM pb_verify_audit_chain()"
+            "SELECT valid, total_checked, first_invalid_id, "
+            "       checked_at, error "
+            "  FROM audit_integrity_status WHERE id = 1"
         )
         if row is None:
-            return {"valid": None, "total_checked": 0}
-        return {"valid": row["valid"], "total_checked": row["total_checked"]}
+            return {
+                "valid":         None,
+                "total_checked": 0,
+                "stale":         True,
+                "detail":        "no integrity check has run yet",
+            }
+        if row["error"]:
+            return {
+                "valid":      None,
+                "detail":     row["error"][:200],
+                "checked_at": row["checked_at"].isoformat() if row["checked_at"] else None,
+            }
+        return {
+            "valid":            row["valid"],
+            "total_checked":    row["total_checked"],
+            "first_invalid_id": row["first_invalid_id"],
+            "checked_at":       row["checked_at"].isoformat() if row["checked_at"] else None,
+        }
     except Exception as e:
         return {"valid": None, "detail": str(e)[:200]}
 

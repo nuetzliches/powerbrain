@@ -9,6 +9,7 @@ import pytest
 from worker import scheduler as scheduler_mod
 from worker.jobs import (
     accuracy_metrics,
+    audit_integrity_status,
     audit_retention,
     pending_review_timeout,
     gdpr_retention,
@@ -24,6 +25,7 @@ def _ctx(**overrides):
         opa_url="http://opa:8181",
         qdrant_url="http://qdrant:6333",
         audit_retention_days=365,
+        audit_status_tail_rows=1000,
         pending_review_grace_minutes=0,
         extra={},
     )
@@ -91,6 +93,86 @@ class TestAuditRetention:
         ctx.pg_pool.fetchrow.side_effect = RuntimeError("connection lost")
         with pytest.raises(RuntimeError, match="connection lost"):
             await audit_retention.run(ctx)
+
+
+# ── audit_integrity_status ─────────────────────────────────
+
+class TestAuditIntegrityStatus:
+    def _verify_row(self, valid=True, total=10, first_invalid=None,
+                    last_hash=b"\xab" * 32):
+        row = MagicMock()
+        row.__getitem__ = lambda s, k: {
+            "valid":            valid,
+            "total_checked":    total,
+            "first_invalid_id": first_invalid,
+            "last_valid_hash":  last_hash,
+        }[k]
+        return row
+
+    async def test_happy_path_upserts_cache(self):
+        ctx = _ctx()
+        ctx.pg_pool.fetchrow.return_value = self._verify_row(
+            valid=True, total=42,
+        )
+        summary = await audit_integrity_status.run(ctx)
+        assert summary["valid"] is True
+        assert summary["total_checked"] == 42
+        assert summary["tail_rows"] == 1000
+        # Verifier called with tail_rows
+        ctx.pg_pool.fetchrow.assert_called_once()
+        verify_args = ctx.pg_pool.fetchrow.call_args[0]
+        assert "pb_verify_audit_chain_tail" in verify_args[0]
+        assert verify_args[1] == 1000
+        # UPSERT executed
+        ctx.pg_pool.execute.assert_called_once()
+        upsert_sql = ctx.pg_pool.execute.call_args[0][0]
+        assert "audit_integrity_status" in upsert_sql
+        assert "ON CONFLICT (id) DO UPDATE" in upsert_sql
+
+    async def test_invalid_chain_logged(self, caplog):
+        import logging
+        ctx = _ctx()
+        ctx.pg_pool.fetchrow.return_value = self._verify_row(
+            valid=False, total=10, first_invalid=5,
+        )
+        with caplog.at_level(logging.ERROR,
+                             logger="pb-worker.audit_integrity_status"):
+            summary = await audit_integrity_status.run(ctx)
+        assert summary["valid"] is False
+        assert summary["first_invalid_id"] == 5
+        assert any("audit chain invalid" in r.message
+                   for r in caplog.records)
+
+    async def test_custom_tail_rows(self):
+        ctx = _ctx(audit_status_tail_rows=500)
+        ctx.pg_pool.fetchrow.return_value = self._verify_row(total=500)
+        summary = await audit_integrity_status.run(ctx)
+        assert summary["tail_rows"] == 500
+        verify_args = ctx.pg_pool.fetchrow.call_args[0]
+        assert verify_args[1] == 500
+
+    async def test_db_failure_persists_error_and_raises(self):
+        ctx = _ctx()
+        ctx.pg_pool.fetchrow.side_effect = RuntimeError("db unreachable")
+        # The error-path execute() must succeed
+        ctx.pg_pool.execute.return_value = None
+        with pytest.raises(RuntimeError, match="db unreachable"):
+            await audit_integrity_status.run(ctx)
+        # Error UPSERT call after the verify failure
+        ctx.pg_pool.execute.assert_called_once()
+        sql = ctx.pg_pool.execute.call_args[0][0]
+        assert "audit_integrity_status" in sql
+        assert "error" in sql.lower()
+        assert "db unreachable" in ctx.pg_pool.execute.call_args[0][1]
+
+    async def test_error_persistence_failure_swallowed(self):
+        """If the error UPSERT itself fails, the original exception
+        must still propagate; the secondary failure must not mask it."""
+        ctx = _ctx()
+        ctx.pg_pool.fetchrow.side_effect = RuntimeError("primary failure")
+        ctx.pg_pool.execute.side_effect = RuntimeError("secondary failure")
+        with pytest.raises(RuntimeError, match="primary failure"):
+            await audit_integrity_status.run(ctx)
 
 
 # ── pending_review_timeout ─────────────────────────────────
@@ -429,6 +511,7 @@ class TestSchedulerRegistration:
             "gdpr_retention_cleanup",
             "audit_retention_cleanup",
             "repo_sync",
+            "audit_integrity_status_refresh",
         }
 
     def test_register_jobs_attaches_all(self):
@@ -443,6 +526,7 @@ class TestSchedulerRegistration:
             "gdpr_retention_cleanup",
             "audit_retention_cleanup",
             "repo_sync",
+            "audit_integrity_status_refresh",
         }
 
     async def test_run_with_logging_swallows_exceptions(self):
@@ -468,3 +552,4 @@ class TestSchedulerRegistration:
         assert trigger_map["pending_review_timeout"] is IntervalTrigger
         assert trigger_map["gdpr_retention_cleanup"] is CronTrigger
         assert trigger_map["audit_retention_cleanup"] is CronTrigger
+        assert trigger_map["audit_integrity_status_refresh"] is IntervalTrigger

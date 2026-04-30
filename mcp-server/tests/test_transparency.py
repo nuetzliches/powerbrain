@@ -86,9 +86,20 @@ def _ingestion_health_response(body: dict | None = None):
     return r
 
 
-def _chain_row(valid=True, total=5):
+def _chain_row(valid=True, total=5, first_invalid_id=None,
+               checked_at=None, error=None):
+    """Build a mock row matching the audit_integrity_status schema (#95)."""
+    from datetime import datetime, timezone
+    if checked_at is None:
+        checked_at = datetime(2026, 4, 30, 12, 0, 0, tzinfo=timezone.utc)
     row = MagicMock()
-    row.__getitem__ = lambda s, k: {"valid": valid, "total_checked": total}[k]
+    row.__getitem__ = lambda s, k: {
+        "valid":            valid,
+        "total_checked":    total,
+        "first_invalid_id": first_invalid_id,
+        "checked_at":       checked_at,
+        "error":            error,
+    }[k]
     return row
 
 
@@ -287,3 +298,72 @@ class TestTransparencyRouteAuth:
             "/transparency must be auth-required — do not add it to "
             "AUTH_BYPASS_PATHS."
         )
+
+
+class TestAuditIntegritySnapshot:
+    """Coverage for `_transparency_audit_snapshot()` after #95.
+
+    The function now reads from `audit_integrity_status` (worker-cache)
+    instead of running pb_verify_audit_chain() inline. Snapshot reflects
+    committed state, decoupled from the request-path INSERT, with a
+    `checked_at` timestamp consumers can use to gauge staleness.
+    """
+
+    async def test_reads_from_cache(self, _patch_globals):
+        from server import _transparency_audit_snapshot
+        from datetime import datetime, timezone
+        _, mock_pool, _ = _patch_globals
+        ts = datetime(2026, 4, 30, 12, 0, 0, tzinfo=timezone.utc)
+        mock_pool.fetchrow.return_value = _chain_row(
+            valid=True, total=42, checked_at=ts,
+        )
+        snap = await _transparency_audit_snapshot()
+        assert snap["valid"] is True
+        assert snap["total_checked"] == 42
+        assert snap["first_invalid_id"] is None
+        assert snap["checked_at"] == ts.isoformat()
+        # SQL should target the cache table, not pb_verify_audit_chain
+        sql = mock_pool.fetchrow.call_args[0][0]
+        assert "audit_integrity_status" in sql
+        assert "pb_verify_audit_chain" not in sql
+
+    async def test_stale_when_cache_empty(self, _patch_globals):
+        from server import _transparency_audit_snapshot
+        _, mock_pool, _ = _patch_globals
+        mock_pool.fetchrow.return_value = None
+        snap = await _transparency_audit_snapshot()
+        assert snap["valid"] is None
+        assert snap["stale"] is True
+        assert "no integrity check has run yet" in snap["detail"]
+
+    async def test_surfaces_worker_error(self, _patch_globals):
+        from server import _transparency_audit_snapshot
+        from datetime import datetime, timezone
+        _, mock_pool, _ = _patch_globals
+        ts = datetime(2026, 4, 30, 12, 0, 0, tzinfo=timezone.utc)
+        mock_pool.fetchrow.return_value = _chain_row(
+            valid=None, total=0, error="connection refused",
+            checked_at=ts,
+        )
+        snap = await _transparency_audit_snapshot()
+        assert snap["valid"] is None
+        assert "connection refused" in snap["detail"]
+        assert snap["checked_at"] == ts.isoformat()
+
+    async def test_db_failure_returns_none(self, _patch_globals):
+        from server import _transparency_audit_snapshot
+        _, mock_pool, _ = _patch_globals
+        mock_pool.fetchrow.side_effect = RuntimeError("db down")
+        snap = await _transparency_audit_snapshot()
+        assert snap["valid"] is None
+        assert "db down" in snap["detail"]
+
+    async def test_invalid_chain_in_cache(self, _patch_globals):
+        from server import _transparency_audit_snapshot
+        _, mock_pool, _ = _patch_globals
+        mock_pool.fetchrow.return_value = _chain_row(
+            valid=False, total=5, first_invalid_id=42,
+        )
+        snap = await _transparency_audit_snapshot()
+        assert snap["valid"] is False
+        assert snap["first_invalid_id"] == 42
