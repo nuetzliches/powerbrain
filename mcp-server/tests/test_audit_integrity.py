@@ -572,3 +572,155 @@ class TestHashChainLive:
         # Range scope, empty result → still considered valid
         assert v["valid"] is True
         assert v["total_checked"] == 0
+
+
+@pytest.mark.skipif(not _PG_INTEGRATION,
+                    reason="set PG_INTEGRATION=1 to run live PG tests")
+class TestForceReset:
+    """Live tests for pb_audit_force_reset() (#97)."""
+
+    @pytest.fixture
+    async def live_pool(self):
+        import asyncpg
+        url = _os.environ.get(
+            "POSTGRES_URL",
+            "postgresql://pb_admin:pb_admin@localhost:5432/powerbrain",
+        )
+        pool = await asyncpg.create_pool(url, min_size=1, max_size=2)
+        await pool.execute("DELETE FROM agent_access_log")
+        await pool.execute("DELETE FROM audit_archive")
+        # Restart the trigger-managed tail to genesis for a clean baseline.
+        await pool.execute(
+            "UPDATE audit_tail SET last_entry_hash = $1, last_entry_id = 0 "
+            "WHERE id = 1",
+            b"\x00" * 32,
+        )
+        yield pool
+        await pool.execute("DELETE FROM agent_access_log")
+        await pool.execute("DELETE FROM audit_archive")
+        await pool.execute(
+            "UPDATE audit_tail SET last_entry_hash = $1, last_entry_id = 0 "
+            "WHERE id = 1",
+            b"\x00" * 32,
+        )
+        await pool.close()
+
+    async def _seed_rows(self, pool, n: int) -> bytes:
+        """Insert n rows via the trigger and return the resulting tail hash."""
+        for i in range(n):
+            await pool.execute(
+                "INSERT INTO agent_access_log "
+                "(agent_id, agent_role, resource_type, resource_id, "
+                " action, policy_result) "
+                "VALUES ($1, 'analyst', 'dataset', $2, 'search', 'allow')",
+                f"pytest-fr-{i}", f"d{i}",
+            )
+        return await pool.fetchval(
+            "SELECT last_entry_hash FROM audit_tail WHERE id = 1"
+        )
+
+    async def test_force_reset_continuity(self, live_pool):
+        """Continuity preserves the archive and seeds the new chain
+        with the old tail hash. The next insert chains correctly,
+        verifier returns valid=true."""
+        old_tail = await self._seed_rows(live_pool, 3)
+
+        result = await live_pool.fetchrow(
+            "SELECT * FROM pb_audit_force_reset('continuity')"
+        )
+        assert result["archived_rows"] == 3
+        assert result["archived_hash"] == old_tail
+        assert result["new_tail_hash"] == old_tail
+
+        # Live log empty
+        assert await live_pool.fetchval("SELECT COUNT(*) FROM agent_access_log") == 0
+        # Archive has exactly one row with chain_valid=false, row_count=3
+        archive_rows = await live_pool.fetch(
+            "SELECT row_count, chain_valid FROM audit_archive"
+        )
+        assert len(archive_rows) == 1
+        assert archive_rows[0]["row_count"] == 3
+        assert archive_rows[0]["chain_valid"] is False
+        # Tail seeded from old hash
+        tail = await live_pool.fetchrow(
+            "SELECT last_entry_hash, last_entry_id FROM audit_tail WHERE id = 1"
+        )
+        assert tail["last_entry_hash"] == old_tail
+        assert tail["last_entry_id"] == 0
+
+        # Follow-up insert chains correctly via the trigger
+        await self._seed_rows(live_pool, 1)
+        new_row = await live_pool.fetchrow(
+            "SELECT prev_hash FROM agent_access_log ORDER BY id DESC LIMIT 1"
+        )
+        assert new_row["prev_hash"] == old_tail
+
+        # Verifier should walk through cleanly
+        v = await live_pool.fetchrow("SELECT * FROM pb_verify_audit_chain()")
+        assert v["valid"] is True
+
+    async def test_force_reset_genesis(self, live_pool):
+        """Genesis truncates the archive and resets the tail to 32
+        zero bytes. Next insert chains from genesis."""
+        old_tail = await self._seed_rows(live_pool, 3)
+
+        result = await live_pool.fetchrow(
+            "SELECT * FROM pb_audit_force_reset('genesis')"
+        )
+        assert result["archived_rows"] == 3
+        assert result["archived_hash"] == old_tail
+        assert result["new_tail_hash"] == b"\x00" * 32
+
+        # Both tables empty
+        assert await live_pool.fetchval("SELECT COUNT(*) FROM agent_access_log") == 0
+        assert await live_pool.fetchval("SELECT COUNT(*) FROM audit_archive") == 0
+        # Tail at genesis
+        tail = await live_pool.fetchrow(
+            "SELECT last_entry_hash, last_entry_id FROM audit_tail WHERE id = 1"
+        )
+        assert tail["last_entry_hash"] == b"\x00" * 32
+        assert tail["last_entry_id"] == 0
+
+        # Follow-up insert chains from genesis
+        await self._seed_rows(live_pool, 1)
+        new_row = await live_pool.fetchrow(
+            "SELECT prev_hash FROM agent_access_log ORDER BY id DESC LIMIT 1"
+        )
+        assert new_row["prev_hash"] == b"\x00" * 32
+
+        # Verifier returns valid=true
+        v = await live_pool.fetchrow("SELECT * FROM pb_verify_audit_chain()")
+        assert v["valid"] is True
+
+    async def test_force_reset_invalid_mode(self, live_pool):
+        """Anything other than 'continuity' / 'genesis' raises."""
+        import asyncpg
+        with pytest.raises(asyncpg.PostgresError) as exc:
+            await live_pool.fetchrow(
+                "SELECT * FROM pb_audit_force_reset('bogus')"
+            )
+        assert "p_mode" in str(exc.value)
+
+    async def test_force_reset_default_is_continuity(self, live_pool):
+        """No-arg call defaults to continuity mode (preserves archive)."""
+        await self._seed_rows(live_pool, 2)
+        result = await live_pool.fetchrow(
+            "SELECT * FROM pb_audit_force_reset()"
+        )
+        assert result["archived_rows"] == 2
+        # Continuity preserves the archive
+        assert await live_pool.fetchval(
+            "SELECT COUNT(*) FROM audit_archive"
+        ) == 1
+
+    async def test_force_reset_on_empty_log(self, live_pool):
+        """Calling on an already-empty log is idempotent — archive entry
+        records row_count=0 with the current tail hash."""
+        result = await live_pool.fetchrow(
+            "SELECT * FROM pb_audit_force_reset('continuity')"
+        )
+        assert result["archived_rows"] == 0
+        # Archive still gets a marker entry
+        assert await live_pool.fetchval(
+            "SELECT COUNT(*) FROM audit_archive"
+        ) == 1
