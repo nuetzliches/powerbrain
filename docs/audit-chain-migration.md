@@ -49,6 +49,38 @@ chain correctly. The broken segment **stays broken** and
 `pb_verify_audit_chain()` will still return `valid=false` because it
 walks the whole history.
 
+### Recovery via `pb_audit_force_reset()` (migration 025+)
+
+> **TEST / STAGING ONLY.** The function is `SECURITY DEFINER` with
+> `EXECUTE` revoked from `PUBLIC`, so only the DB owner / superuser
+> can call it. There is no production-environment guard yet — see
+> [#97](https://github.com/nuetzliches/powerbrain/issues/97). Treat
+> the manual paths below as the production-safe alternative.
+
+A single function call handles both reset modes atomically (row lock
+on `audit_tail`, cannot race with concurrent inserts). Both modes
+write an `audit_archive` entry with `chain_valid=false` first, so
+the forensic trail of "a forced reset happened" is preserved even in
+genesis mode.
+
+```sql
+-- Continuity (preserve archive, cross-link new chain)
+SELECT * FROM pb_audit_force_reset('continuity');
+
+-- Full genesis (also wipes archive)
+SELECT * FROM pb_audit_force_reset('genesis');
+```
+
+Each call returns `archived_rows`, `archived_hash`, `new_tail_hash`
+so the operator can confirm what was archived and what the next
+chain anchors to. The default mode is `continuity` — calling
+`pb_audit_force_reset()` without arguments preserves the archive.
+
+If your deployment is on migration 024 or earlier, fall back to the
+manual procedures below.
+
+### Manual recovery (any version)
+
 Two options depending on your compliance posture:
 
 **Option A — Archive the broken segment and start fresh.**
