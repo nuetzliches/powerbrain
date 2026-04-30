@@ -741,6 +741,31 @@ async def log_access(agent_id: str, agent_role: str,
 VAULT_HMAC_SECRET = read_secret("VAULT_HMAC_SECRET", "change-me-in-production")
 
 
+def _parse_iso_datetime(s, *, field: str):
+    """Parse an ISO-8601 datetime string into an aware `datetime`.
+
+    Accepts the variants commonly emitted by clients:
+      * `2026-04-30T00:00:00Z`         (Z suffix)
+      * `2026-04-30T00:00:00+00:00`    (explicit offset)
+      * `2026-04-30T00:00:00`          (naive — assumed UTC)
+
+    Returns None for None/empty input. Raises ValueError with the
+    field name and the offending value on parse failure (so callers
+    can surface a 422-style error to the client).
+    """
+    from datetime import datetime, timezone
+    if not s:
+        return None
+    try:
+        # Python 3.11+ accepts "Z" natively, but normalise anyway.
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"{field}: invalid ISO-8601 datetime: {s!r} ({e})")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def validate_pii_access_token(token: dict) -> dict:
     """
     Validates a PII access token (HMAC-signed, short-lived).
@@ -1612,9 +1637,9 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "format":   {"type": "string", "enum": ["json", "csv"], "default": "json"},
-                    "since":    {"type": "string",
+                    "since":    {"type": "string", "format": "date-time",
                                  "description": "ISO-8601 lower bound on created_at (inclusive)"},
-                    "until":    {"type": "string",
+                    "until":    {"type": "string", "format": "date-time",
                                  "description": "ISO-8601 upper bound on created_at (exclusive)"},
                     "agent_id": {"type": "string",
                                  "description": "Filter by exact agent_id"},
@@ -3065,17 +3090,26 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         requested_limit = int(arguments.get("limit") or export_default_rows)
         limit = min(max(1, requested_limit), export_max_rows)
 
+        # Parse + bind ISO-8601 datetimes to real datetime objects so
+        # asyncpg's TIMESTAMPTZ type-check accepts them (#96).
+        try:
+            since_dt = _parse_iso_datetime(arguments.get("since"), field="since")
+            until_dt = _parse_iso_datetime(arguments.get("until"), field="until")
+        except ValueError as e:
+            return [TextContent(type="text",
+                text=json.dumps({"error": str(e)}, ensure_ascii=False))]
+
         # Build filter
         where_parts: list[str] = []
         params: list = []
         idx = 1
-        if arguments.get("since"):
+        if since_dt is not None:
             where_parts.append(f"created_at >= ${idx}")
-            params.append(arguments["since"])
+            params.append(since_dt)
             idx += 1
-        if arguments.get("until"):
+        if until_dt is not None:
             where_parts.append(f"created_at < ${idx}")
-            params.append(arguments["until"])
+            params.append(until_dt)
             idx += 1
         if arguments.get("agent_id"):
             where_parts.append(f"agent_id = ${idx}")
