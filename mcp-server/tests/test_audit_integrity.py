@@ -427,3 +427,68 @@ class TestHashChainLive:
 
         v = await live_pool.fetchrow("SELECT * FROM pb_verify_audit_chain()")
         assert v["valid"] is True
+
+    # ── Issue #94: verifier must detect inconsistent seed ─────────
+    async def test_verify_detects_inconsistent_seed(self, live_pool):
+        """An empty agent_access_log with audit_tail.last_entry_hash
+        out of sync with the archive's last_verified_hash is a guaranteed
+        chain break on the next insert. The verifier must surface that
+        proactively (#94)."""
+        # Setup: archive carries a non-genesis hash, tail is genesis.
+        archive_hash = b"\xab" * 32
+        await live_pool.execute(
+            "INSERT INTO audit_archive ("
+            "    archived_at, last_entry_id, last_verified_hash, "
+            "    row_count, chain_valid, first_invalid_id, retention_cutoff"
+            ") VALUES (now(), 0, $1, 0, true, NULL, now())",
+            archive_hash,
+        )
+        await live_pool.execute(
+            "UPDATE audit_tail SET last_entry_hash = $1, last_entry_id = 0 "
+            "WHERE id = 1",
+            b"\x00" * 32,
+        )
+
+        v = await live_pool.fetchrow("SELECT * FROM pb_verify_audit_chain()")
+        assert v["valid"] is False
+        assert v["first_invalid_id"] == 1
+        assert v["total_checked"] == 0
+        assert v["last_valid_hash"] == archive_hash
+
+    async def test_verify_consistent_empty_chain(self, live_pool):
+        """Empty log + tail and archive both at genesis is a valid
+        post-genesis-reset state. Verifier must return valid=true."""
+        await live_pool.execute(
+            "UPDATE audit_tail SET last_entry_hash = $1, last_entry_id = 0 "
+            "WHERE id = 1",
+            b"\x00" * 32,
+        )
+        v = await live_pool.fetchrow("SELECT * FROM pb_verify_audit_chain()")
+        assert v["valid"] is True
+        assert v["total_checked"] == 0
+        assert v["last_valid_hash"] == b"\x00" * 32
+
+    async def test_verify_seed_check_skipped_for_range_query(self, live_pool):
+        """When the caller asks about a specific id range (p_start_id > 1),
+        the tail-mismatch check must NOT trigger — they're not asking
+        about chain-head consistency."""
+        # Empty log, mismatched seeds (would trigger if scope were head)
+        archive_hash = b"\xcd" * 32
+        await live_pool.execute(
+            "INSERT INTO audit_archive ("
+            "    archived_at, last_entry_id, last_verified_hash, "
+            "    row_count, chain_valid, first_invalid_id, retention_cutoff"
+            ") VALUES (now(), 0, $1, 0, true, NULL, now())",
+            archive_hash,
+        )
+        await live_pool.execute(
+            "UPDATE audit_tail SET last_entry_hash = $1 WHERE id = 1",
+            b"\x00" * 32,
+        )
+
+        v = await live_pool.fetchrow(
+            "SELECT * FROM pb_verify_audit_chain($1, $2)", 100, 200,
+        )
+        # Range scope, empty result → still considered valid
+        assert v["valid"] is True
+        assert v["total_checked"] == 0
