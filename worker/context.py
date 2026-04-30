@@ -17,6 +17,7 @@ class WorkerContext:
     opa_url:        str
     qdrant_url:     str
     audit_retention_days: int = 365
+    audit_status_tail_rows: int = 1000
     pending_review_grace_minutes: int = 0
     extra:          dict = field(default_factory=dict)
 
@@ -45,5 +46,6 @@ class WorkerContext:
             opa_url=os.getenv("OPA_URL", "http://opa:8181"),
             qdrant_url=os.getenv("QDRANT_URL", "http://qdrant:6333"),
             audit_retention_days=int(os.getenv("AUDIT_RETENTION_DAYS", "365")),
+            audit_status_tail_rows=int(os.getenv("AUDIT_INTEGRITY_TAIL_ROWS", "1000")),
             pending_review_grace_minutes=int(os.getenv("PENDING_REVIEW_GRACE_MINUTES", "0")),
         )

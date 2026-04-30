@@ -28,6 +28,7 @@ from prometheus_client import start_http_server
 from worker.context import WorkerContext
 from worker.jobs import (
     accuracy_metrics,
+    audit_integrity_status,
     audit_retention,
     gdpr_retention,
     pending_review_timeout,
@@ -73,6 +74,14 @@ JOB_SPECS: list[dict] = [
         "trigger": IntervalTrigger(
             minutes=int(os.getenv("REPO_SYNC_INTERVAL_MINUTES", "5")),
             jitter=30,
+        ),
+    },
+    {
+        "id":      "audit_integrity_status_refresh",
+        "func":    audit_integrity_status.run,
+        "trigger": IntervalTrigger(
+            seconds=int(os.getenv("AUDIT_INTEGRITY_INTERVAL_SECONDS", "60")),
+            jitter=10,
         ),
     },
 ]

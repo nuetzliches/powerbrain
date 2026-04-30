@@ -245,10 +245,90 @@ class TestExportAuditLog:
         assert "created_at <" in sql
         assert "agent_id =" in sql
         assert "action =" in sql
-        assert "2026-04-01T00:00:00Z" in params
-        assert "2026-04-08T00:00:00Z" in params
+        # since/until are now bound as datetime objects, not strings (#96)
+        assert isinstance(params[0], datetime)
+        assert params[0] == datetime(2026, 4, 1, tzinfo=timezone.utc)
+        assert isinstance(params[1], datetime)
+        assert params[1] == datetime(2026, 4, 8, tzinfo=timezone.utc)
         assert "agent-42" in params
         assert "search" in params
+
+    async def test_since_iso_with_offset(self, _patch_globals):
+        """Explicit timezone offset is preserved (#96)."""
+        mock_http, mock_pool = _patch_globals
+        mock_http.get.return_value = self._opa_response()
+        mock_pool.fetch.return_value = []
+
+        await _dispatch(
+            "export_audit_log",
+            {"since": "2026-04-30T00:00:00+02:00"},
+            "admin-1", "admin",
+        )
+        params = list(mock_pool.fetch.call_args[0][1:])
+        assert isinstance(params[0], datetime)
+        assert params[0].utcoffset().total_seconds() == 7200
+
+    async def test_since_iso_naive_treated_as_utc(self, _patch_globals):
+        """Naive datetime is coerced to UTC (no silent tz drift) (#96)."""
+        mock_http, mock_pool = _patch_globals
+        mock_http.get.return_value = self._opa_response()
+        mock_pool.fetch.return_value = []
+
+        await _dispatch(
+            "export_audit_log",
+            {"since": "2026-04-30T12:34:56"},
+            "admin-1", "admin",
+        )
+        params = list(mock_pool.fetch.call_args[0][1:])
+        assert isinstance(params[0], datetime)
+        assert params[0].tzinfo is timezone.utc
+        assert params[0] == datetime(2026, 4, 30, 12, 34, 56, tzinfo=timezone.utc)
+
+    async def test_since_invalid_returns_error(self, _patch_globals):
+        """Invalid ISO-8601 strings get a clear 422-style error, not a
+        500 from asyncpg's type-check (#96)."""
+        mock_http, mock_pool = _patch_globals
+        mock_http.get.return_value = self._opa_response()
+
+        result = await _dispatch(
+            "export_audit_log",
+            {"since": "not-a-datetime"},
+            "admin-1", "admin",
+        )
+        payload = json.loads(result[0].text)
+        assert "error" in payload
+        assert "since" in payload["error"]
+        assert "invalid ISO-8601" in payload["error"]
+        # The DB must not be touched
+        mock_pool.fetch.assert_not_called()
+
+    async def test_until_invalid_returns_error(self, _patch_globals):
+        mock_http, mock_pool = _patch_globals
+        mock_http.get.return_value = self._opa_response()
+
+        result = await _dispatch(
+            "export_audit_log",
+            {"until": "not-a-datetime"},
+            "admin-1", "admin",
+        )
+        payload = json.loads(result[0].text)
+        assert "error" in payload
+        assert "until" in payload["error"]
+        mock_pool.fetch.assert_not_called()
+
+    async def test_empty_since_skipped(self, _patch_globals):
+        """Empty/missing since still works (no filter applied)."""
+        mock_http, mock_pool = _patch_globals
+        mock_http.get.return_value = self._opa_response()
+        mock_pool.fetch.return_value = []
+
+        await _dispatch(
+            "export_audit_log",
+            {"since": ""},
+            "admin-1", "admin",
+        )
+        sql = mock_pool.fetch.call_args[0][0]
+        assert "created_at >=" not in sql
 
     async def test_unknown_format_rejected(self, _patch_globals):
         mock_http, mock_pool = _patch_globals
@@ -427,3 +507,68 @@ class TestHashChainLive:
 
         v = await live_pool.fetchrow("SELECT * FROM pb_verify_audit_chain()")
         assert v["valid"] is True
+
+    # ── Issue #94: verifier must detect inconsistent seed ─────────
+    async def test_verify_detects_inconsistent_seed(self, live_pool):
+        """An empty agent_access_log with audit_tail.last_entry_hash
+        out of sync with the archive's last_verified_hash is a guaranteed
+        chain break on the next insert. The verifier must surface that
+        proactively (#94)."""
+        # Setup: archive carries a non-genesis hash, tail is genesis.
+        archive_hash = b"\xab" * 32
+        await live_pool.execute(
+            "INSERT INTO audit_archive ("
+            "    archived_at, last_entry_id, last_verified_hash, "
+            "    row_count, chain_valid, first_invalid_id, retention_cutoff"
+            ") VALUES (now(), 0, $1, 0, true, NULL, now())",
+            archive_hash,
+        )
+        await live_pool.execute(
+            "UPDATE audit_tail SET last_entry_hash = $1, last_entry_id = 0 "
+            "WHERE id = 1",
+            b"\x00" * 32,
+        )
+
+        v = await live_pool.fetchrow("SELECT * FROM pb_verify_audit_chain()")
+        assert v["valid"] is False
+        assert v["first_invalid_id"] == 1
+        assert v["total_checked"] == 0
+        assert v["last_valid_hash"] == archive_hash
+
+    async def test_verify_consistent_empty_chain(self, live_pool):
+        """Empty log + tail and archive both at genesis is a valid
+        post-genesis-reset state. Verifier must return valid=true."""
+        await live_pool.execute(
+            "UPDATE audit_tail SET last_entry_hash = $1, last_entry_id = 0 "
+            "WHERE id = 1",
+            b"\x00" * 32,
+        )
+        v = await live_pool.fetchrow("SELECT * FROM pb_verify_audit_chain()")
+        assert v["valid"] is True
+        assert v["total_checked"] == 0
+        assert v["last_valid_hash"] == b"\x00" * 32
+
+    async def test_verify_seed_check_skipped_for_range_query(self, live_pool):
+        """When the caller asks about a specific id range (p_start_id > 1),
+        the tail-mismatch check must NOT trigger — they're not asking
+        about chain-head consistency."""
+        # Empty log, mismatched seeds (would trigger if scope were head)
+        archive_hash = b"\xcd" * 32
+        await live_pool.execute(
+            "INSERT INTO audit_archive ("
+            "    archived_at, last_entry_id, last_verified_hash, "
+            "    row_count, chain_valid, first_invalid_id, retention_cutoff"
+            ") VALUES (now(), 0, $1, 0, true, NULL, now())",
+            archive_hash,
+        )
+        await live_pool.execute(
+            "UPDATE audit_tail SET last_entry_hash = $1 WHERE id = 1",
+            b"\x00" * 32,
+        )
+
+        v = await live_pool.fetchrow(
+            "SELECT * FROM pb_verify_audit_chain($1, $2)", 100, 200,
+        )
+        # Range scope, empty result → still considered valid
+        assert v["valid"] is True
+        assert v["total_checked"] == 0
