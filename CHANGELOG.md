@@ -7,8 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-04-30
+
+Audit-chain hardening on top of the 0.7.x summarization-pool +
+ingestion-auth groundwork. Five issues filed during a recovery
+walkthrough after the 0.7.1 concurrency fix get resolved here, plus
+a new operator helper for non-production audit resets.
+
 ### Added
 
+- **`pb_audit_force_reset()` operator helper**
+  ([#97](https://github.com/nuetzliches/powerbrain/issues/97),
+  [#99](https://github.com/nuetzliches/powerbrain/pull/99)).
+  Single-call replacement for the multi-statement Continuity / Genesis
+  recovery procedure documented in
+  `docs/audit-chain-migration.md`. Both modes acquire the
+  `audit_tail` row lock (cannot race with concurrent inserts) and
+  archive the current tail with `chain_valid=false` for forensic
+  continuity. `continuity` preserves `audit_archive` and seeds the
+  new chain from the archived hash so the verifier walks straight
+  through; `genesis` additionally truncates the archive and resets
+  `audit_tail.last_entry_hash` to 32 zero bytes. `SECURITY DEFINER`
+  with `REVOKE EXECUTE … FROM PUBLIC` — only the DB owner / superuser
+  can call it. Test/staging only — no production-environment guard
+  yet (see #97 follow-up).
+- **Worker-cached `audit_integrity_status`**
+  ([#95](https://github.com/nuetzliches/powerbrain/issues/95),
+  [#98](https://github.com/nuetzliches/powerbrain/pull/98)).
+  New single-row table holding the most recent
+  `pb_verify_audit_chain_tail()` result, refreshed by a new pb-worker
+  job (`audit_integrity_status_refresh`, every 60 s by default,
+  configurable via `AUDIT_INTEGRITY_INTERVAL_SECONDS` and
+  `AUDIT_INTEGRITY_TAIL_ROWS`). The transparency report's
+  `audit_integrity` field now reads from this cache so the snapshot
+  reflects committed state, decoupled from the request-path INSERT
+  (consumers see a `checked_at` timestamp and can judge staleness
+  themselves). For a live answer, call the `verify_audit_integrity`
+  MCP tool.
 - **Decoupled summarization LLM pool** ([plan](docs/plans/2026-04-20-separate-summary-llm-pool.md)).
   MCP server now accepts `SUMMARIZATION_PROVIDER_URL` /
   `SUMMARIZATION_MODEL` / `SUMMARIZATION_API_KEY` so the in-pipeline
@@ -76,6 +111,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   both extractors on a directory and prints chars-out + latency for
   each — staying outside the production codepath until the
   benchmark data justifies a backend switch.
+
+### Fixed
+
+- **`pb_verify_audit_chain()` detects inconsistent seeds on an empty
+  log** ([#94](https://github.com/nuetzliches/powerbrain/issues/94),
+  [#98](https://github.com/nuetzliches/powerbrain/pull/98)).
+  Previously returned `valid=true, total_checked=0` even when
+  `audit_tail.last_entry_hash` disagreed with the resolved archive
+  seed — a state that's a guaranteed chain break on the next insert
+  (e.g. genesis reset that forgot to truncate `audit_archive`).
+  Migration 023 cross-checks the tail in the empty-range path and now
+  returns `valid=false, first_invalid_id=1` proactively. Range-scoped
+  calls (`p_start_id > 1`) keep their existing behaviour.
+- **`export_audit_log` accepts ISO-8601 datetime strings**
+  ([#96](https://github.com/nuetzliches/powerbrain/issues/96),
+  [#98](https://github.com/nuetzliches/powerbrain/pull/98)). The
+  `since` / `until` parameters were passed to asyncpg as raw strings,
+  which fails the TIMESTAMPTZ type check with a confusing 500. New
+  `_parse_iso_datetime` helper accepts the `Z` / `+00:00` / naive
+  variants, returns a structured 422-style error for malformed input,
+  and binds real `datetime` instances. Pattern lifted from the
+  existing `validate_pii_access_token()` helper.
+- **Audit-chain recovery doc accuracy**
+  ([#93](https://github.com/nuetzliches/powerbrain/issues/93),
+  [#98](https://github.com/nuetzliches/powerbrain/pull/98)).
+  `docs/audit-chain-migration.md` no longer claims
+  `pb_audit_checkpoint_and_prune` deletes broken segments (the DELETE
+  is fail-closed behind `IF v_verify.valid`); Option B's manual
+  TRUNCATE uses a CTE pattern that feeds the archive hash into the
+  `UPDATE audit_tail` (the previous SQL referenced a non-existent
+  column); the genesis-reset path is documented explicitly with the
+  caveat that `audit_archive` must be truncated alongside or the
+  next insert breaks at id=1.
 
 ## [0.7.1] - 2026-04-22
 

@@ -59,9 +59,11 @@ walks the whole history.
 
 A single function call handles both reset modes atomically (row lock
 on `audit_tail`, cannot race with concurrent inserts). Both modes
-write an `audit_archive` entry with `chain_valid=false` first, so
-the forensic trail of "a forced reset happened" is preserved even in
-genesis mode.
+write an `audit_archive` entry with `chain_valid=false` recording the
+forced reset; **only `continuity` preserves it** afterwards. `genesis`
+deletes every `audit_archive` row including that just-written marker,
+so the forensic trail of "a forced reset happened" survives only in
+`continuity` mode.
 
 ```sql
 -- Continuity (preserve archive, cross-link new chain)
