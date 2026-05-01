@@ -15,7 +15,7 @@ opentelemetry-api>=1.27
 opentelemetry-sdk>=1.41.1
 opentelemetry-exporter-otlp-proto-grpc>=1.27
 opentelemetry-instrumentation-fastapi>=0.48b0
-opentelemetry-instrumentation-httpx>=0.48b0
+opentelemetry-instrumentation-httpx>=0.62b1
 
 # ── Content extraction (used by Office 365 adapter, GitHub adapter (opt-in),
 #    and the /extract endpoint called by pb-proxy for chat attachments) ──
