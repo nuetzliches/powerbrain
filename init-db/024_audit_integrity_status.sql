@@ -44,6 +44,14 @@ COMMENT ON COLUMN audit_integrity_status.checked_at       IS 'Timestamp at which
 COMMENT ON COLUMN audit_integrity_status.error            IS 'Last refresh-error message (truncated to 500 chars), NULL on success.';
 
 -- RLS: only the worker (DB owner / superuser) writes; mcp_auditor reads.
+-- Note: there is NO INSERT/UPDATE policy. Writes succeed only via
+-- BYPASSRLS, which `pb_admin` inherits as SUPERUSER (default in the
+-- pb-postgres image). If the deployment runs the worker as a
+-- non-superuser role (e.g. a future least-privilege `pb_worker`),
+-- the audit_integrity_status_refresh job will silently fail and the
+-- transparency snapshot will degrade to `stale: true`. In that case
+-- add an explicit `CREATE POLICY ... FOR INSERT, UPDATE TO pb_worker
+-- USING (true) WITH CHECK (true)`. See issue #103.
 ALTER TABLE audit_integrity_status ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_integrity_status FORCE ROW LEVEL SECURITY;
 

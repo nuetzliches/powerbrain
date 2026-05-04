@@ -736,3 +736,102 @@ class TestForceReset:
         assert await live_pool.fetchval(
             "SELECT COUNT(*) FROM audit_archive"
         ) == 1
+
+
+@pytest.mark.skipif(not _PG_INTEGRATION,
+                    reason="set PG_INTEGRATION=1 to run live PG tests")
+class TestAuditIntegrityStatusLive:
+    """Live tests for the audit_integrity_status worker cache (#105).
+
+    Mocks in worker/tests/test_jobs.py cover the job logic. These tests
+    cover the parts that mocks cannot:
+    - The worker's DB role (pb_admin) can actually UPSERT despite
+      FORCE ROW LEVEL SECURITY (relies on BYPASSRLS — see #103).
+    - The mcp_auditor role can SELECT via the read-only policy created
+      in migration 024.
+    """
+
+    @pytest.fixture
+    async def live_pool(self):
+        import asyncpg
+        url = _os.environ.get(
+            "POSTGRES_URL",
+            "postgresql://pb_admin:pb_admin@localhost:5432/powerbrain",
+        )
+        pool = await asyncpg.create_pool(url, min_size=1, max_size=2)
+        # Reset the cache row so each test starts from a clean state
+        await pool.execute("DELETE FROM audit_integrity_status")
+        yield pool
+        await pool.execute("DELETE FROM audit_integrity_status")
+        await pool.close()
+
+    async def test_worker_can_upsert(self, live_pool):
+        """The worker job runs end-to-end: pb_verify_audit_chain_tail()
+        produces a row, the UPSERT writes it to audit_integrity_status,
+        and a SELECT recovers it. Without BYPASSRLS this would fail
+        silently because the table has no INSERT policy."""
+        # Run the worker job. We import lazily so PG_INTEGRATION=0
+        # collection still works without `apscheduler` etc. installed.
+        import sys
+        from types import SimpleNamespace
+        sys.path.insert(0, str(_os.path.join(
+            _os.path.dirname(__file__), "..", "..")))
+        from worker.jobs import audit_integrity_status as job
+
+        ctx = SimpleNamespace(
+            pg_pool=live_pool,
+            audit_status_tail_rows=1000,
+        )
+        summary = await job.run(ctx)
+        assert summary["valid"] in (True, False)  # depends on chain state
+        assert summary["tail_rows"] == 1000
+
+        # Cache row exists with the same data
+        row = await live_pool.fetchrow(
+            "SELECT valid, total_checked, checked_at, error "
+            "FROM audit_integrity_status WHERE id = 1"
+        )
+        assert row is not None
+        assert row["valid"] == summary["valid"]
+        assert row["total_checked"] == summary["total_checked"]
+        assert row["checked_at"] is not None
+        assert row["error"] is None
+
+    async def test_mcp_auditor_can_select(self, live_pool):
+        """mcp_auditor must be able to read via the read-only policy.
+        We can't LOGIN as mcp_auditor (NOLOGIN role), so the test uses
+        SET ROLE inside a transaction to assume the role's privileges."""
+        # Seed a row first (as pb_admin / superuser, BYPASSRLS)
+        await live_pool.execute(
+            """
+            INSERT INTO audit_integrity_status (
+                id, valid, total_checked, checked_at, updated_at
+            )
+            VALUES (1, TRUE, 7, now(), now())
+            ON CONFLICT (id) DO UPDATE SET
+                valid = EXCLUDED.valid,
+                total_checked = EXCLUDED.total_checked,
+                updated_at = now()
+            """
+        )
+
+        async with live_pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("SET LOCAL ROLE mcp_auditor")
+                row = await conn.fetchrow(
+                    "SELECT valid, total_checked "
+                    "FROM audit_integrity_status WHERE id = 1"
+                )
+                assert row is not None
+                assert row["valid"] is True
+                assert row["total_checked"] == 7
+
+                # Negative: mcp_auditor must NOT be able to write —
+                # both the explicit GRANT (only SELECT) and the missing
+                # INSERT policy would block this.
+                import asyncpg
+                with pytest.raises(asyncpg.PostgresError):
+                    await conn.execute(
+                        "UPDATE audit_integrity_status SET valid = FALSE "
+                        "WHERE id = 1"
+                    )
