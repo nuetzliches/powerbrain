@@ -1,7 +1,7 @@
 fastapi>=0.115
 uvicorn[standard]>=0.46.0
 litellm>=1.80
-mcp>=1.0
+mcp>=1.27.0
 httpx>=0.28.1
 pydantic>=2.13.3
 pyyaml>=6.0.3
