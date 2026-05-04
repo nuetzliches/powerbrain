@@ -63,12 +63,19 @@ jobs:
           fi
 
           cd "${DEPLOY_DIR}"
-          docker compose pull mcp-server ingestion reranker pb-proxy pb-worker
-          docker compose up -d mcp-server ingestion reranker pb-proxy pb-worker
+          # NOTE: `reranker` is profile-gated (`profiles: ["local-reranker"]`)
+          # in docker-compose.yml. Naming it explicitly here would override
+          # the profile gate and force-start it, even on deployments that
+          # use a remote reranker (RERANKER_URL pointing at an external
+          # endpoint). Operators who want the local reranker should bring
+          # it up separately with `docker compose --profile local-reranker
+          # up -d reranker`.
+          docker compose pull mcp-server ingestion pb-proxy pb-worker
+          docker compose up -d mcp-server ingestion pb-proxy pb-worker
 
           echo "✅ Powerbrain services restarted"
 
-          for svc in pb-mcp-server pb-ingestion pb-reranker pb-proxy; do
+          for svc in pb-mcp-server pb-ingestion pb-proxy; do
             for i in $(seq 1 12); do
               status=$(docker inspect --format='{{.State.Health.Status}}' "$svc" 2>/dev/null || echo "unknown")
               if [ "$status" = "healthy" ]; then
