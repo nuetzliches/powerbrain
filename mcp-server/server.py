@@ -3506,9 +3506,13 @@ async def _transparency_audit_snapshot() -> dict:
             "  FROM audit_integrity_status WHERE id = 1"
         )
         if row is None:
+            # `total_checked: null` (not 0) so consumers can distinguish
+            # "no check has run" from "check ran, found 0 entries". The
+            # `stale` flag is the primary signal; the null value avoids
+            # the misleading "verified: 0" rendering downstream (#104).
             return {
                 "valid":         None,
-                "total_checked": 0,
+                "total_checked": None,
                 "stale":         True,
                 "detail":        "no integrity check has run yet",
             }

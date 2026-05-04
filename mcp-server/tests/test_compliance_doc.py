@@ -119,6 +119,23 @@ class TestRenderDoc:
         assert "Hash chain valid: `True`" in body
         assert "verified at last check: `42`" in body
 
+    def test_section_3_renders_stale_audit_as_unknown(self):
+        """When the worker cache is empty, transparency reports
+        `total_checked: null`. The renderer must render that as
+        "unknown" — not the literal "None" — so the Annex IV doc is
+        not misleading. See issue #104."""
+        ctx = _full_ctx(transparency={
+            "audit_integrity": {
+                "valid":         None,
+                "total_checked": None,
+                "stale":         True,
+            },
+        })
+        body = render_doc(ctx)
+        assert "verified at last check: `unknown`" in body
+        assert "verified at last check: `None`" not in body
+        assert "verified at last check: `0`" not in body
+
     def test_section_3_lists_indicators(self):
         ctx = _full_ctx()
         body = render_doc(ctx)

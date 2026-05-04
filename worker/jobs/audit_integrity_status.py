@@ -26,6 +26,20 @@ async def run(ctx) -> dict[str, Any]:
             "FROM pb_verify_audit_chain_tail($1)",
             tail_rows,
         )
+        summary = {
+            "valid":            row["valid"],
+            "total_checked":    row["total_checked"],
+            "first_invalid_id": row["first_invalid_id"],
+            "tail_rows":        tail_rows,
+        }
+        # Log the verify result BEFORE the UPSERT so operators retain
+        # visibility even if the cache table is missing or write-broken
+        # (e.g. mid-rollback, BYPASSRLS misconfig). See issue #102.
+        if not row["valid"]:
+            log.error("audit chain invalid: %s", summary)
+        else:
+            log.info("audit chain verified: %s", summary)
+
         await ctx.pg_pool.execute(
             """
             INSERT INTO audit_integrity_status (
@@ -47,16 +61,6 @@ async def run(ctx) -> dict[str, Any]:
             row["first_invalid_id"],
             row["last_valid_hash"],
         )
-        summary = {
-            "valid":            row["valid"],
-            "total_checked":    row["total_checked"],
-            "first_invalid_id": row["first_invalid_id"],
-            "tail_rows":        tail_rows,
-        }
-        if not row["valid"]:
-            log.error("audit chain invalid! cached: %s", summary)
-        else:
-            log.info("audit_integrity_status refresh: %s", summary)
         return summary
     except Exception as e:
         log.exception("audit_integrity_status refresh failed: %s", e)

@@ -174,6 +174,29 @@ class TestAuditIntegrityStatus:
         with pytest.raises(RuntimeError, match="primary failure"):
             await audit_integrity_status.run(ctx)
 
+    async def test_verify_logged_before_upsert_failure(self, caplog):
+        """When verify SUCCEEDED but the cache UPSERT fails (e.g. table
+        missing during partial migration), the verify result must still
+        appear in operator logs. See issue #102."""
+        import logging
+        ctx = _ctx()
+        ctx.pg_pool.fetchrow.return_value = self._verify_row(
+            valid=True, total=42,
+        )
+        # Simulate "relation audit_integrity_status does not exist"
+        ctx.pg_pool.execute.side_effect = RuntimeError(
+            'relation "audit_integrity_status" does not exist'
+        )
+        with caplog.at_level(logging.INFO,
+                             logger="pb-worker.audit_integrity_status"):
+            with pytest.raises(RuntimeError, match="does not exist"):
+                await audit_integrity_status.run(ctx)
+        # The verify result must be in the log before the failure
+        verified = [r for r in caplog.records
+                    if "audit chain verified" in r.message]
+        assert verified, "verify result should be logged before UPSERT"
+        assert "'total_checked': 42" in verified[0].message
+
 
 # ── pending_review_timeout ─────────────────────────────────
 
