@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-05-04
+
 Closes the audit-review backlog filed against v0.8.0
 (#101–#105) plus a follow-up security hardening for ingestion auth
 (#126).
