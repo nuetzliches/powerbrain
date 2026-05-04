@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-05-04
+
+A single CI hardening fix on top of v0.9.0 — no service-code changes,
+no DB migrations, no breaking changes. Cuts an explicit release so
+downstream infra repos can pin to a version tag.
+
 ### Fixed
 
 - **Forgejo build pipeline now publishes version tags**
