@@ -14,6 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # otherwise fail during the lifespan event. Set the opt-out before the
 # app is imported anywhere in the test session.
 os.environ.setdefault("SKIP_OPA_STARTUP_CHECK", "true")
+# The ingestion-auth boot check (#126) refuses to import the app with
+# AUTH_REQUIRED=true (the default) and an empty INGESTION_AUTH_TOKEN.
+# Tests don't run a real ingestion service, so opt out at import time.
+os.environ.setdefault("SKIP_INGESTION_AUTH_STARTUP_CHECK", "true")
 
 
 @pytest.fixture

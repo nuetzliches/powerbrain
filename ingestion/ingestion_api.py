@@ -80,6 +80,7 @@ from shared.opa_client import (
     opa_query,
     verify_required_policies,
 )
+from shared.ingestion_auth import verify_ingestion_auth_configured
 
 POSTGRES_URL = build_postgres_url()
 
@@ -226,6 +227,17 @@ app = FastAPI(title="Powerbrain Ingestion API", version="1.0.0")
 
 # ── Service-token auth (B-50, defense-in-depth on top of pb-net) ──
 INGESTION_AUTH_TOKEN = read_secret("INGESTION_AUTH_TOKEN", "")
+AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
+SKIP_INGESTION_AUTH_STARTUP_CHECK = (
+    os.getenv("SKIP_INGESTION_AUTH_STARTUP_CHECK", "false").lower() == "true"
+)
+# Fail-closed: refuse to start with empty token + AUTH_REQUIRED=true (#126).
+verify_ingestion_auth_configured(
+    INGESTION_AUTH_TOKEN,
+    auth_required=AUTH_REQUIRED,
+    skip_check=SKIP_INGESTION_AUTH_STARTUP_CHECK,
+    service_name="ingestion",
+)
 from auth_middleware import IngestionAuthMiddleware  # noqa: E402
 app.add_middleware(IngestionAuthMiddleware, expected_token=INGESTION_AUTH_TOKEN)
 

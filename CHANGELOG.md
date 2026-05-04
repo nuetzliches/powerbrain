@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ⚠ BREAKING CHANGES
+
+- **Ingestion auth fail-closed**
+  ([#126](https://github.com/nuetzliches/powerbrain/issues/126)).
+  `INGESTION_AUTH_TOKEN` no longer falls back to allow-all when empty.
+  With the default `AUTH_REQUIRED=true`, **mcp-server, pb-proxy,
+  ingestion, and pb-worker now refuse to start** if the token is
+  missing — surfacing the silent-degradation mode introduced in
+  v0.8.0 (B-50, [PR #89](https://github.com/nuetzliches/powerbrain/pull/89))
+  as a hard boot failure instead. Mirrors the OPA hardening from
+  v0.7.1 ([PR #62](https://github.com/nuetzliches/powerbrain/pull/62))
+  and the same `SKIP_*_STARTUP_CHECK` opt-out pattern.
+
+  **Migration:** existing deployments that already provisioned
+  `secrets/ingestion_auth_token.txt` (or set the env var) need no
+  changes. Deployments mid-rollout with an empty token must either
+  set the token, or explicitly set `AUTH_REQUIRED=false` (test/dev
+  only — disables ALL auth layers, not only ingestion). Unit-test
+  rigs can set `SKIP_INGESTION_AUTH_STARTUP_CHECK=true`; the standard
+  `conftest.py` fixtures already do.
+
+  New observability: `pb_ingestion_auth_enabled{service=...}` Prometheus
+  gauge reports the boot-time decision per service so dashboards can
+  alert on degraded mode regardless of how the service started.
+
 ## [0.8.0] - 2026-04-30
 
 Audit-chain hardening on top of the 0.7.x summarization-pool +

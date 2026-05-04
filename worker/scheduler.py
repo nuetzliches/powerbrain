@@ -25,6 +25,11 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from prometheus_client import start_http_server
 
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from shared.config import read_secret as _read_secret
+from shared.ingestion_auth import verify_ingestion_auth_configured
+
 from worker.context import WorkerContext
 from worker.jobs import (
     accuracy_metrics,
@@ -114,6 +119,19 @@ def register_jobs(scheduler: AsyncIOScheduler, ctx: WorkerContext) -> None:
 
 async def main() -> None:
     log.info("pb-worker starting")
+
+    # Fail-closed: refuse to start when AUTH_REQUIRED=true and the
+    # ingestion service token is missing — repo_sync would 401 on every
+    # tick and the misconfig would only surface in worker logs (#126).
+    verify_ingestion_auth_configured(
+        _read_secret("INGESTION_AUTH_TOKEN", ""),
+        auth_required=os.getenv("AUTH_REQUIRED", "true").lower() == "true",
+        skip_check=os.getenv(
+            "SKIP_INGESTION_AUTH_STARTUP_CHECK", "false"
+        ).lower() == "true",
+        service_name="pb-worker",
+    )
+
     ctx = await WorkerContext.create()
     log.info("postgres connected (%s)", os.getenv("POSTGRES_HOST", "postgres"))
 

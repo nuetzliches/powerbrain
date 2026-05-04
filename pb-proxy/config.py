@@ -9,6 +9,7 @@ import logging
 import yaml
 
 from shared.config import read_secret as _read_secret
+from shared.ingestion_auth import verify_ingestion_auth_configured
 
 log = logging.getLogger("pb-proxy")
 
@@ -75,6 +76,16 @@ PG_POOL_MAX = int(os.getenv("PG_POOL_MAX", "5"))
 
 # ── Authentication ───────────────────────────────────────────
 AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
+SKIP_INGESTION_AUTH_STARTUP_CHECK = (
+    os.getenv("SKIP_INGESTION_AUTH_STARTUP_CHECK", "false").lower() == "true"
+)
+# Fail-closed: refuse to start with empty token + AUTH_REQUIRED=true (#126).
+verify_ingestion_auth_configured(
+    INGESTION_AUTH_TOKEN,
+    auth_required=AUTH_REQUIRED,
+    skip_check=SKIP_INGESTION_AUTH_STARTUP_CHECK,
+    service_name="pb-proxy",
+)
 PG_HOST = os.getenv("PG_HOST", "postgres")
 PG_PORT = int(os.getenv("PG_PORT", "5432"))
 PG_DATABASE = os.getenv("PG_DATABASE", "powerbrain")
