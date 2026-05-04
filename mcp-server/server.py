@@ -57,6 +57,7 @@ from shared.opa_client import (
     opa_query,
     verify_required_policies,
 )
+from shared.ingestion_auth import verify_ingestion_auth_configured
 from shared.telemetry import (
     init_telemetry, setup_auto_instrumentation, trace_operation,
     request_telemetry_context, get_current_telemetry,
@@ -82,6 +83,18 @@ INGESTION_URL = os.getenv("INGESTION_URL", "http://ingestion:8081")
 # B-50: defense-in-depth bearer for the ingestion service. Read once
 # at startup (Docker Secret /run/secrets/ingestion_auth_token).
 INGESTION_AUTH_TOKEN = read_secret("INGESTION_AUTH_TOKEN", "")
+AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
+SKIP_INGESTION_AUTH_STARTUP_CHECK = (
+    os.getenv("SKIP_INGESTION_AUTH_STARTUP_CHECK", "false").lower() == "true"
+)
+# Fail-closed: refuse to start with empty token + AUTH_REQUIRED=true (#126).
+verify_ingestion_auth_configured(
+    INGESTION_AUTH_TOKEN,
+    auth_required=AUTH_REQUIRED,
+    skip_check=SKIP_INGESTION_AUTH_STARTUP_CHECK,
+    service_name="mcp-server",
+)
+
 
 def _ingestion_headers() -> dict[str, str]:
     """Auth headers for internal ingestion calls; empty when token unset."""
@@ -139,7 +152,8 @@ MCP_PORT       = int(os.getenv("MCP_PORT", "8080"))
 MCP_PATH       = os.getenv("MCP_PATH", "/mcp")
 MCP_PUBLIC_URL = os.getenv("MCP_PUBLIC_URL", f"http://localhost:{MCP_PORT}")
 METRICS_PORT   = int(os.getenv("METRICS_PORT", "9091"))
-AUTH_REQUIRED  = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
+# AUTH_REQUIRED is already read above (next to INGESTION_AUTH_TOKEN) so the
+# fail-closed boot check (#126) sees the same value.
 
 RATE_LIMIT_ENABLED    = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
 RATE_LIMIT_ANALYST    = int(os.getenv("RATE_LIMIT_ANALYST", "60"))

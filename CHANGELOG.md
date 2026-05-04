@@ -7,6 +7,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Closes the audit-review backlog filed against v0.8.0
+(#101–#105) plus a follow-up security hardening for ingestion auth
+(#126).
+
+### ⚠ BREAKING CHANGES
+
+- **Ingestion auth fail-closed**
+  ([#126](https://github.com/nuetzliches/powerbrain/issues/126)).
+  `INGESTION_AUTH_TOKEN` no longer falls back to allow-all when empty.
+  With the default `AUTH_REQUIRED=true`, **mcp-server, pb-proxy,
+  ingestion, and pb-worker now refuse to start** if the token is
+  missing — surfacing the silent-degradation mode introduced in
+  v0.8.0 (B-50, [PR #89](https://github.com/nuetzliches/powerbrain/pull/89))
+  as a hard boot failure instead. Mirrors the OPA hardening from
+  v0.7.1 ([PR #62](https://github.com/nuetzliches/powerbrain/pull/62))
+  and the same `SKIP_*_STARTUP_CHECK` opt-out pattern.
+
+  **Migration:** existing deployments that already provisioned
+  `secrets/ingestion_auth_token.txt` (or set the env var) need no
+  changes. Deployments mid-rollout with an empty token must either
+  set the token, or explicitly set `AUTH_REQUIRED=false` (test/dev
+  only — disables ALL auth layers, not only ingestion). Unit-test
+  rigs can set `SKIP_INGESTION_AUTH_STARTUP_CHECK=true`; the standard
+  `conftest.py` fixtures already do.
+
+- **`pb_audit_force_reset()` signature gains an optional `p_purpose`
+  argument and behavior changes**
+  ([#101](https://github.com/nuetzliches/powerbrain/issues/101)).
+  The function now writes a self-record into `agent_access_log`
+  before the truncate so the reset action is captured in the
+  cryptographic chain that's about to be archived. As a result,
+  `archived_rows` includes the self-record (typically `+1` over the
+  previous behavior), and `archived_hash` /
+  `audit_archive.last_verified_hash` point to the self-record's
+  `entry_hash` (the correct cryptographic snapshot of the archived
+  chain) instead of the pre-call tail. Existing zero-arg and
+  one-arg callers continue to work via the new default
+  `p_purpose=NULL`. Test/staging tooling that asserted on
+  `archived_rows` / `archived_hash` literals must update; the
+  bundled live tests show the pattern.
+
+### Added
+
+- **`audit_archive.reset_caller` + `reset_purpose` columns**
+  ([#101](https://github.com/nuetzliches/powerbrain/issues/101),
+  migration `026_audit_force_reset_provenance.sql`). Captures the DB
+  role that issued `pb_audit_force_reset()` and the operator-supplied
+  reason. Survives in continuity mode; lost in genesis (audit_archive
+  is truncated by design, but Postgres statement logs still record the
+  function call).
+- **`pb_ingestion_auth_enabled{service=...}` Prometheus gauge**
+  ([#126](https://github.com/nuetzliches/powerbrain/issues/126)).
+  Reports the boot-time decision per service (`1`=token configured,
+  `0`=disabled or skipped) so dashboards can alert on degraded mode
+  regardless of how the service started.
+- **Live PG coverage for the audit_integrity_status worker writes**
+  ([#105](https://github.com/nuetzliches/powerbrain/issues/105)).
+  New `TestAuditIntegrityStatusLive` class in
+  `mcp-server/tests/test_audit_integrity.py` (`PG_INTEGRATION=1`
+  gated). Catches future regressions if the worker role loses the
+  BYPASSRLS that today makes the UPSERT through `FORCE ROW LEVEL
+  SECURITY` work.
+
+### Fixed
+
+- **Audit-worker logs verify result before the cache UPSERT**
+  ([#102](https://github.com/nuetzliches/powerbrain/issues/102)).
+  When migration 024 hadn't been applied yet (mid-rollback or partial
+  setup), the verify result was silently lost: the primary
+  `pb_verify_audit_chain_tail()` call succeeded, but the UPSERT into
+  the missing `audit_integrity_status` table raised, and the
+  exception handler tried the same UPSERT and also failed. Operators
+  now see `audit chain verified: {…}` at INFO level (or
+  `audit chain invalid: {…}` at ERROR) before the persistence attempt.
+- **Transparency snapshot returns `total_checked: null` when the
+  cache is stale** ([#104](https://github.com/nuetzliches/powerbrain/issues/104)).
+  Previously returned `0`, which the Annex IV renderer dutifully
+  formatted as `verified at last check: '0'` — misleading because no
+  check had run at all. The snapshot's `stale` flag is the primary
+  signal; `total_checked: null` is the JSON-idiomatic
+  "value unknown" so consumers can't accidentally read it as zero.
+  The compliance-doc renderer now displays `unknown` instead of
+  `None`/`0`.
+- **Test state pollution in `TestHashChainLive`**
+  ([PR #131](https://github.com/nuetzliches/powerbrain/pull/131)).
+  The `live_pool` fixture cleaned `agent_access_log` and
+  `audit_archive` between tests but not `audit_tail`, so a later
+  test's inserts chained from a stale tail and `pb_verify_audit_chain`
+  walked them as broken. Fixture now resets `audit_tail` to genesis
+  in both setup and teardown, mirroring `TestForceReset.live_pool`.
+  Latent bug; only visible under `PG_INTEGRATION=1`.
+
+### Documentation
+
+- **BYPASSRLS dependency on audit-chain writes**
+  ([#103](https://github.com/nuetzliches/powerbrain/issues/103)).
+  Inline comments in migrations 022 (`audit_tail`) and 024
+  (`audit_integrity_status`) explaining that writes succeed only via
+  BYPASSRLS — `pb_admin` is `SUPERUSER` by default in the
+  `pb-postgres` image. Deployments running the worker as a
+  non-superuser role need an explicit INSERT/UPDATE policy or the
+  `audit_integrity_status_refresh` job will silently fail and the
+  transparency snapshot will degrade to stale.
+- **`pb_audit_force_reset()` self-record + `p_purpose`**
+  in `docs/audit-chain-migration.md`. Documents the new optional
+  `p_purpose` argument and the implications of the in-chain
+  self-record on the function's return values.
+
 ## [0.8.0] - 2026-04-30
 
 Audit-chain hardening on top of the 0.7.x summarization-pool +
