@@ -633,31 +633,41 @@ class TestForceReset:
 
     async def test_force_reset_continuity(self, live_pool):
         """Continuity preserves the archive and seeds the new chain
-        with the old tail hash. The next insert chains correctly,
-        verifier returns valid=true."""
-        old_tail = await self._seed_rows(live_pool, 3)
+        with the post-self-record tail hash (#101). The next insert
+        chains correctly, verifier returns valid=true."""
+        await self._seed_rows(live_pool, 3)
 
         result = await live_pool.fetchrow(
             "SELECT * FROM pb_audit_force_reset('continuity')"
         )
-        assert result["archived_rows"] == 3
-        assert result["archived_hash"] == old_tail
-        assert result["new_tail_hash"] == old_tail
+        # Self-record adds 1 to the chain before archival (#101). The
+        # archived chain therefore has 3 user rows + 1 marker = 4.
+        assert result["archived_rows"] == 4
+        # archived_hash is the post-self-record tail (the cryptographic
+        # snapshot at archive time). It is no longer equal to the
+        # pre-call tail.
+        new_tail = result["archived_hash"]
+        assert result["new_tail_hash"] == new_tail
 
         # Live log empty
         assert await live_pool.fetchval("SELECT COUNT(*) FROM agent_access_log") == 0
-        # Archive has exactly one row with chain_valid=false, row_count=3
+        # Archive has exactly one row with chain_valid=false, row_count=4
         archive_rows = await live_pool.fetch(
-            "SELECT row_count, chain_valid FROM audit_archive"
+            "SELECT row_count, chain_valid, reset_caller, reset_purpose "
+            "FROM audit_archive"
         )
         assert len(archive_rows) == 1
-        assert archive_rows[0]["row_count"] == 3
+        assert archive_rows[0]["row_count"] == 4
         assert archive_rows[0]["chain_valid"] is False
-        # Tail seeded from old hash
+        # Provenance columns populated (#101)
+        assert archive_rows[0]["reset_caller"] is not None
+        # No purpose passed to the zero/one-arg form → NULL
+        assert archive_rows[0]["reset_purpose"] is None
+        # Tail seeded from post-self-record hash
         tail = await live_pool.fetchrow(
             "SELECT last_entry_hash, last_entry_id FROM audit_tail WHERE id = 1"
         )
-        assert tail["last_entry_hash"] == old_tail
+        assert tail["last_entry_hash"] == new_tail
         assert tail["last_entry_id"] == 0
 
         # Follow-up insert chains correctly via the trigger
@@ -665,7 +675,7 @@ class TestForceReset:
         new_row = await live_pool.fetchrow(
             "SELECT prev_hash FROM agent_access_log ORDER BY id DESC LIMIT 1"
         )
-        assert new_row["prev_hash"] == old_tail
+        assert new_row["prev_hash"] == new_tail
 
         # Verifier should walk through cleanly
         v = await live_pool.fetchrow("SELECT * FROM pb_verify_audit_chain()")
@@ -673,17 +683,21 @@ class TestForceReset:
 
     async def test_force_reset_genesis(self, live_pool):
         """Genesis truncates the archive and resets the tail to 32
-        zero bytes. Next insert chains from genesis."""
-        old_tail = await self._seed_rows(live_pool, 3)
+        zero bytes. Next insert chains from genesis. The self-record
+        provenance is lost in this mode by design (#101)."""
+        await self._seed_rows(live_pool, 3)
 
         result = await live_pool.fetchrow(
-            "SELECT * FROM pb_audit_force_reset('genesis')"
+            "SELECT * FROM pb_audit_force_reset('genesis', 'pytest-genesis')"
         )
-        assert result["archived_rows"] == 3
-        assert result["archived_hash"] == old_tail
+        # Self-record bumps row_count to 4 (#101)
+        assert result["archived_rows"] == 4
+        # archived_hash is the post-self-record tail
+        assert result["archived_hash"] != b"\x00" * 32
         assert result["new_tail_hash"] == b"\x00" * 32
 
-        # Both tables empty
+        # Both tables empty — genesis discards the archive (and with it
+        # the reset_caller / reset_purpose columns; #101)
         assert await live_pool.fetchval("SELECT COUNT(*) FROM agent_access_log") == 0
         assert await live_pool.fetchval("SELECT COUNT(*) FROM audit_archive") == 0
         # Tail at genesis
@@ -719,23 +733,67 @@ class TestForceReset:
         result = await live_pool.fetchrow(
             "SELECT * FROM pb_audit_force_reset()"
         )
-        assert result["archived_rows"] == 2
+        # 2 user rows + 1 self-record (#101)
+        assert result["archived_rows"] == 3
         # Continuity preserves the archive
         assert await live_pool.fetchval(
             "SELECT COUNT(*) FROM audit_archive"
         ) == 1
 
     async def test_force_reset_on_empty_log(self, live_pool):
-        """Calling on an already-empty log is idempotent — archive entry
-        records row_count=0 with the current tail hash."""
+        """Calling on an already-empty log is no longer a true no-op
+        because the function now writes a self-record into the chain
+        before the truncate (#101). The archive marker therefore
+        records row_count=1 (the self-record alone)."""
         result = await live_pool.fetchrow(
             "SELECT * FROM pb_audit_force_reset('continuity')"
         )
-        assert result["archived_rows"] == 0
+        # Self-record alone (#101)
+        assert result["archived_rows"] == 1
         # Archive still gets a marker entry
         assert await live_pool.fetchval(
             "SELECT COUNT(*) FROM audit_archive"
         ) == 1
+
+    async def test_force_reset_records_purpose_in_archive(self, live_pool):
+        """The new p_purpose argument is stored in audit_archive
+        alongside the caller (#101). Continuity mode preserves both."""
+        await self._seed_rows(live_pool, 2)
+        await live_pool.fetchrow(
+            "SELECT * FROM pb_audit_force_reset("
+            "'continuity', 'CI fixture cleanup')"
+        )
+        archive = await live_pool.fetchrow(
+            "SELECT reset_caller, reset_purpose FROM audit_archive"
+        )
+        # current_user is whatever the test connects as (typically
+        # pb_admin); we just assert it was captured.
+        assert archive["reset_caller"] is not None
+        assert len(archive["reset_caller"]) > 0
+        assert archive["reset_purpose"] == "CI fixture cleanup"
+
+    async def test_force_reset_self_record_in_archived_chain(self, live_pool):
+        """The self-record written before the truncate is part of the
+        cryptographic chain that gets archived (#101). row_count
+        confirms it; the archive's last_verified_hash is the
+        self-record's entry_hash."""
+        # Empty log start, so any rows in the archived chain come from
+        # the function itself.
+        result = await live_pool.fetchrow(
+            "SELECT * FROM pb_audit_force_reset("
+            "'continuity', 'pytest-self-record-check')"
+        )
+        archive = await live_pool.fetchrow(
+            "SELECT row_count, last_verified_hash, reset_purpose "
+            "FROM audit_archive"
+        )
+        assert archive["row_count"] == 1
+        # last_verified_hash matches the function's reported
+        # archived_hash (the self-record's hash)
+        assert archive["last_verified_hash"] == result["archived_hash"]
+        # And it's not the genesis hash
+        assert archive["last_verified_hash"] != b"\x00" * 32
+        assert archive["reset_purpose"] == "pytest-self-record-check"
 
 
 @pytest.mark.skipif(not _PG_INTEGRATION,

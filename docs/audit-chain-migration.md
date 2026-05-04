@@ -71,12 +71,25 @@ SELECT * FROM pb_audit_force_reset('continuity');
 
 -- Full genesis (also wipes archive)
 SELECT * FROM pb_audit_force_reset('genesis');
+
+-- With operator-supplied purpose for forensic provenance (#101, migration 026+)
+SELECT * FROM pb_audit_force_reset('continuity', 'CI fixture cleanup');
 ```
 
 Each call returns `archived_rows`, `archived_hash`, `new_tail_hash`
 so the operator can confirm what was archived and what the next
 chain anchors to. The default mode is `continuity` — calling
 `pb_audit_force_reset()` without arguments preserves the archive.
+
+From migration 026 onward, the function also writes a self-record
+into `agent_access_log` **before** the truncate, so the forced reset
+is captured in the cryptographic chain that gets archived (continuity
+mode) or appears briefly in Postgres statement logs (genesis mode).
+`audit_archive.reset_caller` and `audit_archive.reset_purpose`
+columns capture the operator context. As a result, `archived_rows`
+includes the self-record (typically `+1` over the previous behavior),
+and `archived_hash` points to the self-record's `entry_hash` — the
+correct cryptographic snapshot of the archived chain.
 
 If your deployment is on migration 024 or earlier, fall back to the
 manual procedures below.
