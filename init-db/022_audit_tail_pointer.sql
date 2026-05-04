@@ -61,6 +61,11 @@ ON CONFLICT (id) DO NOTHING;
 
 -- RLS: only the audit trigger function (SECURITY DEFINER) writes here.
 -- mcp_auditor may read for transparency; nothing else may touch it.
+-- Note: trigger-driven UPDATEs from pb_audit_hashchain_trigger() bypass
+-- RLS because the function is SECURITY DEFINER, owned by pb_admin
+-- (SUPERUSER → BYPASSRLS). pb_audit_checkpoint_and_prune() relies on
+-- the same chain. Running the trigger function under a non-superuser
+-- owner would require an explicit policy. See issue #103.
 ALTER TABLE audit_tail ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_tail FORCE ROW LEVEL SECURITY;
 
