@@ -3,7 +3,8 @@
 #  build-images.sh -- Build & push Docker images to Forgejo Registry
 #  Called by Forgejo Actions after mirror-sync from GitHub.
 #
-#  Images are tagged with :latest and :sha-<short-hash>.
+#  Images are tagged with :latest, :sha-<short-hash>, and (when HEAD
+#  is on a release tag) :<version> (e.g. :0.9.1 from tag v0.9.1).
 #  Registry: ${REGISTRY}/${ORG}/${REPO}/<service>
 # ============================================================
 set -euo pipefail
@@ -21,6 +22,21 @@ REPO_DIR="${REPO_DIR:-$(pwd)}"
 cd "$REPO_DIR"
 
 SHORT_SHA=$(git rev-parse --short HEAD)
+
+# ── Release-Tag Detection ───────────────────────────────────
+# Priority 1: RELEASE_TAG env (workflow passes github.ref_name on
+#             tag pushes — works even when HEAD is detached).
+# Priority 2: git describe --exact-match (works locally + when
+#             checkout has HEAD on the tag's commit).
+RELEASE_TAG="${RELEASE_TAG:-}"
+if [ -z "$RELEASE_TAG" ]; then
+  RELEASE_TAG=$(git describe --exact-match --tags HEAD 2>/dev/null || true)
+fi
+VERSION=""
+if [ -n "$RELEASE_TAG" ]; then
+  VERSION="${RELEASE_TAG#v}"
+  log "Release tag detected: ${RELEASE_TAG} (version: ${VERSION})"
+fi
 
 # ── Image List ──────────────────────────────────────────────
 # Each entry: "service-name:Dockerfile:build-context"
@@ -56,7 +72,7 @@ for svc in mcp-server ingestion reranker pb-proxy worker shared init-db opa-poli
   fi
 done
 
-if [ "$changed" = "ALL" ] || [ "$has_service_change" = false ]; then
+if [ "$changed" = "ALL" ] || [ "$has_service_change" = false ] || [ -n "$VERSION" ]; then
   rebuild_all=true
   log "Rebuilding all images."
 fi
@@ -84,17 +100,20 @@ for entry in "${IMAGES[@]}"; do
   context="${rest#*:}"
   log "Building ${image} (context: ${context})..."
 
-  docker build \
-    -f "$dockerfile" \
-    -t "${image}:latest" \
-    -t "${image}:sha-${SHORT_SHA}" \
-    "$context"
+  build_tags=("-t" "${image}:latest" "-t" "${image}:sha-${SHORT_SHA}")
+  [ -n "$VERSION" ] && build_tags+=("-t" "${image}:${VERSION}")
+
+  docker build -f "$dockerfile" "${build_tags[@]}" "$context"
 
   log "Pushing ${image}..."
   docker push "${image}:latest"
   docker push "${image}:sha-${SHORT_SHA}"
-
-  ok "${service} -> ${image}:sha-${SHORT_SHA}"
+  if [ -n "$VERSION" ]; then
+    docker push "${image}:${VERSION}"
+    ok "${service} -> ${image}:${VERSION} (also :latest, :sha-${SHORT_SHA})"
+  else
+    ok "${service} -> ${image}:sha-${SHORT_SHA} (also :latest)"
+  fi
   built=$((built + 1))
 done
 

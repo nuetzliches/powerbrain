@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Forgejo build pipeline now publishes version tags**
+  ([build-images.sh](scripts/build-images.sh) +
+  [.forgejo/workflows/build-images.yml](.forgejo/workflows/build-images.yml)).
+  The Forgejo Actions build was tagging images only as `:latest` and
+  `:sha-<short>`, never as `:<version>` — so consumers downstream
+  (e.g. infra repos pinning the image tag) could not reference a
+  release like `0.9.0`. Two changes:
+  1. Workflow now triggers on `tags: ['v*']` in addition to `master`,
+     and drops the `paths:` filter (release commits are typically
+     CHANGELOG-only and would otherwise be skipped). The script's
+     own change detection still keeps non-release runs cheap.
+  2. `scripts/build-images.sh` reads the new `RELEASE_TAG` env
+     (passed by the workflow as `github.ref_name` on tag pushes,
+     with a `git describe --exact-match` fallback for local runs)
+     and adds a `:${VERSION}` build/push tag alongside the existing
+     two. Release-tagged runs also force `rebuild_all=true` so the
+     full image set always carries the version tag, even when only
+     CHANGELOG.md changed in the release commit.
+
 ## [0.9.0] - 2026-05-04
 
 Closes the audit-review backlog filed against v0.8.0

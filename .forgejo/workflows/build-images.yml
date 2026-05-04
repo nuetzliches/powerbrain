@@ -3,15 +3,12 @@ name: Build, Push & Deploy
 on:
   push:
     branches: [master]
-    paths:
-      - 'mcp-server/**'
-      - 'ingestion/**'
-      - 'reranker/**'
-      - 'pb-proxy/**'
-      - 'worker/**'
-      - 'shared/**'
-      - 'init-db/**'
-      - 'opa-policies/**'
+    tags: ['v*']
+    # No `paths:` filter — release-tag pushes are typically on
+    # CHANGELOG-only commits and must still fire to produce
+    # :<version>-tagged images. The script (scripts/build-images.sh)
+    # does its own change detection and exits fast when nothing
+    # service-relevant changed.
   workflow_dispatch:
 
 jobs:
@@ -52,6 +49,10 @@ jobs:
           REPO: powerbrain
           FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
           BEFORE_SHA: ${{ github.event.before }}
+          # On tag pushes (refs/tags/v*), pass the tag name so the
+          # script adds :<version> alongside :latest and :sha-<short>.
+          # Empty for branch pushes; falls back to git describe.
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
 
       - name: Deploy — pull and restart services
         run: |
