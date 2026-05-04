@@ -369,6 +369,9 @@ class TestAuditIntegritySnapshot:
         mock_pool.fetchrow.return_value = None
         snap = await _transparency_audit_snapshot()
         assert snap["valid"] is None
+        # `total_checked` is null (not 0) so consumers can distinguish
+        # "no check run" from "checked, found 0 entries". See issue #104.
+        assert snap["total_checked"] is None
         assert snap["stale"] is True
         assert "no integrity check has run yet" in snap["detail"]
 

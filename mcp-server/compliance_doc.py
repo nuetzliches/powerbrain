@@ -160,12 +160,17 @@ def _render_section_3_monitoring(ctx: ComplianceDocContext) -> str:
     t = ctx.transparency or {}
     h = ctx.health or {}
     audit = t.get("audit_integrity", {}) or {}
+    # `total_checked` is null when the worker cache is empty / stale (#104).
+    # Render that as "unknown" instead of "None" to avoid the misleading
+    # "verified: 0" or "verified: None" Annex IV rendering.
+    total_checked = audit.get("total_checked")
+    total_checked_disp = total_checked if total_checked is not None else "unknown"
 
     lines = [
         "## 3. Monitoring, Functioning and Control\n",
         "### 3.1 Audit log integrity (Art. 12)\n",
         f"- Hash chain valid: `{audit.get('valid')}`\n",
-        f"- Total entries verified at last check: `{audit.get('total_checked')}`\n",
+        f"- Total entries verified at last check: `{total_checked_disp}`\n",
         "\nAudit entries form a SHA-256 hash chain enforced by a "
         "PostgreSQL `BEFORE INSERT` trigger and an append-only "
         "`BEFORE UPDATE` block. Retention pruning preserves chain "
