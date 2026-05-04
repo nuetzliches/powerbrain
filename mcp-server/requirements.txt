@@ -15,4 +15,4 @@ opentelemetry-instrumentation-fastapi>=0.48b0
 tenacity>=9.0
 cachetools>=5.3
 jsonschema>=4.0
-pyyaml>=6.0.2
+pyyaml>=6.0.3
