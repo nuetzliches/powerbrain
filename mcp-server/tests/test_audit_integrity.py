@@ -416,12 +416,24 @@ class TestHashChainLive:
         pool = await asyncpg.create_pool(url, min_size=1, max_size=2)
         # Clean state — test class assumes an empty agent_access_log AND
         # an empty audit_archive (otherwise the trigger would use a stale
-        # checkpoint as the genesis prev_hash anchor).
+        # checkpoint as the genesis prev_hash anchor). audit_tail must
+        # also be reset so the trigger seeds the chain from genesis rather
+        # than a stale hash left over from prior test runs.
         await pool.execute("DELETE FROM agent_access_log")
         await pool.execute("DELETE FROM audit_archive")
+        await pool.execute(
+            "UPDATE audit_tail SET last_entry_hash = $1, last_entry_id = 0 "
+            "WHERE id = 1",
+            b"\x00" * 32,
+        )
         yield pool
         await pool.execute("DELETE FROM agent_access_log")
         await pool.execute("DELETE FROM audit_archive")
+        await pool.execute(
+            "UPDATE audit_tail SET last_entry_hash = $1, last_entry_id = 0 "
+            "WHERE id = 1",
+            b"\x00" * 32,
+        )
         await pool.close()
 
     async def _insert(self, pool, n: int, action: str = "search",
