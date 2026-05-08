@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-05-08
+
+A single performance fix on top of v0.9.1 — no service-code semantics
+change, no DB migrations, no breaking changes. Halves the LLM-wait
+portion of per-document ingestion latency on backends that support
+real concurrency (vLLM, TEI, cloud LLM providers).
+
 ### Performance
 
 - **Parallel L0+L1 layer generation in ingestion**
@@ -22,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   graceful-degradation paths. New unit test
   ([test_layer_generation.py](ingestion/tests/test_layer_generation.py))
   asserts the two `completion_provider.generate` calls overlap in time.
+  Single-engine backends without batching (e.g. Ollama on a single
+  GPU/CPU) will see less benefit because inference serialises at the
+  model level — networking and prompt-prep still overlap.
 
 ## [0.9.1] - 2026-05-04
 
