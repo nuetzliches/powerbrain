@@ -1162,8 +1162,16 @@ async def ingest_text_chunks(
         processed_chunks = [p.payload["text"] for p in points]
         now_iso = datetime.now(timezone.utc).isoformat()
 
+        # L0 + L1 generation runs in parallel: both call the same stateless
+        # completion_provider over the async-safe httpx client, with no shared
+        # mutable state. Each helper has its own try/except returning None on
+        # failure, so gather() never raises here.
+        l0_text, l1_text = await asyncio.gather(
+            generate_l0(processed_chunks, source=source, classification=classification),
+            generate_l1(processed_chunks, source=source, classification=classification),
+        )
+
         # L0: Abstract
-        l0_text = await generate_l0(processed_chunks, source=source, classification=classification)
         if l0_text:
             try:
                 l0_embedding = await get_embedding(l0_text)
@@ -1193,7 +1201,6 @@ async def ingest_text_chunks(
                 l0_point_id = None
 
         # L1: Overview
-        l1_text = await generate_l1(processed_chunks, source=source, classification=classification)
         if l1_text:
             try:
                 l1_embedding = await get_embedding(l1_text)

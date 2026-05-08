@@ -1,6 +1,8 @@
 """Tests for L0/L1 layer generation and ingestion pipeline integration."""
 
+import asyncio
 import json
+import time
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -180,3 +182,64 @@ class TestIngestLayerIntegration:
         l1_call = ingestion_api.qdrant.upsert.call_args_list[2]
         l1_points = l1_call.kwargs.get("points", l1_call[1].get("points", []))
         assert l1_points[0].payload["layer"] == "L1"
+
+    @pytest.mark.asyncio
+    async def test_l0_l1_generation_runs_in_parallel(self, monkeypatch):
+        """L0+L1 LLM calls must be issued concurrently, not sequentially.
+
+        Mocks completion_provider.generate to sleep 100ms per call. With
+        parallel execution via asyncio.gather, total layer-generation
+        latency stays around ~100ms; sequential awaits would be ~200ms.
+        """
+        async def _slow_generate(*args, **kwargs):
+            await asyncio.sleep(0.1)
+            return "generated text"
+
+        provider = AsyncMock()
+        provider.generate = AsyncMock(side_effect=_slow_generate)
+        monkeypatch.setattr(ingestion_api, "completion_provider", provider)
+
+        mock_embed = AsyncMock(return_value=[0.1] * 768)
+        monkeypatch.setattr(ingestion_api, "get_embedding", mock_embed)
+        mock_embed_batch = AsyncMock(return_value=[[0.1] * 768])
+        monkeypatch.setattr(
+            ingestion_api.embedding_provider, "embed_batch", mock_embed_batch,
+        )
+        mock_scanner = MagicMock()
+        mock_scanner.scan_text.return_value = MagicMock(
+            contains_pii=False, entity_counts={}, anonymized_text=None,
+        )
+        monkeypatch.setattr(ingestion_api, "get_scanner", lambda: mock_scanner)
+        monkeypatch.setattr(
+            ingestion_api, "check_opa_privacy",
+            AsyncMock(return_value={
+                "pii_action": "allow",
+                "dual_storage_enabled": False,
+                "retention_days": 365,
+            }),
+        )
+        monkeypatch.setattr(
+            ingestion_api, "check_opa_quality_gate",
+            AsyncMock(return_value={"allowed": True, "min_score": 0.0, "reason": ""}),
+        )
+
+        t0 = time.perf_counter()
+        await ingest_text_chunks(
+            chunks=["hello world"],
+            collection="pb_general",
+            source="test.md",
+            classification="internal",
+            project="test",
+            metadata={},
+        )
+        elapsed = time.perf_counter() - t0
+
+        # Sequential awaits would take >=200ms (2× 100ms). Parallel via
+        # asyncio.gather should stay close to 100ms. The 180ms ceiling
+        # absorbs test-runner jitter while still catching a regression
+        # to the old sequential code path.
+        assert elapsed < 0.18, (
+            f"L0+L1 generation took {elapsed:.3f}s; expected parallel "
+            f"execution (~0.1s), got near-sequential (~0.2s)"
+        )
+        assert provider.generate.call_count == 2
