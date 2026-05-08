@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+
+- **Parallel L0+L1 layer generation in ingestion**
+  ([ingestion_api.py](ingestion/ingestion_api.py)). The two LLM calls
+  for the L0 abstract and L1 overview of a single document are
+  independent (same `processed_chunks`, same stateless
+  `completion_provider`, same async-safe `httpx.AsyncClient`) but were
+  awaited sequentially. Switched to `asyncio.gather` so both calls run
+  concurrently. On a 2026-05-08 re-ingest of 3782 commit-docs, layer
+  generation dominated wall time at ~10s of ~12s per document; running
+  the two completions in parallel cuts that to ~5s, a ~40% speedup on
+  long ingestion runs without changing the model or any of the
+  graceful-degradation paths. New unit test
+  ([test_layer_generation.py](ingestion/tests/test_layer_generation.py))
+  asserts the two `completion_provider.generate` calls overlap in time.
+
 ## [0.9.1] - 2026-05-04
 
 A single CI hardening fix on top of v0.9.0 — no service-code changes,
