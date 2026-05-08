@@ -1,4 +1,4 @@
-fastapi>=0.115
+fastapi>=0.136.1
 uvicorn[standard]>=0.46.0
 litellm>=1.80
 mcp>=1.27.0
