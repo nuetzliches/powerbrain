@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-05-09
+
+Routine dependency-maintenance release on top of v0.9.2 — no
+service-code changes, no DB migrations, no breaking changes. Picks up
+the Dependabot backlog accumulated since v0.9.0 and refreshes the
+floor of every Python pin we shipped with v0.9.2 to the latest 2026-05
+upstream release.
+
+### Dependencies
+
+- **Stack-wide pin floor refresh.** Bumped 14 Python deps across
+  `mcp-server/`, `ingestion/`, `pb-proxy/`, and `reranker/` requirements
+  to the current upstream releases. All bumps are loosen-the-floor (`>=`)
+  changes; CI (unit-tests, opa-tests, docker-build, security-scan)
+  green on master after each merge.
+  - **`pb-proxy`** — `fastapi >= 0.136.1`
+    ([#151](https://github.com/nuetzliches/powerbrain/pull/151)),
+    `pydantic >= 2.13.4`
+    ([#150](https://github.com/nuetzliches/powerbrain/pull/150)),
+    `prometheus-client >= 0.25.0`
+    ([#147](https://github.com/nuetzliches/powerbrain/pull/147)),
+    `mcp >= 1.27.1`
+    ([#138](https://github.com/nuetzliches/powerbrain/pull/138)).
+  - **`mcp-server`** — `starlette >= 1.0.0`
+    ([#149](https://github.com/nuetzliches/powerbrain/pull/149)),
+    `cachetools >= 7.1.1`
+    ([#146](https://github.com/nuetzliches/powerbrain/pull/146)),
+    `tenacity >= 9.1.4`
+    ([#142](https://github.com/nuetzliches/powerbrain/pull/142)),
+    `mcp >= 1.27.1`
+    ([#140](https://github.com/nuetzliches/powerbrain/pull/140)),
+    `opentelemetry-instrumentation-fastapi >= 0.62b1`
+    ([#137](https://github.com/nuetzliches/powerbrain/pull/137)).
+  - **`ingestion`** — `pydantic >= 2.13.4`
+    ([#148](https://github.com/nuetzliches/powerbrain/pull/148)),
+    `opentelemetry-api >= 1.41.1`
+    ([#143](https://github.com/nuetzliches/powerbrain/pull/143)),
+    `presidio-analyzer >= 2.2.359`
+    ([#141](https://github.com/nuetzliches/powerbrain/pull/141)),
+    `pyjwt >= 2.12.1`
+    ([#139](https://github.com/nuetzliches/powerbrain/pull/139)),
+    `beautifulsoup4 >= 4.14.3,<5.0`
+    ([#136](https://github.com/nuetzliches/powerbrain/pull/136)).
+  - **`reranker`** — `pydantic >= 2.13.4`
+    ([#144](https://github.com/nuetzliches/powerbrain/pull/144)).
+- **Held back: `litellm` floor bump**
+  ([#145](https://github.com/nuetzliches/powerbrain/pull/145), open).
+  `litellm >= 1.83.7` introduces a stricter pydantic constraint that
+  conflicts with the rest of the proxy's pin set. Will land in a
+  follow-up release once upstream relaxes the bound or once we
+  re-pin pydantic accordingly. Current floor `litellm >= 1.80`
+  remains in effect.
+
 ## [0.9.2] - 2026-05-08
 
 A single performance fix on top of v0.9.1 — no service-code semantics
