@@ -382,6 +382,19 @@ Supports SSE streaming (`"stream": true`).
 OPA policies (`pb.proxy`) control: provider access, required tools, max iterations, MCP server access.
 Configuration: `pb-proxy/litellm_config.yaml` for aliases + `provider_keys`, `pb-proxy/mcp_servers.yaml` for MCP servers.
 
+### Edition Boundary (what Powerbrain governs and what it doesn't)
+Powerbrain enforces policy on three distinct data paths. Be explicit about which one a feature affects:
+
+1. **Ingest path** — adapters → ingestion pipeline → Qdrant/PG/Vault. Always governed (Community + Enterprise).
+2. **Tool-call path** — MCP requests (`search_knowledge`, `graph_query`, …). Always governed (OPA, vault tokens, audit).
+3. **Chat-content path** — user prompt + LLM response + multimodal attachments. **Only governed when traffic goes through `pb-proxy`** (Enterprise tier).
+
+Concrete consequence for Claude clients:
+- **Pro/Max subscription** (Claude Desktop App or Claude Code via `claude /login`): OAuth to claude.ai, `ANTHROPIC_BASE_URL` is hardcoded and cannot be redirected → chat content bypasses Powerbrain even when pb-proxy is running. Tool calls via the registered MCP endpoint still flow through Powerbrain.
+- **API-key mode** (Claude Code with `ANTHROPIC_API_KEY=sk-ant-...`, OpenAI-compatible clients, custom SDKs): `ANTHROPIC_BASE_URL=http://pb-proxy:8090` works → full chat-path protection.
+
+When answering compliance questions or recommending architecture changes, distinguish these three paths explicitly. See `docs/editions.md` and `docs/compliance-claude-desktop.md`.
+
 ## Development
 
 ### Prerequisites

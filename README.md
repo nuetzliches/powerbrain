@@ -61,7 +61,7 @@ Agent / Skill
 
 🏠 **Self-Hosted & GDPR-Native** — Everything runs on your infrastructure. No external API calls for embeddings, search, or summarization. Docker Compose up and you're running.
 
-🔀 **AI Provider Proxy** — Optional gateway between your AI consumers and their LLM providers. Transparently injects Powerbrain tools into every LLM request and executes tool calls automatically. Your teams use any LLM they prefer (100+ providers via LiteLLM); Powerbrain ensures they always query policy-checked enterprise context. Activate with `docker compose --profile proxy up`.
+🔀 **AI Provider Proxy** — Optional gateway between your AI consumers and their LLM providers. Transparently injects Powerbrain tools into every LLM request and executes tool calls automatically. Pseudonymises the chat content on the wire (PII scan via the ingestion pipeline) before it reaches the LLM. Your teams use any LLM they prefer (100+ providers via LiteLLM); Powerbrain ensures they always query policy-checked enterprise context. Without the proxy, direct chat from subscription clients (Claude Desktop / Claude Code Pro/Max) bypasses the chat-path PII scan — see the [edition boundary](docs/editions.md#edition-boundary-what-runs-through-powerbrain--and-what-doesnt). Activate with `docker compose --profile proxy up`.
 
 ## ⚖️ EU AI Act Compliance Toolkit
 
@@ -191,6 +191,8 @@ curl http://localhost:8090/v1/chat/completions \
 | Document | Description |
 |----------|-------------|
 | [Getting Started](docs/getting-started.md) | Step-by-step tutorial: ingest data, search, understand policies |
+| [Editions (Community vs Enterprise)](docs/editions.md) | Capability matrix, edition boundary, which tier governs which data path |
+| [Compliance with Claude Desktop / Code subscriptions](docs/compliance-claude-desktop.md) | Honest answer on Pro/Max bypass, three-tier mitigation, DPA vs AI Act |
 | [MCP Tool Reference](docs/mcp-tools.md) | All 23 MCP tools with parameters and access roles |
 | [What is Powerbrain?](docs/what-is-powerbrain.md) | Detailed overview and positioning |
 | [Architecture](docs/architecture.md) | Technical deep-dive |
