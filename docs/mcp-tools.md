@@ -1,6 +1,6 @@
 # MCP Tool Reference
 
-Powerbrain exposes 23 tools via the Model Context Protocol. All tools require authentication (valid `pb_` API key). Access is further controlled by OPA policies based on agent role and data classification.
+Powerbrain exposes 28 tools via the Model Context Protocol. All tools require authentication (valid `pb_` API key). Access is further controlled by OPA policies based on agent role and data classification.
 
 ## Search & Retrieval
 
@@ -339,3 +339,94 @@ Poll the status of a pending human oversight review.
 | `review_id` | string | yes | — | UUID from original tool call |
 
 **Access:** All authenticated roles (own reviews); Admin (all reviews).
+
+---
+
+## Privacy Incident Workflow (GDPR Art. 33/34)
+
+Five tools backed by the `privacy_incidents` table ([init-db/006_privacy_incidents.sql](../init-db/006_privacy_incidents.sql)) and the `pb.incidents` OPA policy. Powerbrain records the evidence chain (detection → assessment → notification → resolution); it does **not** send notifications itself — those remain organisational workflows.
+
+The 72-hour deadline (Art. 33) is monitored by the `incident_deadline_check` worker job and exposed via the Prometheus alerts `IncidentAssessmentOverdue`, `IncidentNotificationDeadlineImminent`, `IncidentNotificationOverdue`.
+
+### `report_breach`
+Create a new privacy incident record (status = `detected`).
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `description` | string | yes | — | Free-text description of what was found |
+| `source` | string | yes | — | `llm_detection`, `pii_scanner`, `agent_report`, `manual_audit`, `retention_check` |
+| `affected_data` | object | no | `{}` | Optional JSONB: dataset_ids, document_ids, qdrant_point_ids, etc. |
+| `pii_types_found` | string[] | no | `[]` | Presidio entity types (drives the risk score) |
+| `estimated_subjects` | integer | no | — | Estimated affected subject count |
+| `data_category` | string | no | — | Optional data category (customer_data, employee_data, …) |
+| `data_subject_ids` | string[] | no | — | Exact `data_subjects.id` UUIDs if known |
+
+**Access:** All authenticated roles, including `viewer`. Reporting must never be suppressed by RBAC — detection silence is a worse failure than over-reporting.
+
+---
+
+### `list_incidents`
+List privacy incidents with optional filters. Without filters: the 50 most recent.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `status` | string | no | — | Filter by single status |
+| `source` | string | no | — | Filter by source |
+| `attention` | boolean | no | `false` | Return rows from the `v_incidents_requiring_attention` view (open + deadline-relevant) |
+| `limit` | integer | no | `50` | Max rows (1–500) |
+
+When `attention=true`, each returned row carries `hours_since_detection` and `deadline_warning`.
+
+**Access:** Admin only.
+
+---
+
+### `assess_incident`
+Compute `notifiable_risk` via the OPA risk-score (PII-type weights × subject-count multiplier × data-category multiplier) and update the incident.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `incident_id` | string | yes | — | UUID of the incident |
+| `risk_assessment` | string | no | (auto) | Free-text rationale; required when `force_not_notifiable=true` |
+| `force_notifiable` | boolean | no | `false` | Admin override: mark notifiable regardless of score |
+| `force_not_notifiable` | boolean | no | `false` | Admin override: mark not-notifiable (requires `risk_assessment`) |
+
+Returns the full `breakdown` (score, hits per PII tier, multipliers, threshold). Status moves to `under_review` (or `false_positive` on `force_not_notifiable`).
+
+**Access:** Admin only.
+
+---
+
+### `notify_authority`
+Record that a supervisory-authority notification has been sent (Art. 33).
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `incident_id` | string | yes | — | UUID of the incident |
+| `authority_name` | string | yes | — | e.g. `BfDI`, `LfDI BW`, `BayLDA` |
+| `authority_ref` | string | no | — | Authority reference / ticket id |
+| `notification_method` | string | no | — | `online_portal`, `email`, `letter`, `phone_documented_followup` |
+| `notified_at` | string (ISO-8601) | no | now | Timestamp of notification |
+| `notes` | string | no | — | Free text — attachments, copy reference, etc. |
+
+Status moves to `notified_authority`; metadata is persisted both in dedicated columns and in `containment_actions.authority_notification` for the audit ledger.
+
+**Access:** Admin only.
+
+---
+
+### `notify_data_subject`
+Record that a data-subject notification has been sent (Art. 34).
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `incident_id` | string | yes | — | UUID of the incident |
+| `subject_ref` | string | yes | — | `data_subjects.id` UUID or external reference |
+| `channel` | string | yes | — | `email`, `letter`, `in_app`, `phone_documented_followup` |
+| `template_id` | string | no | — | Reference to the notification template used |
+| `notified_at` | string (ISO-8601) | no | now | Timestamp of notification |
+| `notes` | string | no | — | Free text |
+
+The first call moves status to `notified_subject` and sets `subject_notified_at`. Subsequent calls (for additional subjects under the same incident) append to `containment_actions.subject_notifications` without re-triggering the status change.
+
+**Access:** Admin only.

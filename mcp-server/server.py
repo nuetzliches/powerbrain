@@ -1728,6 +1728,137 @@ async def list_tools() -> list[Tool]:
                 "required": ["action"]
             }
         ),
+        # ── GDPR Art. 33/34: Privacy Incident Workflow ─────────
+        Tool(
+            name="report_breach",
+            description="Report a potential privacy incident (GDPR Art. 33). "
+                        "Any authenticated role may call this — detection suppression is the "
+                        "worse failure than over-reporting. Creates a privacy_incidents row "
+                        "with status='detected'. Use assess_incident to evaluate notifiable risk.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "description":        {"type": "string",
+                                           "description": "Free-text description of what was found"},
+                    "source":             {"type": "string",
+                                           "enum": ["llm_detection", "pii_scanner", "agent_report",
+                                                    "manual_audit", "retention_check"]},
+                    "affected_data":      {"type": "object",
+                                           "description": "Optional JSONB: dataset_ids, document_ids, "
+                                                          "qdrant_point_ids, etc."},
+                    "pii_types_found":    {"type": "array", "items": {"type": "string"},
+                                           "description": "Presidio entity types found (drives risk-score)"},
+                    "estimated_subjects": {"type": "integer",
+                                           "description": "Estimated affected subject count"},
+                    "data_category":      {"type": "string",
+                                           "description": "Optional data category (customer_data, employee_data, ...)"},
+                    "data_subject_ids":   {"type": "array", "items": {"type": "string"},
+                                           "description": "Exact data_subjects.id UUIDs if known"},
+                },
+                "required": ["description", "source"]
+            }
+        ),
+        Tool(
+            name="list_incidents",
+            description="List privacy incidents. Admin only. Without filters returns the "
+                        "most recent 50 incidents. Set attention=true to use the "
+                        "v_incidents_requiring_attention view (open incidents with 72-hour "
+                        "deadline warnings).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "status":    {"type": "string",
+                                  "enum": ["detected", "under_review", "contained",
+                                           "notified_authority", "notified_subject",
+                                           "resolved", "false_positive"]},
+                    "source":    {"type": "string",
+                                  "enum": ["llm_detection", "pii_scanner", "agent_report",
+                                           "manual_audit", "retention_check"]},
+                    "attention": {"type": "boolean", "default": False,
+                                  "description": "If true, returns rows from "
+                                                 "v_incidents_requiring_attention (deadline-relevant)"},
+                    "limit":     {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="assess_incident",
+            description="Compute notifiable_risk for an incident using the OPA risk-score "
+                        "(GDPR Art. 33). Admin only. Updates status to under_review (or "
+                        "false_positive on force_not_notifiable). Score weighs PII types, "
+                        "estimated subject count and data category. Admin may override the "
+                        "automatic decision with force_notifiable/force_not_notifiable.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "incident_id":          {"type": "string",
+                                             "description": "UUID of the incident"},
+                    "risk_assessment":      {"type": "string",
+                                             "description": "Free-text rationale; required when "
+                                                            "force_not_notifiable is set"},
+                    "force_notifiable":     {"type": "boolean", "default": False,
+                                             "description": "Admin override: mark as notifiable regardless of score"},
+                    "force_not_notifiable": {"type": "boolean", "default": False,
+                                             "description": "Admin override: mark as not-notifiable "
+                                                            "(requires risk_assessment)"},
+                },
+                "required": ["incident_id"]
+            }
+        ),
+        Tool(
+            name="notify_authority",
+            description="Record that a supervisory-authority notification has been sent "
+                        "(GDPR Art. 33). Admin only. Powerbrain does NOT send the notification — "
+                        "this tool documents that the DPO has done so (or will do so). "
+                        "Updates authority_notified_at, authority_ref, status to "
+                        "notified_authority.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "incident_id":         {"type": "string",
+                                            "description": "UUID of the incident"},
+                    "authority_name":      {"type": "string",
+                                            "description": "e.g. 'LfDI BW', 'BfDI', 'BayLDA'"},
+                    "authority_ref":       {"type": "string",
+                                            "description": "Authority reference / ticket id"},
+                    "notification_method": {"type": "string",
+                                            "enum": ["online_portal", "email", "letter",
+                                                     "phone_documented_followup"]},
+                    "notified_at":         {"type": "string", "format": "date-time",
+                                            "description": "ISO-8601 timestamp (default: now)"},
+                    "notes":               {"type": "string",
+                                            "description": "Free text — attachments, copy reference, etc."},
+                },
+                "required": ["incident_id", "authority_name"]
+            }
+        ),
+        Tool(
+            name="notify_data_subject",
+            description="Record that a data-subject notification has been sent "
+                        "(GDPR Art. 34). Admin only. Powerbrain does NOT send the "
+                        "notification — this tool documents that the DPO has done so. "
+                        "Updates subject_notified_at, status to notified_subject "
+                        "(first call only; subsequent calls log without changing status).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "incident_id": {"type": "string",
+                                    "description": "UUID of the incident"},
+                    "subject_ref": {"type": "string",
+                                    "description": "data_subjects.id UUID or external reference"},
+                    "channel":     {"type": "string",
+                                    "enum": ["email", "letter", "in_app",
+                                             "phone_documented_followup"]},
+                    "template_id": {"type": "string",
+                                    "description": "Reference to the notification template used"},
+                    "notified_at": {"type": "string", "format": "date-time",
+                                    "description": "ISO-8601 timestamp (default: now)"},
+                    "notes":       {"type": "string"},
+                },
+                "required": ["incident_id", "subject_ref", "channel"]
+            }
+        ),
     ]
 
 
@@ -3233,6 +3364,420 @@ async def _dispatch(name: str, arguments: dict[str, Any],
                          "export_audit_log", "allow",
                          {"format": fmt, "count": len(rows), "limit": limit})
         return [TextContent(type="text", text=body)]
+
+    # ── GDPR Art. 33/34: Privacy Incident Workflow ─────────
+    elif name == "report_breach":
+        try:
+            allowed = await opa_query(
+                http, OPA_URL, "pb/incidents/allow_report",
+                {"agent_role": agent_role},
+            )
+        except OpaPolicyMissingError as exc:
+            log.error("OPA incidents policy not loaded (%s) — denying", exc.package_path)
+            allowed = False
+        if not allowed:
+            await log_access(agent_id, agent_role, "incidents", "report",
+                             "report_breach", "deny")
+            return [TextContent(type="text", text=json.dumps(
+                {"error": f"report_breach not allowed for role '{agent_role}'"}))]
+
+        description = arguments.get("description")
+        source = arguments.get("source")
+        if not description or not source:
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "description and source are required"}))]
+        valid_sources = {"llm_detection", "pii_scanner", "agent_report",
+                         "manual_audit", "retention_check"}
+        if source not in valid_sources:
+            return [TextContent(type="text", text=json.dumps(
+                {"error": f"invalid source '{source}'; must be one of {sorted(valid_sources)}"}))]
+
+        affected_data = arguments.get("affected_data") or {}
+        pii_types_found = arguments.get("pii_types_found") or []
+        estimated_subjects = arguments.get("estimated_subjects")
+        data_category = arguments.get("data_category")
+        data_subject_ids = arguments.get("data_subject_ids")
+
+        pool = await get_pg_pool()
+        row = await pool.fetchrow(
+            """
+            INSERT INTO privacy_incidents
+                (detected_by, source, description, affected_data,
+                 pii_types_found, estimated_subjects, data_category,
+                 data_subject_ids)
+            VALUES ($1, $2::incident_source, $3, $4::jsonb, $5, $6, $7, $8::uuid[])
+            RETURNING id::text, detected_at, status::text
+            """,
+            agent_id, source, description, json.dumps(affected_data),
+            pii_types_found, estimated_subjects, data_category,
+            data_subject_ids,
+        )
+
+        await log_access(agent_id, agent_role, "incidents", "report",
+                         "report_breach", "allow",
+                         {"incident_id": row["id"], "source": source,
+                          "pii_types": pii_types_found,
+                          "estimated_subjects": estimated_subjects})
+        return [TextContent(type="text", text=json.dumps({
+            "incident_id": row["id"],
+            "detected_at": row["detected_at"].isoformat(),
+            "status":      row["status"],
+        }, ensure_ascii=False, indent=2))]
+
+    elif name == "list_incidents":
+        try:
+            allowed = await opa_query(
+                http, OPA_URL, "pb/incidents/allow_list",
+                {"agent_role": agent_role},
+            )
+        except OpaPolicyMissingError as exc:
+            log.error("OPA incidents policy not loaded (%s) — denying", exc.package_path)
+            allowed = False
+        if not allowed:
+            await log_access(agent_id, agent_role, "incidents", "list",
+                             "list_incidents", "deny")
+            return [TextContent(type="text", text=json.dumps(
+                {"error": f"list_incidents requires admin role (got '{agent_role}')"}))]
+
+        status_filter = arguments.get("status")
+        source_filter = arguments.get("source")
+        attention = bool(arguments.get("attention", False))
+        limit = max(1, min(500, int(arguments.get("limit", 50))))
+
+        pool = await get_pg_pool()
+        if attention:
+            rows = await pool.fetch(
+                "SELECT id::text, detected_at, hours_since_detection, status::text, "
+                "       source::text, description, pii_types_found, notifiable_risk, "
+                "       frist_warnung "
+                "FROM v_incidents_requiring_attention "
+                f"LIMIT {limit}"
+            )
+            out = [{
+                "incident_id":            r["id"],
+                "detected_at":            r["detected_at"].isoformat() if r["detected_at"] else None,
+                "hours_since_detection":  float(r["hours_since_detection"]) if r["hours_since_detection"] is not None else None,
+                "status":                 r["status"],
+                "source":                 r["source"],
+                "description":            r["description"],
+                "pii_types_found":        r["pii_types_found"] or [],
+                "notifiable_risk":        r["notifiable_risk"],
+                "deadline_warning":       r["frist_warnung"],
+            } for r in rows]
+        else:
+            clauses: list[str] = []
+            params: list[Any] = []
+            idx = 1
+            if status_filter:
+                clauses.append(f"status = ${idx}::incident_status")
+                params.append(status_filter)
+                idx += 1
+            if source_filter:
+                clauses.append(f"source = ${idx}::incident_source")
+                params.append(source_filter)
+                idx += 1
+            where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+            rows = await pool.fetch(
+                "SELECT id::text, detected_at, detected_by, source::text, status::text, "
+                "       description, pii_types_found, data_category, notifiable_risk, "
+                "       authority_notified_at, subject_notified_at, resolved_at "
+                "FROM privacy_incidents"
+                + where_sql +
+                " ORDER BY detected_at DESC "
+                f"LIMIT {limit}",
+                *params,
+            )
+            out = [{
+                "incident_id":            r["id"],
+                "detected_at":            r["detected_at"].isoformat() if r["detected_at"] else None,
+                "detected_by":            r["detected_by"],
+                "source":                 r["source"],
+                "status":                 r["status"],
+                "description":            r["description"],
+                "pii_types_found":        r["pii_types_found"] or [],
+                "data_category":          r["data_category"],
+                "notifiable_risk":        r["notifiable_risk"],
+                "authority_notified_at":  r["authority_notified_at"].isoformat() if r["authority_notified_at"] else None,
+                "subject_notified_at":    r["subject_notified_at"].isoformat() if r["subject_notified_at"] else None,
+                "resolved_at":            r["resolved_at"].isoformat() if r["resolved_at"] else None,
+            } for r in rows]
+
+        await log_access(agent_id, agent_role, "incidents", "list",
+                         "list_incidents", "allow",
+                         {"count": len(out), "attention": attention,
+                          "status": status_filter, "source": source_filter})
+        return [TextContent(type="text", text=json.dumps(
+            {"incidents": out, "count": len(out)},
+            ensure_ascii=False, indent=2,
+        ))]
+
+    elif name == "assess_incident":
+        try:
+            allowed = await opa_query(
+                http, OPA_URL, "pb/incidents/allow_assess",
+                {"agent_role": agent_role},
+            )
+        except OpaPolicyMissingError as exc:
+            log.error("OPA incidents policy not loaded (%s) — denying", exc.package_path)
+            allowed = False
+        if not allowed:
+            await log_access(agent_id, agent_role, "incidents", "assess",
+                             "assess_incident", "deny")
+            return [TextContent(type="text", text=json.dumps(
+                {"error": f"assess_incident requires admin role (got '{agent_role}')"}))]
+
+        incident_id = arguments.get("incident_id")
+        if not incident_id:
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "incident_id is required"}))]
+
+        force_notifiable = bool(arguments.get("force_notifiable", False))
+        force_not_notifiable = bool(arguments.get("force_not_notifiable", False))
+        risk_assessment_text = arguments.get("risk_assessment")
+
+        if force_notifiable and force_not_notifiable:
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "force_notifiable and force_not_notifiable are mutually exclusive"}))]
+        if force_not_notifiable and not risk_assessment_text:
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "risk_assessment is required when force_not_notifiable=true"}))]
+
+        pool = await get_pg_pool()
+        inc = await pool.fetchrow(
+            "SELECT id::text, pii_types_found, estimated_subjects, "
+            "       data_category, status::text "
+            "FROM privacy_incidents WHERE id = $1::uuid",
+            incident_id,
+        )
+        if inc is None:
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "incident not found", "incident_id": incident_id}))]
+
+        pii_types = inc["pii_types_found"] or []
+        subjects = inc["estimated_subjects"] or 0
+        data_category = inc["data_category"] or ""
+
+        try:
+            breakdown = await opa_query(
+                http, OPA_URL, "pb/incidents/breakdown",
+                {"pii_types": pii_types, "subjects": subjects,
+                 "data_category": data_category},
+            )
+        except Exception as e:
+            log.error("OPA risk-score query failed: %s", e, exc_info=True)
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "risk-score evaluation failed", "detail": str(e)}))]
+
+        risk_score = breakdown.get("risk_score", 0) if isinstance(breakdown, dict) else 0
+        score_says_notifiable = bool(breakdown.get("notifiable", False)) if isinstance(breakdown, dict) else False
+
+        if force_notifiable:
+            notifiable = True
+            rationale = risk_assessment_text or f"Admin override: notifiable (auto score: {risk_score})"
+            new_status = "under_review"
+        elif force_not_notifiable:
+            notifiable = False
+            rationale = risk_assessment_text
+            new_status = "false_positive"
+        else:
+            notifiable = score_says_notifiable
+            comparator = "≥" if notifiable else "<"
+            rationale = risk_assessment_text or (
+                f"Auto-assessed: score {risk_score} {comparator} threshold; "
+                f"pii_types={pii_types}, subjects={subjects}, category={data_category!r}"
+            )
+            new_status = "under_review"
+
+        row = await pool.fetchrow(
+            """
+            UPDATE privacy_incidents
+            SET notifiable_risk = $1,
+                risk_assessment = $2,
+                status          = $3::incident_status
+            WHERE id = $4::uuid
+            RETURNING id::text, status::text
+            """,
+            notifiable, rationale, new_status, incident_id,
+        )
+
+        await log_access(agent_id, agent_role, "incidents", "assess",
+                         "assess_incident", "allow",
+                         {"incident_id": row["id"], "risk_score": risk_score,
+                          "notifiable_risk": notifiable, "status": row["status"]})
+
+        return [TextContent(type="text", text=json.dumps({
+            "incident_id":     row["id"],
+            "risk_score":      risk_score,
+            "breakdown":       breakdown if isinstance(breakdown, dict) else None,
+            "notifiable_risk": notifiable,
+            "risk_assessment": rationale,
+            "status":          row["status"],
+        }, ensure_ascii=False, indent=2))]
+
+    elif name == "notify_authority":
+        try:
+            allowed = await opa_query(
+                http, OPA_URL, "pb/incidents/allow_notify_authority",
+                {"agent_role": agent_role},
+            )
+        except OpaPolicyMissingError as exc:
+            log.error("OPA incidents policy not loaded (%s) — denying", exc.package_path)
+            allowed = False
+        if not allowed:
+            await log_access(agent_id, agent_role, "incidents", "notify",
+                             "notify_authority", "deny")
+            return [TextContent(type="text", text=json.dumps(
+                {"error": f"notify_authority requires admin role (got '{agent_role}')"}))]
+
+        incident_id = arguments.get("incident_id")
+        authority_name = arguments.get("authority_name")
+        if not incident_id or not authority_name:
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "incident_id and authority_name are required"}))]
+
+        authority_ref = arguments.get("authority_ref")
+        method = arguments.get("notification_method")
+        notified_at_arg = arguments.get("notified_at")
+        notes = arguments.get("notes")
+
+        # Combine method + name + notes into the authority_ref / containment
+        # log so we keep the schema additive (no migration needed).
+        combined_ref_parts = [authority_name]
+        if authority_ref:
+            combined_ref_parts.append(authority_ref)
+        if method:
+            combined_ref_parts.append(f"via {method}")
+        combined_ref = " | ".join(combined_ref_parts)
+
+        pool = await get_pg_pool()
+
+        # Persist the notification metadata as a JSONB blob inside
+        # containment_actions so we keep an audit-friendly record beyond
+        # the single authority_ref column.
+        containment_patch = {
+            "authority_notification": {
+                "authority_name": authority_name,
+                "authority_ref":  authority_ref,
+                "method":         method,
+                "notes":          notes,
+                "logged_by":      agent_id,
+            }
+        }
+
+        row = await pool.fetchrow(
+            """
+            UPDATE privacy_incidents
+            SET authority_notified_at = COALESCE($1::timestamptz, now()),
+                authority_ref         = $2,
+                containment_actions   = COALESCE(containment_actions, '{}'::jsonb) || $3::jsonb,
+                status                = 'notified_authority'::incident_status
+            WHERE id = $4::uuid
+            RETURNING id::text, status::text, authority_notified_at, authority_ref
+            """,
+            notified_at_arg, combined_ref, json.dumps(containment_patch), incident_id,
+        )
+
+        if row is None:
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "incident not found", "incident_id": incident_id}))]
+
+        await log_access(agent_id, agent_role, "incidents", "notify",
+                         "notify_authority", "allow",
+                         {"incident_id": row["id"],
+                          "authority_name": authority_name,
+                          "authority_ref": authority_ref,
+                          "method": method})
+        return [TextContent(type="text", text=json.dumps({
+            "incident_id":           row["id"],
+            "status":                row["status"],
+            "authority_notified_at": row["authority_notified_at"].isoformat() if row["authority_notified_at"] else None,
+            "authority_ref":         row["authority_ref"],
+        }, ensure_ascii=False, indent=2))]
+
+    elif name == "notify_data_subject":
+        try:
+            allowed = await opa_query(
+                http, OPA_URL, "pb/incidents/allow_notify_subject",
+                {"agent_role": agent_role},
+            )
+        except OpaPolicyMissingError as exc:
+            log.error("OPA incidents policy not loaded (%s) — denying", exc.package_path)
+            allowed = False
+        if not allowed:
+            await log_access(agent_id, agent_role, "incidents", "notify",
+                             "notify_data_subject", "deny")
+            return [TextContent(type="text", text=json.dumps(
+                {"error": f"notify_data_subject requires admin role (got '{agent_role}')"}))]
+
+        incident_id = arguments.get("incident_id")
+        subject_ref = arguments.get("subject_ref")
+        channel = arguments.get("channel")
+        if not (incident_id and subject_ref and channel):
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "incident_id, subject_ref and channel are required"}))]
+
+        valid_channels = {"email", "letter", "in_app", "phone_documented_followup"}
+        if channel not in valid_channels:
+            return [TextContent(type="text", text=json.dumps(
+                {"error": f"invalid channel '{channel}'; must be one of {sorted(valid_channels)}"}))]
+
+        template_id = arguments.get("template_id")
+        notified_at_arg = arguments.get("notified_at")
+        notes = arguments.get("notes")
+
+        pool = await get_pg_pool()
+
+        # Append every call to containment_actions.subject_notifications
+        # so multi-subject workflows leave a complete trail. Only the
+        # first call moves status / sets subject_notified_at.
+        ledger_entry = {
+            "subject_ref": subject_ref,
+            "channel":     channel,
+            "template_id": template_id,
+            "notes":       notes,
+            "logged_by":   agent_id,
+            "at":          notified_at_arg,  # actual timestamp resolved server-side below
+        }
+
+        row = await pool.fetchrow(
+            """
+            WITH upd AS (
+                UPDATE privacy_incidents
+                SET subject_notified_at = COALESCE(subject_notified_at, COALESCE($1::timestamptz, now())),
+                    status              = CASE
+                        WHEN subject_notified_at IS NULL THEN 'notified_subject'::incident_status
+                        ELSE status
+                    END,
+                    containment_actions = COALESCE(containment_actions, '{}'::jsonb)
+                        || jsonb_build_object(
+                            'subject_notifications',
+                            COALESCE(containment_actions->'subject_notifications', '[]'::jsonb)
+                                || jsonb_build_array(
+                                    $2::jsonb || jsonb_build_object('resolved_at', now())
+                                )
+                        )
+                WHERE id = $3::uuid
+                RETURNING id::text, status::text, subject_notified_at
+            )
+            SELECT * FROM upd
+            """,
+            notified_at_arg, json.dumps(ledger_entry), incident_id,
+        )
+
+        if row is None:
+            return [TextContent(type="text", text=json.dumps(
+                {"error": "incident not found", "incident_id": incident_id}))]
+
+        await log_access(agent_id, agent_role, "incidents", "notify",
+                         "notify_data_subject", "allow",
+                         {"incident_id": row["id"], "subject_ref": subject_ref,
+                          "channel": channel, "template_id": template_id})
+        return [TextContent(type="text", text=json.dumps({
+            "incident_id":         row["id"],
+            "status":              row["status"],
+            "subject_notified_at": row["subject_notified_at"].isoformat() if row["subject_notified_at"] else None,
+            "subject_ref":         subject_ref,
+        }, ensure_ascii=False, indent=2))]
 
     return [TextContent(type="text", text=json.dumps({"error": f"Unknown tool: {name}"}))]
 

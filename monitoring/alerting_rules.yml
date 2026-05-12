@@ -128,3 +128,45 @@ groups:
         annotations:
           summary: "Embedding drift detected on {{ $labels.collection }}"
           description: "Cosine distance from baseline exceeds threshold; investigate model or data shift"
+
+      # ── B-47: Privacy Incident Deadlines (GDPR Art. 33) ────
+
+      - alert: IncidentAssessmentOverdue
+        expr: pb_incidents_attention_total{severity="warning"} > 0
+        for: 15m
+        labels:
+          severity: warning
+          area: gdpr
+        annotations:
+          summary: "Privacy incident not yet assessed after >24h"
+          description: >
+            At least one incident has been in 'detected' state for over 24
+            hours without an assess_incident call. Risk of missing the 72-hour
+            Art. 33 notification deadline. Use list_incidents attention=true.
+
+      - alert: IncidentNotificationDeadlineImminent
+        expr: pb_incidents_attention_total{severity="critical"} > 0
+        for: 5m
+        labels:
+          severity: critical
+          area: gdpr
+        annotations:
+          summary: "GDPR Art. 33 notification deadline within 24 hours"
+          description: >
+            At least one privacy incident has been open for >48h without
+            authority notification. Less than 24h remain before the Art. 33
+            72-hour deadline. Notify the supervisory authority or document
+            the delay reason. Use list_incidents attention=true.
+
+      - alert: IncidentNotificationOverdue
+        expr: pb_incidents_attention_total{severity="overdue"} > 0
+        for: 5m
+        labels:
+          severity: page
+          area: gdpr
+        annotations:
+          summary: "GDPR Art. 33 notification overdue"
+          description: >
+            At least one privacy incident has been open for >72h without
+            authority notification. The supervisory authority must be notified
+            immediately and a delay reason documented (Art. 33(1) sentence 2).

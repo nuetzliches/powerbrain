@@ -19,7 +19,7 @@
             "write_roles", "write_classifications",
             "allowed_purposes", "retention_days", "retention_obligations",
             "fields_to_redact", "pii_actions", "pii_entity_types", "graph_pii_keys",
-            "audit", "ingestion", "human_oversight", "drift", "proxy", "summarization", "rules"
+            "audit", "ingestion", "human_oversight", "incidents", "drift", "proxy", "summarization", "rules"
           ],
           "additionalProperties": false,
           "properties": {
@@ -163,6 +163,110 @@
                   "type": "integer",
                   "minimum": 1,
                   "description": "Per-agent cap on concurrently pending reviews"
+                }
+              }
+            },
+            "incidents": {
+              "type": "object",
+              "description": "GDPR Art. 33/34 privacy-incident workflow configuration: risk scoring, RBAC, deadline thresholds",
+              "required": ["risk_score", "roles", "deadline"],
+              "additionalProperties": false,
+              "properties": {
+                "risk_score": {
+                  "type": "object",
+                  "description": "Risk-score weights and thresholds for assess_incident",
+                  "required": [
+                    "high_pii_types", "medium_pii_types", "low_pii_types",
+                    "weights", "subject_multipliers",
+                    "category_multiplier_restricted", "category_multiplier_confidential",
+                    "notifiable_threshold"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "high_pii_types": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "description": "Presidio entity types that contribute the high weight"
+                    },
+                    "medium_pii_types": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "low_pii_types": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "weights": {
+                      "type": "object",
+                      "required": ["high", "medium", "low"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "high":   { "type": "number", "minimum": 0 },
+                        "medium": { "type": "number", "minimum": 0 },
+                        "low":    { "type": "number", "minimum": 0 }
+                      }
+                    },
+                    "subject_multipliers": {
+                      "type": "array",
+                      "description": "Brackets of (min subjects → multiplier). Effective multiplier is the max with min ≤ actual count.",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "required": ["min", "multiplier"],
+                        "additionalProperties": false,
+                        "properties": {
+                          "min":        { "type": "integer", "minimum": 0 },
+                          "multiplier": { "type": "number",  "minimum": 0 }
+                        }
+                      }
+                    },
+                    "category_multiplier_restricted":   { "type": "number", "minimum": 0 },
+                    "category_multiplier_confidential": { "type": "number", "minimum": 0 },
+                    "notifiable_threshold": {
+                      "type": "number",
+                      "minimum": 0,
+                      "description": "Score above which an incident is marked notifiable (Art. 33 risk to rights and freedoms)"
+                    }
+                  }
+                },
+                "roles": {
+                  "type": "object",
+                  "description": "RBAC: which roles may invoke each incident tool",
+                  "required": [
+                    "allow_report", "allow_list", "allow_assess",
+                    "allow_notify_authority", "allow_notify_subject"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "allow_report":           { "type": "array", "items": { "type": "string" } },
+                    "allow_list":             { "type": "array", "items": { "type": "string" } },
+                    "allow_assess":           { "type": "array", "items": { "type": "string" } },
+                    "allow_notify_authority": { "type": "array", "items": { "type": "string" } },
+                    "allow_notify_subject":   { "type": "array", "items": { "type": "string" } }
+                  }
+                },
+                "deadline": {
+                  "type": "object",
+                  "description": "GDPR Art. 33 timing — used by incident_deadline_check worker job and the v_incidents_requiring_attention view",
+                  "required": ["notification_hours", "warning_threshold_hours", "critical_threshold_hours"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "notification_hours": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "description": "Hard deadline for supervisory authority notification (Art. 33: 72)"
+                    },
+                    "warning_threshold_hours": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "description": "Below this, mark as warning. Default 24."
+                    },
+                    "critical_threshold_hours": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "description": "Above this and before notification_hours, mark as critical. Default 48."
+                    }
+                  }
                 }
               }
             },
