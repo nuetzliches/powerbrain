@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-05-13
+
+First minor bump since v0.9.0. Two PRs shipped together: (1) the
+chat-path-bypass documentation refresh that names the structural limit
+of the Community tier when Anthropic consumer plans (Pro/Max) are in
+the picture, and (2) the privacy-incident MCP-tool layer + 72-hour
+deadline watcher on top of the long-standing `privacy_incidents`
+schema. No DB migrations, no breaking config changes — the OPA
+`pb.config.incidents` block is additive and the new MCP tools are
+gated by the same `pb_` API-key auth as every other tool.
+
 ### Added
 
 - **Privacy Incident MCP Tools (B-47, GDPR Art. 33/34)** — Five MCP tools
