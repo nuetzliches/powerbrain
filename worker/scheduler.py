@@ -36,6 +36,7 @@ from worker.jobs import (
     audit_integrity_status,
     audit_retention,
     gdpr_retention,
+    incident_deadline_check,
     pending_review_timeout,
     repo_sync,
 )
@@ -87,6 +88,14 @@ JOB_SPECS: list[dict] = [
         "trigger": IntervalTrigger(
             seconds=int(os.getenv("AUDIT_INTEGRITY_INTERVAL_SECONDS", "60")),
             jitter=10,
+        ),
+    },
+    {
+        "id":      "incident_deadline_check",
+        "func":    incident_deadline_check.run,
+        "trigger": IntervalTrigger(
+            minutes=int(os.getenv("INCIDENT_DEADLINE_INTERVAL_MINUTES", "15")),
+            jitter=30,
         ),
     },
 ]

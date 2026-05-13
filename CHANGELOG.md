@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Privacy Incident MCP Tools (B-47, GDPR Art. 33/34)** — Five MCP tools
+  expose the `privacy_incidents` schema that has been carrying detection
+  signals since the EU AI Act push: `report_breach` (any authenticated
+  role), `list_incidents` / `assess_incident` / `notify_authority` /
+  `notify_data_subject` (admin-only). The new OPA package `pb.incidents`
+  owns RBAC plus a configurable risk-score (high/medium/low PII weights ×
+  subject-count brackets × data-category multiplier × notifiable
+  threshold). A new `incident_deadline_check` worker job (every 15 min)
+  classifies open incidents into `warning`/`critical`/`overdue` buckets
+  and exposes them via three new Prometheus alert rules
+  (`IncidentAssessmentOverdue`, `IncidentNotificationDeadlineImminent`,
+  `IncidentNotificationOverdue`) so the 72-hour Art. 33 deadline cannot
+  silently slip past operations. 19 MCP unit tests + 21 OPA tests.
+  Powerbrain records the evidence chain only; the outbound notification
+  (email to authority, letter to subject) remains an organisational
+  workflow. Spec: [`docs/specs/2026-05-12-incident-mcp-tools.md`](docs/specs/2026-05-12-incident-mcp-tools.md).
+- **Edition Boundary Transparency** (PR #153) — Documented that
+  Anthropic consumer plans (Claude Pro/Max, both Desktop App and Code
+  via `/login`) cannot be redirected to `pb-proxy` because their OAuth
+  flow ignores `ANTHROPIC_BASE_URL`. New
+  [`docs/compliance-claude-desktop.md`](docs/compliance-claude-desktop.md)
+  one-pager with the three-tier mitigation model (real-time proxy /
+  detective chat-history ingest / endpoint DLP), DPA vs EU AI Act
+  distinction, and scenario recommendations.
+  [`docs/editions.md`](docs/editions.md) gained an "Edition boundary"
+  section with the three-data-paths matrix (ingest / tool calls / chat
+  content). Cross-links from README, `getting-started.md`,
+  `gdpr-external-ai-services.md`, `CLAUDE.md`.
+
 ## [0.9.3] - 2026-05-09
 
 Routine dependency-maintenance release on top of v0.9.2 — no

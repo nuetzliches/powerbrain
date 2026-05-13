@@ -13,7 +13,7 @@ Agent/Skill
     │ MCP
     ▼
 ┌─────────────────────────────────────────────────┐
-│  MCP Server (FastAPI, 23 tools)                  │
+│  MCP Server (FastAPI, 28 tools)                  │
 │  ├─ OPA Policy Check (every request)            │
 │  ├─ Qdrant Vector Search (oversampled)          │
 │  ├─ Reranker (Cross-Encoder, Top-N)             │
@@ -55,7 +55,7 @@ powerbrain/
 │       ├── test_embedding_cache.py
 │       └── test_drift_check.py
 ├── mcp-server/
-│   ├── server.py          ← MCP Server (23 tools)
+│   ├── server.py          ← MCP Server (28 tools)
 │   ├── graph_service.py   ← Knowledge Graph (Apache AGE)
 │   ├── compliance_doc.py  ← EU AI Act Annex IV generator
 │   ├── policy_admin_page.py ← (reserved for future UI)
@@ -249,7 +249,7 @@ Access to originals requires:
 
 Art. 17 deletion: delete vault mapping → pseudonyms become irreversible.
 
-### MCP Tools (23)
+### MCP Tools (28)
 - `search_knowledge` — Semantic search (Qdrant + reranking); supports `summarize`, `summary_detail`, `rerank_options` (incl. `boost_corrections`); optional PII originals via vault token; metadata PII redaction
 - `query_data` — Structured queries (PostgreSQL)
 - `get_rules` — Business rules for a context
@@ -273,6 +273,11 @@ Art. 17 deletion: delete vault mapping → pseudonyms become irreversible.
 - `get_system_info` — Transparency report (Art. 13) for deployers
 - `review_pending` — List/approve/deny pending human oversight reviews (admin only)
 - `get_review_status` — Poll status of a pending review
+- `report_breach` — Report a potential privacy incident (GDPR Art. 33). Any authenticated role; creates `privacy_incidents` row, status=`detected`
+- `list_incidents` — List incidents with filters (admin only); `attention=true` returns rows from `v_incidents_requiring_attention` (72-hour deadline warnings)
+- `assess_incident` — Compute `notifiable_risk` via OPA risk-score (admin only); supports `force_notifiable` / `force_not_notifiable` admin overrides
+- `notify_authority` — Record Art. 33 supervisory-authority notification (admin only); does not send, only documents
+- `notify_data_subject` — Record Art. 34 data-subject notification (admin only); first call moves status, later calls append to ledger
 
 ### Privacy (GDPR)
 - **PII Scanner** (Microsoft Presidio) at ingestion — configurable via `ingestion/pii_config.yaml` (entity types, custom recognizers, confidence, languages)
@@ -561,6 +566,10 @@ All 4 services (mcp-server, proxy, reranker, ingestion) share a common telemetry
 
 35. ✅ **Semantic PII Verifier** — Optional precision layer that sits between Presidio's `scan_text` output and the rest of the pipeline. Presidio is excellent at recall but flags German compound nouns (`Zahlungsstatus`, `Geschäftsführer`, `Sparkasse Köln`) as PERSON/LOCATION. The verifier catches those false positives without touching recall. New `shared/pii_verify_provider.py` abstraction (same factory pattern as `rerank_provider.py`) with two backends: `noop` (community default, pass-through) and `llm` (OpenAI-compatible chat, e.g. Ollama/qwen2.5:3b). Pattern types (IBAN, email, phone, DOB) skip the verifier — their Presidio score is already trustworthy. Ambiguous types batch into a single low-temperature chat call per document with ±60-char context windows. Fail-open on any error: unreachable LLM, malformed JSON, timeout → keep every candidate Presidio generated. OPA-policy-driven backend via `pb.config.ingestion.pii_verifier.{enabled,backend,min_confidence_keep}` so admins flip runtime behaviour through `manage_policies` without restarting ingestion. Prometheus: `pb_ingestion_pii_verifier_calls_total{entity_type,backend,result}` + `pb_ingestion_pii_verifier_duration_seconds{backend}`. Applied both in the production `ingest_text_chunks` per-chunk loop and in the `/preview` dry-run so demo Tab E can render `{input, forwarded, reviewed, kept, reverted}` stats live, with a `verifier.before` snapshot for contrast. Live verification on the NovaTech SharePoint fixture: 9 raw Presidio candidates → 6 after verifier (3 false positives removed) in ~12 s on qwen2.5:3b CPU. Docs: `docs/pii-verifier.md` (architecture + configuration) + `docs/pii-custom-model.md` (long-horizon roadmap for a fine-tuned German PII model — triggers, phases, why we're not building it today).
 
+36. ✅ **Edition Boundary Transparency** — Made the chat-path bypass on Anthropic consumer plans (Pro/Max) explicit at every customer-facing touchpoint. New `docs/compliance-claude-desktop.md` one-pager with the three-tier mitigation model (real-time proxy / detective chat-history ingest / endpoint DLP), DPA vs EU AI Act distinction, scenario recommendations and DPO question list. `docs/editions.md` gained a "Edition boundary" section with the three-data-paths matrix (ingest / tool calls / chat content), explicitly stating that ingest + tool calls are protected in both editions and only the free chat channel is bypassed without `pb-proxy`. `docs/gdpr-external-ai-services.md` DPA table broken down by plan, assessment matrix extended with Powerbrain configurations. CLAUDE.md, README.md, `docs/getting-started.md` cross-link to the new docs. Tonfall sachlich-neutral im Hauptdokument, warnend (⚠️) nur in der GDPR-Doku. PR #153.
+
+37. ✅ **Privacy Incident MCP Tools (B-47, GDPR Art. 33/34)** — Five MCP tools surface the existing `privacy_incidents` schema: `report_breach` (any role; agents may flag detections), `list_incidents` (admin; `attention=true` uses `v_incidents_requiring_attention` view), `assess_incident` (admin; OPA-driven risk-score with `force_notifiable`/`force_not_notifiable` overrides; falls through to `under_review` or `false_positive`), `notify_authority` (admin; records Art. 33 notification with method + ref in `containment_actions.authority_notification`), `notify_data_subject` (admin; first call moves status, later calls append to `containment_actions.subject_notifications` ledger). OPA package `pb.incidents` with data-driven risk scoring (high/medium/low PII weights × subject brackets × category multiplier × notifiable_threshold), all configurable via `pb.config.incidents` in `data.json`. New worker job `incident_deadline_check` (every 15 min) classifies open incidents into `warning`/`critical`/`overdue` buckets via Prometheus gauges; three alert rules in `monitoring/alerting_rules.yml` (`IncidentAssessmentOverdue`, `IncidentNotificationDeadlineImminent`, `IncidentNotificationOverdue`) cover the 24h/48h/72h deadline. 19 MCP-tool tests + 21 OPA tests. Powerbrain documents the evidence chain — outbound notification (email to authority, letter to subject) remains an organisational workflow.
+
 Details on all features: see `docs/architecture.md`
 
 ## Code Conventions
@@ -634,7 +643,7 @@ Tasks completed for open-sourcing the repository:
 - [x] **README badges** — CI status, License, Docker, MCP
 - [x] **Quick Start script** — `scripts/quickstart.sh` for automated first-time setup
 - [x] **Getting Started guide** — `docs/getting-started.md` — tutorial for newcomers
-- [x] **MCP Tool Reference** — `docs/mcp-tools.md` — all 23 tools documented
+- [x] **MCP Tool Reference** — `docs/mcp-tools.md` — all 28 tools documented
 - [x] **Coverage threshold** — 80% minimum enforced in CI (`--cov-fail-under=80`)
 - [x] **Security scanning** — `pip-audit` + `bandit` in CI (non-blocking)
 - [x] **Load tests** — Locust-based load test for search pipeline (`tests/load/`)

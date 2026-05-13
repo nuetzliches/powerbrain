@@ -46,3 +46,22 @@ worker_accuracy_drift_drifted = Gauge(
     "1 when the collection has drifted past its threshold, 0 otherwise",
     ["collection"],
 )
+
+
+# ── B-47 Privacy Incident Deadline Monitoring (GDPR Art. 33) ─
+
+worker_incidents_open = Gauge(
+    "pb_incidents_open_total",
+    "Open privacy incidents by status (status not in {resolved, false_positive, notified_authority})",
+    ["status"],
+)
+worker_incidents_attention = Gauge(
+    "pb_incidents_attention_total",
+    "Open privacy incidents grouped by deadline severity",
+    ["severity"],
+)
+worker_incidents_oldest_open_hours = Gauge(
+    "pb_incidents_oldest_open_hours",
+    "Hours since detection for the oldest open privacy incident "
+    "(0 when nothing is open)",
+)

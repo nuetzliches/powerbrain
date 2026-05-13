@@ -97,6 +97,36 @@
         "max_pending_per_agent": 20
       },
 
+      "incidents": {
+        "risk_score": {
+          "high_pii_types": ["EMAIL_ADDRESS", "PHONE_NUMBER", "IBAN_CODE", "US_SSN", "MEDICAL_LICENSE", "CREDIT_CARD"],
+          "medium_pii_types": ["PERSON", "DATE_OF_BIRTH", "LOCATION"],
+          "low_pii_types": ["ORG", "URL", "NRP"],
+          "weights": { "high": 30, "medium": 15, "low": 5 },
+          "subject_multipliers": [
+            { "min": 1,    "multiplier": 1.0 },
+            { "min": 10,   "multiplier": 2.0 },
+            { "min": 100,  "multiplier": 4.0 },
+            { "min": 1000, "multiplier": 8.0 }
+          ],
+          "category_multiplier_restricted":   2.0,
+          "category_multiplier_confidential": 1.5,
+          "notifiable_threshold": 50
+        },
+        "roles": {
+          "allow_report":           ["viewer", "analyst", "developer", "admin"],
+          "allow_list":             ["admin"],
+          "allow_assess":           ["admin"],
+          "allow_notify_authority": ["admin"],
+          "allow_notify_subject":   ["admin"]
+        },
+        "deadline": {
+          "notification_hours": 72,
+          "warning_threshold_hours": 24,
+          "critical_threshold_hours": 48
+        }
+      },
+
       "drift": {
         "thresholds": {
           "default":    0.10,
