@@ -22,13 +22,24 @@ Anyone who passes personal data to a third party for processing
 **must** conclude a DPA. Without a DPA, the transfer is a violation —
 regardless of the recipient.
 
-| Service | DPA available? |
-|--------|----------------|
-| Anthropic API (Enterprise/Team) | Yes, can be concluded via the console |
-| claude.ai (Consumer) | **No** — Anthropic acts as its own controller there, not as a data processor |
+| Plan / Service | DPA available? | Activation |
+|---|---|---|
+| Claude Free / Pro / Max (Consumer) | **No** — Anthropic acts as its own controller, not as a data processor | — |
+| Claude Team / Enterprise / API / Claude Code commercial | Yes — DPA + SCCs are **automatically incorporated into the Commercial ToS** (no separate signature required); signed copy on request | Implicit on accepting Commercial ToS |
+| Via AWS Bedrock / GCP Vertex | DPA of the **hyperscaler**, not Anthropic | Per hyperscaler |
 
-For **claude.ai** there is structurally no DPA path. This alone
-rules out compliant use for data involving personal references.
+For **Consumer plans (Free/Pro/Max)** there is structurally no DPA
+path — Anthropic acts as its own controller. This alone rules out
+compliant use for data with personal references. Pro/Max being a
+"paid plan" does **not** make it a commercial plan in the DPA sense.
+
+⚠️ **Subscription bypass with Powerbrain in the picture:** Even when
+Powerbrain is deployed, a developer or knowledge worker who pastes
+personal data into a Claude Desktop window backed by a Pro/Max
+subscription transmits that data **outside** the Powerbrain perimeter
+— see [Edition boundary in editions.md](editions.md#edition-boundary-what-runs-through-powerbrain--and-what-doesnt)
+and [compliance-claude-desktop.md](compliance-claude-desktop.md) for the
+realistic mitigation tiers.
 
 ### 2. Third-Country Transfer USA (Art. 44–49 GDPR)
 
@@ -65,11 +76,17 @@ for the original data.
 
 | Scenario | Assessment |
 |----------|-----------|
-| claude.ai (Browser/Consumer) with personal data | **Clear violation** — no DPA possible, training data risk |
-| Anthropic API without DPA + SCCs | **Violation** — missing contractual basis |
+| claude.ai (Browser/Consumer) with personal data | **Clear violation** — no DPA possible, training-data risk |
+| Claude Desktop / Claude Code on Pro/Max subscription with personal data | **Clear violation** — same Consumer relation as claude.ai; no DPA, hardcoded endpoint, no proxy override |
+| Anthropic API (Team/Enterprise) without DPA acceptance + SCCs | **Violation** — missing contractual basis |
 | Anthropic API with DPA + SCCs, without TIA | **Likely violation** |
-| Anthropic API with DPA + SCCs + TIA + no training | Legally arguable, residual risk from CLOUD Act |
-| This project (Ollama local) | ✅ No transfer, no problem |
+| Anthropic API with DPA + SCCs + TIA + commercial-plan no-training default | Legally arguable, residual risk from CLOUD Act |
+| Powerbrain Community (direct-to-MCP) — chat against Anthropic, retrieval via Powerbrain | **Tool calls protected, chat content not** — apply the same DPA/SCC/TIA tests to the chat channel separately |
+| Powerbrain Enterprise (pb-proxy) → Anthropic commercial API with DPA | Wire pseudonymised by Powerbrain *before* Anthropic sees it, residual risk reduced — still TIA-dependent |
+| Powerbrain (any edition) → local LLM (Ollama / vLLM on-prem) | ✅ No transfer, no problem |
+
+→ The split into Powerbrain-protected and unprotected channels is
+detailed in [Edition boundary](editions.md#edition-boundary-what-runs-through-powerbrain--and-what-doesnt).
 
 ---
 

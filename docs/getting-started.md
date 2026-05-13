@@ -66,6 +66,15 @@ Add Powerbrain to your MCP client configuration:
 
 This works with Claude Desktop, Claude Code, OpenCode, or any MCP-compatible client. Replace the dev key with your production key when deploying.
 
+> **Note on the chat channel.** This configuration protects every
+> *tool call* the agent makes against Powerbrain, but the free-form
+> chat content (the user's prompt and the LLM's response) still goes
+> directly between the client and its LLM provider. For setups where
+> Powerbrain must also pseudonymise the chat content itself (e.g.
+> Claude Desktop or Claude Code in a Pro/Max subscription), see
+> [Edition boundary](editions.md#edition-boundary-what-runs-through-powerbrain--and-what-doesnt)
+> and [compliance-claude-desktop.md](compliance-claude-desktop.md).
+
 ## 4. Ingest Data
 
 Use the `ingest_data` tool to add content to the knowledge base:

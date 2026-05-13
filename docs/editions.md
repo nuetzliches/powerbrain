@@ -49,6 +49,69 @@ running only the base profiles is community.
 | Per-provider key management + `X-Provider-Key` header | — | ✅ |
 | Chat document attachments (PDF/DOCX/XLSX extraction via OPA) | — | ✅ |
 
+## Edition boundary: what runs through Powerbrain — and what doesn't
+
+Powerbrain enforces policies on data **that passes through Powerbrain**.
+That sounds obvious, but with chat-native AI tools there is a non-obvious
+trap: the user's free-form prompt and the LLM's response form a channel
+that *only* the enterprise tier proxies. Direct-to-MCP setups leave that
+channel bypassed.
+
+### The three data paths
+
+| Path | Community (direct-to-MCP) | Enterprise (via pb-proxy) |
+|---|---|---|
+| **Ingest** — adapters pulling from GitHub, Office 365, Git, manual upload | ✅ Full pipeline: chunking → Presidio → quality gate → vault → embedding | ✅ Identical — adapters are independent of the chat tier |
+| **Tool calls** — `search_knowledge`, `query_data`, `graph_query`, … | ✅ OPA per request, vault tokens, audit chain | ✅ Same, plus optional purpose-bound `/vault/resolve` |
+| **Chat content** — user prompt, system instructions, LLM response, multimodal attachments | ❌ **Bypass** — goes directly from client to LLM provider, Powerbrain never sees it | ✅ Pseudonymised on the wire (`/pseudonymize`), policy-checked, audited |
+
+**Ingest and tool calls are protected in both editions.** The bypass
+only applies to the free-form chat channel.
+
+### Why this matters specifically for Claude Desktop / Claude Pro/Max
+
+Anthropic's consumer plans (Claude Free, Pro, Max) authenticate users
+via OAuth against the claude.ai backend. There is no `ANTHROPIC_BASE_URL`
+override in this mode — the endpoint is hardcoded. Consequently:
+
+- **Claude Desktop App** on Pro/Max: chat content goes straight to
+  Anthropic. You can register `pb-mcp-server` as an MCP endpoint to
+  protect tool calls, but the prompt/response channel itself is
+  bypassed.
+- **Claude Code CLI** on Pro/Max (via `claude /login`): identical
+  situation — OAuth to claude.ai, `ANTHROPIC_BASE_URL` ignored.
+  Hooks (`UserPromptSubmit` etc.) can however intercept the prompt
+  *locally* before it leaves the machine, which gives Claude Code a
+  mitigation lever that Claude Desktop App does not have.
+- **Claude Code CLI** in API-key mode (`ANTHROPIC_API_KEY=sk-ant-...`):
+  `ANTHROPIC_BASE_URL=http://pb-proxy:8090` works as expected. This is
+  the only Anthropic-native setup that gives you full chat-path
+  protection out of the box.
+- **OpenAI-compatible clients** (Cursor, OpenCode, custom SDKs)
+  pointed at `/v1/chat/completions` are unaffected — they go through
+  the proxy normally.
+
+### Implications for your compliance argument
+
+- If your argument depends on Powerbrain pseudonymising the chat
+  content itself (most GDPR Art. 32, Art. 5 scenarios), you must enforce
+  one of: (a) enterprise tier + clients that speak the proxy
+  (API-key Claude Code, OpenAI-compatible, or HTTP API), (b)
+  commercial Anthropic plan (Team/Enterprise/API) with DPA *plus*
+  Powerbrain proxy for the wire, or (c) endpoint DLP that blocks
+  consumer plans for regulated classifications.
+- If your argument only needs **policy-checked retrieval and audit
+  on the tool layer** — for example an internal assistant where the
+  chat is just UX over a deterministic tool flow — direct-to-MCP
+  community is sufficient.
+- The honest one-liner for customers: *"Powerbrain governs every
+  byte of retrieved enterprise data. It governs free chat content
+  only when clients speak our proxy."*
+
+See [compliance-claude-desktop.md](compliance-claude-desktop.md) for the
+three-tier mitigation model (real-time proxy, defence-in-depth chat-history
+ingest, endpoint DLP) and the GDPR/AI-Act mapping per tier.
+
 ## Which should I run?
 
 **Community fits when:**
