@@ -11,6 +11,7 @@ from worker.jobs import (
     accuracy_metrics,
     audit_integrity_status,
     audit_retention,
+    incident_deadline_check,
     pending_review_timeout,
     gdpr_retention,
 )
@@ -523,6 +524,76 @@ class TestGdprRetention:
         assert "permission denied" in result["error"]
 
 
+# ── incident_deadline_check ───────────────────────────────
+
+
+class TestIncidentDeadlineCheck:
+    def _opa_deadline_response(self, hours=(72, 24, 48)):
+        return _make_response({
+            "result": {
+                "notification_hours":      hours[0],
+                "warning_threshold_hours": hours[1],
+                "critical_threshold_hours": hours[2],
+            },
+        })
+
+    def _row(self, mapping: dict):
+        from unittest.mock import MagicMock as MM
+        row = MM()
+        row.__getitem__ = lambda s, k: mapping[k]
+        return row
+
+    async def test_no_incidents_returns_clean_summary(self):
+        ctx = _ctx()
+        ctx.http_client.post.return_value = self._opa_deadline_response()
+        # First fetch: status counts; second fetch: deadline rows
+        ctx.pg_pool.fetch.side_effect = [[], []]
+
+        summary = await incident_deadline_check.run(ctx)
+        assert summary["open_by_status"] == {}
+        assert summary["deadline_buckets"] == {
+            "warning": 0, "critical": 0, "overdue": 0,
+        }
+        assert summary["oldest_open_hours"] == 0
+        assert summary["thresholds_hours"]["notification"] == 72
+
+    async def test_buckets_classified_correctly(self):
+        ctx = _ctx()
+        ctx.http_client.post.return_value = self._opa_deadline_response()
+
+        # status counts
+        status_rows = [
+            self._row({"status": "detected", "n": 3}),
+            self._row({"status": "under_review", "n": 1}),
+        ]
+        # deadline rows: one warning (>24h, detected), one critical (>48h),
+        # one overdue (>72h), one fresh (<24h)
+        deadline_rows = [
+            self._row({"id": "1", "status": "detected", "hours_since": 30.0}),
+            self._row({"id": "2", "status": "under_review", "hours_since": 60.0}),
+            self._row({"id": "3", "status": "detected", "hours_since": 80.0}),
+            self._row({"id": "4", "status": "detected", "hours_since": 5.0}),
+        ]
+        ctx.pg_pool.fetch.side_effect = [status_rows, deadline_rows]
+
+        summary = await incident_deadline_check.run(ctx)
+        assert summary["deadline_buckets"]["warning"] == 1
+        assert summary["deadline_buckets"]["critical"] == 1
+        assert summary["deadline_buckets"]["overdue"] == 1
+        assert summary["oldest_open_hours"] == 80.0
+        assert summary["open_by_status"] == {"detected": 3, "under_review": 1}
+
+    async def test_opa_failure_uses_gdpr_defaults(self):
+        ctx = _ctx()
+        ctx.http_client.post.side_effect = httpx.ConnectError("opa down")
+        ctx.pg_pool.fetch.side_effect = [[], []]
+
+        summary = await incident_deadline_check.run(ctx)
+        assert summary["thresholds_hours"]["notification"] == 72
+        assert summary["thresholds_hours"]["warning"] == 24
+        assert summary["thresholds_hours"]["critical"] == 48
+
+
 # ── scheduler registration ────────────────────────────────
 
 class TestSchedulerRegistration:
@@ -535,6 +606,7 @@ class TestSchedulerRegistration:
             "audit_retention_cleanup",
             "repo_sync",
             "audit_integrity_status_refresh",
+            "incident_deadline_check",
         }
 
     def test_register_jobs_attaches_all(self):
@@ -550,6 +622,7 @@ class TestSchedulerRegistration:
             "audit_retention_cleanup",
             "repo_sync",
             "audit_integrity_status_refresh",
+            "incident_deadline_check",
         }
 
     async def test_run_with_logging_swallows_exceptions(self):
@@ -576,3 +649,4 @@ class TestSchedulerRegistration:
         assert trigger_map["gdpr_retention_cleanup"] is CronTrigger
         assert trigger_map["audit_retention_cleanup"] is CronTrigger
         assert trigger_map["audit_integrity_status_refresh"] is IntervalTrigger
+        assert trigger_map["incident_deadline_check"] is IntervalTrigger
