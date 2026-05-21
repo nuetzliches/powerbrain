@@ -475,14 +475,22 @@ RUN_INTEGRATION_TESTS=1 python3 -m pytest tests/integration/e2e/test_smoke.py::T
 Tests are gated behind `RUN_INTEGRATION_TESTS=1` and take ~90s (plus stack startup on first run).
 The `docker_stack` fixture calls `docker compose down -v` before and after the test session.
 
+### Branching Strategy
+
+Feature development follows a two-branch model:
+- **`development`** — integration branch; all feature PRs target `development`
+- **`master`** — stable release branch; only release merges from `development` land here
+
+New features and larger refactors should be developed on a separate branch and submitted as a PR against `development`. Direct pushes to `development` are allowed for small fixes. Direct pushes to `master` are blocked — only release merges from `development` land there.
+
 ### CI / PR Validation
-PR workflow (`.github/workflows/pr-validate.yml`) runs on every PR to `master`:
+PR workflow (`.github/workflows/pr-validate.yml`) runs on every PR to `development`:
 - **unit-tests** — All service tests in `python:3.12-slim` container (`-m "not integration"`), coverage threshold 80% (`--cov-fail-under=80`)
 - **opa-tests** — OPA policy tests (`opa test opa-policies/`)
 - **docker-build** — Build all 5 images (no push)
 - **security-scan** — `pip-audit` (dependency vulnerabilities) + `bandit` (static analysis), non-blocking
 
-All jobs must pass before merge. Branch protection requires PR — no direct pushes to master.
+All jobs must pass before merge. Branch protection requires PR for `master` — no direct pushes to `master`. Direct pushes to `development` are allowed.
 
 ### Load Tests
 Locust-based load tests for the MCP search pipeline (not in CI, local only):
@@ -636,7 +644,7 @@ Tasks completed for open-sourcing the repository:
 - [x] **Add LICENSE file** — Apache 2.0
 - [x] **Dual CI** — `.forgejo/` (internal) + `.github/` (public) coexist
 - [x] **GitHub Actions CI** — `.github/workflows/pr-validate.yml` with 4 jobs (unit-tests, opa-tests, docker-build, security-scan)
-- [x] **Branch protection on `master`** — Require PR + status checks
+- [x] **Branch protection on `master`** — Require PR + status checks; feature PRs target `development`, releases merge to `master`; direct pushes to `development` allowed
 - [x] **CONTRIBUTING.md** — Contributor guide with dev setup, test commands, code conventions
 - [x] **SECURITY.md** — Vulnerability reporting policy via GitHub Security Advisories
 - [x] **GitHub Templates** — Issue templates (bug report, feature request) + PR template
