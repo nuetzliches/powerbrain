@@ -1,4 +1,4 @@
-fastapi>=0.115
+fastapi>=0.136.1
 uvicorn[standard]>=0.34
 httpx>=0.28
 asyncpg>=0.31.0
