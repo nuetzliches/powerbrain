@@ -21,7 +21,7 @@ opentelemetry-instrumentation-httpx>=0.62b1
 #    and the /extract endpoint called by pb-proxy for chat attachments) ──
 # Upper bounds cap at the next major to block unreviewed breaking changes.
 markitdown>=0.1.5,<0.2
-python-docx>=1.1.0,<2.0
+python-docx>=1.2.0,<2.0
 openpyxl>=3.1.0,<4.0
 python-pptx>=1.0.2,<2.0
 beautifulsoup4>=4.14.3,<5.0
