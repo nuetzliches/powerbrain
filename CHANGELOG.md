@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-05-25
+
+Routine dependency-maintenance release on top of v0.10.0 — no
+service-code changes, no DB migrations, no breaking changes. Picks up
+the Dependabot backlog accumulated since v0.10.0 and refreshes the
+floor of every Python pin we shipped with v0.10.0 to the latest 2026-05
+upstream release.
+
+### Dependencies
+
+- **Stack-wide pin floor refresh.** Bumped 21 Python deps across
+  `mcp-server/`, `ingestion/`, `pb-proxy/`, `reranker/`, and `worker/`
+  requirements to the current upstream releases. All bumps are
+  loosen-the-floor (`>=`) changes; CI (unit-tests, opa-tests,
+  docker-build, security-scan) green on master after each merge.
+  - **`mcp-server`** — `qdrant-client >= 1.18.0`
+    ([#156](https://github.com/nuetzliches/powerbrain/pull/156)),
+    `uvicorn >= 0.47.0`
+    ([#158](https://github.com/nuetzliches/powerbrain/pull/158)),
+    `pydantic >= 2.13.4`
+    ([#163](https://github.com/nuetzliches/powerbrain/pull/163)),
+    `asyncpg >= 0.31.0`
+    ([#167](https://github.com/nuetzliches/powerbrain/pull/167)),
+    `jsonschema >= 4.26.0`
+    ([#169](https://github.com/nuetzliches/powerbrain/pull/169)).
+  - **`ingestion`** — `python-docx >= 1.2.0,<2.0`
+    ([#157](https://github.com/nuetzliches/powerbrain/pull/157)),
+    `spacy >= 3.8.14`
+    ([#161](https://github.com/nuetzliches/powerbrain/pull/161)),
+    `cachetools >= 7.1.1`
+    ([#162](https://github.com/nuetzliches/powerbrain/pull/162)),
+    `pyyaml >= 6.0.3`
+    ([#165](https://github.com/nuetzliches/powerbrain/pull/165)),
+    `fastapi >= 0.136.1`
+    ([#170](https://github.com/nuetzliches/powerbrain/pull/170)).
+  - **`pb-proxy`** — `litellm >= 1.83.7`
+    ([#145](https://github.com/nuetzliches/powerbrain/pull/145)),
+    `uvicorn >= 0.47.0`
+    ([#160](https://github.com/nuetzliches/powerbrain/pull/160)),
+    `asyncpg >= 0.31.0`
+    ([#166](https://github.com/nuetzliches/powerbrain/pull/166)),
+    `opentelemetry-api >= 1.42.1`
+    ([#177](https://github.com/nuetzliches/powerbrain/pull/177)),
+    `opentelemetry-instrumentation-httpx >= 0.63b1`
+    ([#178](https://github.com/nuetzliches/powerbrain/pull/178)).
+  - **`reranker`** — `torch >= 2.12.0`
+    ([#168](https://github.com/nuetzliches/powerbrain/pull/168)),
+    `uvicorn >= 0.47.0`
+    ([#172](https://github.com/nuetzliches/powerbrain/pull/172)),
+    `opentelemetry-instrumentation-fastapi >= 0.63b1`
+    ([#179](https://github.com/nuetzliches/powerbrain/pull/179)),
+    `sentence-transformers >= 5.5.1`
+    ([#180](https://github.com/nuetzliches/powerbrain/pull/180)),
+    `opentelemetry-sdk >= 1.42.1`
+    ([#181](https://github.com/nuetzliches/powerbrain/pull/181)).
+  - **`worker`** — `qdrant-client >= 1.18.0,<2.0`
+    ([#159](https://github.com/nuetzliches/powerbrain/pull/159)).
+
 ## [0.10.0] - 2026-05-13
 
 First minor bump since v0.9.0. Two PRs shipped together: (1) the
