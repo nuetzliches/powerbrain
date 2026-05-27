@@ -485,13 +485,17 @@ Feature development follows a two-branch model:
 New features and larger refactors should be developed on a separate branch and submitted as a PR against `development`. Direct pushes to `development` are allowed for small fixes. Direct pushes to `master` are blocked — only release merges from `development` land there.
 
 ### CI / PR Validation
-PR workflow (`.github/workflows/pr-validate.yml`) runs on every PR to `development`:
+PR workflow (`.github/workflows/pr-validate.yml`) runs on every PR to `development` **and** `master`:
 - **unit-tests** — All service tests in `python:3.12-slim` container (`-m "not integration"`), coverage threshold 80% (`--cov-fail-under=80`)
 - **opa-tests** — OPA policy tests (`opa test opa-policies/`)
 - **docker-build** — Build all 5 images (no push)
 - **security-scan** — `pip-audit` (dependency vulnerabilities) + `bandit` (static analysis), non-blocking
 
-All jobs must pass before merge. Branch protection requires PR for `master` — no direct pushes to `master`. Direct pushes to `development` are allowed.
+Running the full suite on `master` PRs too means the exact `development → master` merge commit is re-validated before a release lands — green-on-`development` alone is not relied upon, since direct pushes to `development` are permitted.
+
+`.github/workflows/master-guard.yml` adds a **guard-source-branch** check on `master` PRs that fails unless the PR's head branch is `development`, `release/*`, or `hotfix/*`. GitHub cannot block a PR from being *opened* against `master`; this required check blocks it at *merge* time instead, funnelling all feature work through `development`.
+
+The "Protect master" repository ruleset requires: a PR, the `unit-tests` / `opa-tests` / `docker-build` checks, and `guard-source-branch`. Direct pushes to `master` are blocked — only `development` (or a release/hotfix branch) merges there. Direct pushes to `development` are allowed for small fixes. Releases are tag-driven: pushing a `v*` tag triggers `.github/workflows/release.yml` (build + push images to GHCR + GitHub Release); no CI runs on `master` pushes.
 
 ### Load Tests
 Locust-based load tests for the MCP search pipeline (not in CI, local only):

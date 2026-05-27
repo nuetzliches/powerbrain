@@ -1,0 +1,28 @@
+name: Master Guard
+
+# master only accepts merges from the integration branch (development) or a
+# release/hotfix branch. GitHub cannot prevent a PR from being *opened* against
+# master, so this required check fails the PR at merge time when its source
+# branch is anything else — steering all feature work through development.
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  guard-source-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce allowed source branch
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          echo "PR head branch: $HEAD_REF"
+          case "$HEAD_REF" in
+            development|release/*|hotfix/*)
+              echo "Source branch '$HEAD_REF' may target master."
+              ;;
+            *)
+              echo "::error::PRs to master may only originate from 'development', 'release/*' or 'hotfix/*' (got '$HEAD_REF'). Open your PR against 'development' instead."
+              exit 1
+              ;;
+          esac
