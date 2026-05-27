@@ -59,10 +59,11 @@ The reranker backend is configurable via `RERANKER_BACKEND` (default: `powerbrai
 | Backend | Service | API Format | Use Case |
 |---|---|---|---|
 | `powerbrain` | Built-in Cross-Encoder (`reranker/service.py`) | Powerbrain `/rerank` | Default, self-hosted, GDPR-safe |
-| `tei` | HuggingFace Text Embeddings Inference | TEI `/rerank` | GPU-accelerated, self-hosted |
+| `tei` | HuggingFace Text Embeddings Inference | TEI `/v1/rerank` (`texts[]`) | GPU-accelerated, self-hosted |
+| `infinity` | Infinity (`michaelf34/infinity`) | Infinity `/v1/rerank` (`documents[]`) | Self-hosted, Cohere-style schema |
 | `cohere` | Cohere Rerank API v2 | Cohere `/v2/rerank` | Best quality, external SaaS |
 
-**Abstraction:** `shared/rerank_provider.py` implements a strategy pattern with format translation per backend. The MCP server calls `_rerank_provider.rerank()` without knowing which backend is active. Each provider handles request/response mapping (e.g., TEI uses flat `texts[]` array + index-based response mapping, Cohere uses `relevance_score` + model parameter).
+**Abstraction:** `shared/rerank_provider.py` implements a strategy pattern with format translation per backend. The MCP server calls `_rerank_provider.rerank()` without knowing which backend is active. Each provider handles request/response mapping (e.g., TEI uses a flat `texts[]` array + bare-array response, while Infinity and Cohere use `documents[]` + a `{results: [{index, relevance_score}]}` envelope — Infinity on `/v1/rerank`, Cohere on `/v2/rerank`).
 
 **Built-in model options** (when `RERANKER_BACKEND=powerbrain`):
 - `cross-encoder/ms-marco-MiniLM-L-6-v2` (default, fast)

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-05-27
+
+Adds a dedicated `infinity` reranker backend so deployments backed by an
+Infinity server (`michaelf34/infinity`) can use neural reranking out of the
+box. Previously the only `/v1/rerank` backend was `tei`, whose `texts[]`
+request and bare-array response are incompatible with Infinity's
+`documents[]` + `{results: [{index, relevance_score}]}` schema, while the
+`cohere` backend matched the schema but targets `/v2/rerank`. Additive and
+backward-compatible — the default backend stays `powerbrain`.
+
+### Added
+
+- **`infinity` reranker backend** — New `InfinityRerankProvider` in
+  `shared/rerank_provider.py`, selectable via `RERANKER_BACKEND=infinity`.
+  Posts the Cohere-style `documents[]` payload to `{RERANKER_URL}/v1/rerank`
+  and parses the `{results: [{index, relevance_score}]}` envelope (sorting by
+  relevance, truncating to `top_n`); model name is optional. Covered by unit
+  tests in `shared/tests/test_rerank_provider.py` and an integration test in
+  `mcp-server/tests/test_reranker_integration.py`. Backend docs in
+  `docs/architecture.md`, `CLAUDE.md`, and `.env.example` now list all four
+  backends and their request schemas.
+
 ## [0.10.1] - 2026-05-25
 
 Routine dependency-maintenance release on top of v0.10.0 — no

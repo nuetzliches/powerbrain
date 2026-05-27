@@ -182,7 +182,7 @@ class TestHeuristicBoosts:
         # Doc a has no files → no boost
         assert results[0].rerank_score == pytest.approx(0.80)
 
-    def test_heuristic_boost_reorders_results(self, _patch_http, monkeypatch):
+    async def test_heuristic_boost_reorders_results(self, _patch_http, monkeypatch):
         monkeypatch.setattr(server, "RERANKER_ENABLED", True)
 
         response = MagicMock()
@@ -202,11 +202,9 @@ class TestHeuristicBoosts:
              "metadata": {"project": "MINE"}},
         ]
 
-        import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
-            rerank_results("query", docs, top_n=2,
-                           rerank_options={"match_project": "MINE",
-                                           "boost_same_project": 0.15})
+        result = await rerank_results(
+            "query", docs, top_n=2,
+            rerank_options={"match_project": "MINE", "boost_same_project": 0.15},
         )
         # boosted: 0.80 + 0.15 = 0.95 > winner: 0.90
         assert result[0]["id"] == "boosted"

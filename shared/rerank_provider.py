@@ -4,6 +4,7 @@ Configurable Reranker Provider abstraction.
 Supports multiple backends:
 - **powerbrain** (default): Built-in Cross-Encoder service (reranker/service.py)
 - **tei**: HuggingFace Text Embeddings Inference /rerank endpoint
+- **infinity**: Infinity (michaelf34/infinity) /v1/rerank — Cohere-style schema
 - **cohere**: Cohere Rerank API v2
 
 Each provider translates between the uniform RerankDocument format and the
@@ -227,12 +228,76 @@ class CohereRerankProvider(_BaseRerankProvider):
 
 
 # ---------------------------------------------------------------------------
+# Infinity (/v1/rerank, Cohere-style schema)
+# ---------------------------------------------------------------------------
+
+class InfinityRerankProvider(_BaseRerankProvider):
+    """Calls an Infinity reranker (michaelf34/infinity) at /v1/rerank.
+
+    Infinity speaks the Cohere-style rerank schema (``documents`` in, a
+    ``{results: [{index, relevance_score}]}`` envelope out) but serves it
+    under ``/v1/rerank`` (via ``--url-prefix /v1``) rather than Cohere's
+    ``/v2/rerank``. It is therefore neither the TEI backend (which sends
+    ``texts`` and expects a bare-array response) nor the Cohere backend
+    (which targets ``/v2/rerank``).
+
+    Request:  {model?, query, documents: [str], top_n, return_documents: false}
+    Response: {results: [{index: int, relevance_score: float}]}
+    """
+
+    async def rerank(
+        self,
+        http: httpx.AsyncClient,
+        query: str,
+        documents: list[RerankDocument],
+        top_n: int,
+    ) -> list[RerankDocument]:
+        if not documents:
+            return []
+
+        payload: dict = {
+            "query": query,
+            "documents": [doc.content for doc in documents],
+            "top_n": top_n,
+            "return_documents": False,
+        }
+        if self.model:
+            payload["model"] = self.model
+
+        resp = await http.post(
+            f"{self.base_url}/v1/rerank",
+            headers=self.headers,
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        # Sort by relevance descending (do not assume server order) and truncate.
+        scored = sorted(
+            data["results"], key=lambda r: r["relevance_score"], reverse=True
+        )[:top_n]
+
+        return [
+            RerankDocument(
+                id=documents[r["index"]].id,
+                content=documents[r["index"]].content,
+                score=documents[r["index"]].score,
+                rerank_score=round(r["relevance_score"], 4),
+                rank=rank,
+                metadata=documents[r["index"]].metadata,
+            )
+            for rank, r in enumerate(scored, start=1)
+        ]
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
 _PROVIDERS: dict[str, type[_BaseRerankProvider]] = {
     "powerbrain": PowerbrainRerankProvider,
     "tei": TEIRerankProvider,
+    "infinity": InfinityRerankProvider,
     "cohere": CohereRerankProvider,
 }
 
