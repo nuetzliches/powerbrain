@@ -218,8 +218,9 @@ OPA checks classification on **every** MCP request.
 
 Reranker backend is configurable via `RERANKER_BACKEND`:
 - `powerbrain` (default) — built-in Cross-Encoder service
-- `tei` — HuggingFace Text Embeddings Inference `/rerank` endpoint
-- `cohere` — Cohere Rerank API v2 (external, requires API key)
+- `tei` — HuggingFace Text Embeddings Inference `/v1/rerank` (`texts[]` payload)
+- `infinity` — Infinity (`michaelf34/infinity`) `/v1/rerank`, Cohere-style `documents[]` schema (self-hosted)
+- `cohere` — Cohere Rerank API v2 `/v2/rerank` (external, requires API key)
 
 Abstraction: `shared/rerank_provider.py` (follows `shared/llm_provider.py` pattern).
 If the reranker is down → graceful fallback to Qdrant ordering.

@@ -3,7 +3,7 @@ Integration tests for the reranker provider in the MCP server search pipeline.
 
 Tests verify that:
 - rerank_results() correctly uses the configured rerank provider
-- Different backend types (powerbrain, tei, cohere) work through the abstraction
+- Different backend types (powerbrain, tei, infinity, cohere) work through the abstraction
 - Graceful fallback works when the provider raises errors
 - The provider is swappable at runtime via create_rerank_provider()
 """
@@ -122,6 +122,38 @@ class TestRerankerProviderIntegration:
         # Verify Cohere auth header
         call_kwargs = _patch_http.post.call_args[1]
         assert "Authorization" in call_kwargs.get("headers", {})
+
+    async def test_infinity_provider_called(self, _patch_http, sample_docs, monkeypatch):
+        """Verify InfinityReranker sends a Cohere-style request to /v1/rerank."""
+        provider = create_rerank_provider(
+            backend="infinity", base_url="http://ai:8002",
+            model="nutsai-reranker-bsa-cst-v2",
+        )
+        monkeypatch.setattr(server, "_rerank_provider", provider)
+        monkeypatch.setattr(server, "RERANKER_ENABLED", True)
+
+        infinity_response = MagicMock()
+        infinity_response.raise_for_status = MagicMock()
+        infinity_response.json.return_value = {
+            "results": [
+                {"index": 2, "relevance_score": 0.95},
+                {"index": 0, "relevance_score": 0.85},
+            ]
+        }
+        _patch_http.post.return_value = infinity_response
+
+        result = await rerank_results("neural networks", sample_docs, top_n=2)
+
+        assert len(result) == 2
+        assert result[0]["id"] == "c"  # index 2 = doc "c"
+        assert result[0]["rerank_score"] == 0.95
+        # Infinity speaks the documents-based schema on /v1/rerank, not TEI's texts.
+        call_url = _patch_http.post.call_args[0][0]
+        assert "ai:8002" in call_url
+        assert "/v1/rerank" in call_url
+        payload = _patch_http.post.call_args[1]["json"]
+        assert "documents" in payload
+        assert "texts" not in payload
 
     async def test_provider_swap_at_runtime(self, _patch_http, sample_docs, monkeypatch):
         """Provider can be swapped without restarting the server."""

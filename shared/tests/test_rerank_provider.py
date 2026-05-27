@@ -9,6 +9,7 @@ import pytest
 
 from shared.rerank_provider import (
     CohereRerankProvider,
+    InfinityRerankProvider,
     PowerbrainRerankProvider,
     RerankDocument,
     TEIRerankProvider,
@@ -331,6 +332,102 @@ class TestTEIRerankProvider:
 
 
 # ===========================================================================
+# InfinityRerankProvider
+# ===========================================================================
+
+class TestInfinityRerankProvider:
+    async def test_sends_documents_not_texts(self):
+        docs = _sample_docs(3)
+        json_data = {
+            "results": [
+                {"index": 0, "relevance_score": 0.5},
+                {"index": 1, "relevance_score": 0.9},
+                {"index": 2, "relevance_score": 0.3},
+            ]
+        }
+        http = _mock_http(json_data=json_data)
+        provider = InfinityRerankProvider("http://ai:8002")
+
+        await provider.rerank(http, "my query", docs, top_n=2)
+
+        call_args = http.post.call_args
+        assert call_args[0][0] == "http://ai:8002/v1/rerank"
+        payload = call_args[1]["json"]
+        assert payload["query"] == "my query"
+        assert payload["documents"] == [
+            "Content of document 0",
+            "Content of document 1",
+            "Content of document 2",
+        ]
+        assert payload["top_n"] == 2
+        assert payload["return_documents"] is False
+        assert "texts" not in payload  # Infinity uses documents, not TEI's texts
+        assert "model" not in payload  # no model set
+
+    async def test_sends_model_when_set(self):
+        docs = _sample_docs(2)
+        json_data = {"results": [{"index": 0, "relevance_score": 0.5}]}
+        http = _mock_http(json_data=json_data)
+        provider = InfinityRerankProvider("http://ai:8002", model="nutsai-reranker-bsa-cst-v2")
+
+        await provider.rerank(http, "query", docs, top_n=2)
+
+        payload = http.post.call_args[1]["json"]
+        assert payload["model"] == "nutsai-reranker-bsa-cst-v2"
+
+    async def test_relevance_score_mapping_and_sort(self):
+        docs = _sample_docs(3)
+        # Unsorted on purpose — provider must sort desc and truncate to top_n.
+        json_data = {
+            "results": [
+                {"index": 0, "relevance_score": 0.5},
+                {"index": 2, "relevance_score": 0.98},
+                {"index": 1, "relevance_score": 0.75},
+            ]
+        }
+        http = _mock_http(json_data=json_data)
+        provider = InfinityRerankProvider("http://ai:8002")
+
+        results = await provider.rerank(http, "query", docs, top_n=2)
+
+        assert len(results) == 2
+        assert results[0].id == "doc-2"  # index 2, score 0.98
+        assert results[0].rerank_score == 0.98
+        assert results[0].rank == 1
+        assert results[0].score == 0.7  # original score of doc-2
+        assert results[0].metadata == {"source": "test-2"}
+
+        assert results[1].id == "doc-1"  # index 1, score 0.75
+        assert results[1].rerank_score == 0.75
+        assert results[1].rank == 2
+
+    async def test_empty_documents(self):
+        http = _mock_http()
+        provider = InfinityRerankProvider("http://ai:8002")
+
+        results = await provider.rerank(http, "query", [], top_n=5)
+
+        assert results == []
+        http.post.assert_not_called()
+
+    async def test_http_error_propagates(self):
+        http = _mock_http(status_code=500)
+        provider = InfinityRerankProvider("http://ai:8002")
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await provider.rerank(http, "query", _sample_docs(1), top_n=1)
+
+    async def test_with_api_key(self):
+        json_data = {"results": []}
+        http = _mock_http(json_data=json_data)
+        provider = InfinityRerankProvider("http://ai:8002", api_key="key-42")
+
+        await provider.rerank(http, "q", _sample_docs(1), top_n=1)
+
+        assert http.post.call_args[1]["headers"] == {"Authorization": "Bearer key-42"}
+
+
+# ===========================================================================
 # CohereRerankProvider
 # ===========================================================================
 
@@ -423,6 +520,16 @@ class TestCreateRerankProvider:
         p = create_rerank_provider(backend="tei", base_url="http://tei:8010")
         assert isinstance(p, TEIRerankProvider)
         assert p.base_url == "http://tei:8010"
+
+    def test_infinity(self):
+        p = create_rerank_provider(backend="infinity", base_url="http://ai:8002")
+        assert isinstance(p, InfinityRerankProvider)
+        assert p.base_url == "http://ai:8002"
+
+    def test_infinity_model_optional(self):
+        # Unlike cohere, infinity does not require a model name.
+        p = create_rerank_provider(backend="infinity", base_url="http://ai:8002")
+        assert p.model == ""
 
     def test_cohere(self):
         p = create_rerank_provider(

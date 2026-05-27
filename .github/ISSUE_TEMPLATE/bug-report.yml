@@ -79,7 +79,7 @@ body:
         - Docker Compose version:
         - OS:
         - Compose profiles used (tls, proxy, gpu, opal):
-        - Reranker backend (powerbrain/tei/cohere):
+        - Reranker backend (powerbrain/tei/infinity/cohere):
         - LLM provider (ollama/vllm/external):
     validations:
       required: true
