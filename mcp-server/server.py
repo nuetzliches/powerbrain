@@ -381,11 +381,19 @@ class RateLimitMiddleware:
             return await self.app(scope, receive, send)
 
         try:
-            # Extract agent info from auth state (set by AuthenticationMiddleware)
+            # Extract agent info from auth state (set by AuthenticationMiddleware).
+            # The MCP SDK's AuthenticatedUser subclasses Starlette's SimpleUser,
+            # which exposes the agent id as `username` (the OAuth client_id).
+            # It does NOT implement `identity` — that property is inherited from
+            # BaseUser and raises NotImplementedError. Touching it (even via
+            # hasattr, which only swallows AttributeError) would propagate the
+            # error into the except-block below and silently fail open on every
+            # request. Mirror the `_auth_user` helper and read `username`.
             user = scope.get("user")
-            if user and hasattr(user, "identity") and user.identity:
-                agent_id = user.identity
-                role = user.scopes[0] if user.scopes else "analyst"
+            agent_id = getattr(user, "username", None) or getattr(user, "client_id", None)
+            if user and agent_id:
+                scopes = getattr(user, "scopes", None) or []
+                role = scopes[0] if scopes else "analyst"
                 bucket = _get_bucket(agent_id, role)
                 allowed, retry_after = await bucket.consume()
 
