@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-05-27
+
+Patch release fixing a silent rate-limiter outage in the MCP server. No
+database migrations, no breaking changes.
+
+### Fixed
+
+- **Rate limiter silently disabled** — `RateLimitMiddleware` read the agent
+  id from `user.identity`, but the MCP SDK's `AuthenticatedUser` (a Starlette
+  `SimpleUser`) never implements `identity` — the inherited property raises
+  `NotImplementedError`. The `hasattr(user, "identity")` guard did not help,
+  since `hasattr` only swallows `AttributeError`, so the error propagated into
+  the fail-open `except` block and every authenticated request bypassed rate
+  limiting (logging `Rate limiter error, request is being passed through`)
+  despite `RATE_LIMIT_ENABLED=true`. The middleware now reads `username` (the
+  OAuth `client_id`), matching the existing `_auth_user` helper. Regression
+  tests added in `mcp-server/tests/test_rate_limiter.py`.
+
+### Changed
+
+- **CI / branch flow** — `pr-validate` now runs on PRs to both `development`
+  and `master` (was `master`-only), so feature PRs into `development` are
+  validated and the `development → master` release merge re-runs the full
+  suite. New `master-guard` workflow adds a required `guard-source-branch`
+  check that blocks `master` PRs not originating from
+  `development`/`release/*`/`hotfix/*`.
+
 ## [0.11.0] - 2026-05-27
 
 Adds a dedicated `infinity` reranker backend so deployments backed by an
