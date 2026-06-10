@@ -2,6 +2,7 @@ version: 2
 updates:
   - package-ecosystem: "pip"
     directory: "/mcp-server"
+    target-branch: "development"
     schedule:
       interval: "weekly"
     labels: ["dependencies"]
@@ -9,6 +10,7 @@ updates:
 
   - package-ecosystem: "pip"
     directory: "/ingestion"
+    target-branch: "development"
     schedule:
       interval: "weekly"
     labels: ["dependencies"]
@@ -16,6 +18,7 @@ updates:
 
   - package-ecosystem: "pip"
     directory: "/pb-proxy"
+    target-branch: "development"
     schedule:
       interval: "weekly"
     labels: ["dependencies"]
@@ -23,6 +26,7 @@ updates:
 
   - package-ecosystem: "pip"
     directory: "/worker"
+    target-branch: "development"
     schedule:
       interval: "weekly"
     labels: ["dependencies"]
@@ -30,6 +34,7 @@ updates:
 
   - package-ecosystem: "pip"
     directory: "/reranker"
+    target-branch: "development"
     schedule:
       interval: "weekly"
     labels: ["dependencies"]
@@ -37,36 +42,42 @@ updates:
 
   - package-ecosystem: "docker"
     directory: "/mcp-server"
+    target-branch: "development"
     schedule:
       interval: "weekly"
     labels: ["dependencies"]
 
   - package-ecosystem: "docker"
     directory: "/ingestion"
+    target-branch: "development"
     schedule:
       interval: "weekly"
     labels: ["dependencies"]
 
   - package-ecosystem: "docker"
     directory: "/pb-proxy"
+    target-branch: "development"
     schedule:
       interval: "weekly"
     labels: ["dependencies"]
 
   - package-ecosystem: "docker"
     directory: "/worker"
+    target-branch: "development"
     schedule:
       interval: "weekly"
     labels: ["dependencies"]
 
   - package-ecosystem: "docker"
     directory: "/reranker"
+    target-branch: "development"
     schedule:
       interval: "weekly"
     labels: ["dependencies"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "development"
     schedule:
       interval: "weekly"
     labels: ["dependencies"]
