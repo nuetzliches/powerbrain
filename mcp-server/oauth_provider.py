@@ -123,7 +123,11 @@ class PowerbrainOAuthProvider(
         try:
             pool = await self._get_pool()
             deleted = await pool.fetchval(
-                "DELETE FROM oauth_refresh_tokens WHERE expires_at IS NOT NULL AND expires_at < $1 RETURNING count(*)",
+                "WITH deleted AS ("
+                "    DELETE FROM oauth_refresh_tokens "
+                "    WHERE expires_at IS NOT NULL AND expires_at < $1 "
+                "    RETURNING 1"
+                ") SELECT count(*) FROM deleted",
                 int(now),
             )
             if deleted:
@@ -352,14 +356,30 @@ class PowerbrainOAuthProvider(
     ) -> OAuthToken:
         now = time.time()
         new_access_token = secrets.token_urlsafe(32)
+        granted_scopes = scopes or refresh_token.scopes
 
         # New access token: in-memory
         self._access_tokens[new_access_token] = PbAccessToken(
             token=new_access_token,
             client_id=client.client_id,
-            scopes=scopes or refresh_token.scopes,
+            scopes=granted_scopes,
             expires_at=int(now + ACCESS_TOKEN_TTL),
             api_key=refresh_token.api_key,
+        )
+
+        # Slide the refresh-token expiry on every use. Without this the
+        # refresh token keeps its original absolute expiry (now + 7d at
+        # issuance) and is never extended, so an actively used connector is
+        # force-logged-out exactly REFRESH_TOKEN_TTL after the last full
+        # authorization. _store_refresh_token upserts on the same token
+        # (ON CONFLICT (token) DO UPDATE SET expires_at), so this just bumps
+        # the expiry in place.
+        await self._store_refresh_token(
+            token=refresh_token.token,
+            client_id=client.client_id,
+            api_key=refresh_token.api_key,
+            scopes=granted_scopes,
+            expires_at=int(now + REFRESH_TOKEN_TTL),
         )
 
         return OAuthToken(
@@ -367,7 +387,7 @@ class PowerbrainOAuthProvider(
             token_type="bearer",
             expires_in=ACCESS_TOKEN_TTL,
             refresh_token=refresh_token.token,
-            scope=" ".join(scopes) if scopes else None,
+            scope=" ".join(granted_scopes) if granted_scopes else None,
         )
 
     # ── Access Token Verification (in-memory) ─────────────
