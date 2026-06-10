@@ -10,6 +10,12 @@ on:
     # does its own change detection and exits fast when nothing
     # service-relevant changed.
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Explizite Release-Version bauen (z.B. v0.11.2). Leer = nur :latest/:sha. Mit Wert: baut ALLE Images mit :<version> aus dem getaggten Commit.'
+        type: string
+        required: false
+        default: ''
 
 jobs:
   build:
@@ -17,20 +23,32 @@ jobs:
     steps:
       - name: Checkout repository
         run: |
-          BEFORE="${{ github.event.before }}"
-          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            DEPTH=2
-          else
-            DEPTH=0
-          fi
-          if [ "$DEPTH" -eq 0 ]; then
-            git clone --branch master \
+          VERSION_INPUT="${{ github.event.inputs.version }}"
+          if [ -n "$VERSION_INPUT" ]; then
+            # Explicit version build (manual recovery): full clone *with tags*
+            # and check out the exact tag, so :<version> is applied to ALL
+            # images from the tagged commit — independent of master's tip and
+            # of git-describe working on a shallow clone.
+            git clone \
               "https://oauth2:${GITHUB_TOKEN}@git.nuetzliche.it/nuts/powerbrain.git" workspace
+            cd workspace
+            git checkout "tags/${VERSION_INPUT}"
           else
-            git clone --depth "$DEPTH" --branch master \
-              "https://oauth2:${GITHUB_TOKEN}@git.nuetzliche.it/nuts/powerbrain.git" workspace
+            BEFORE="${{ github.event.before }}"
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              DEPTH=2
+            else
+              DEPTH=0
+            fi
+            if [ "$DEPTH" -eq 0 ]; then
+              git clone --branch master \
+                "https://oauth2:${GITHUB_TOKEN}@git.nuetzliche.it/nuts/powerbrain.git" workspace
+            else
+              git clone --depth "$DEPTH" --branch master \
+                "https://oauth2:${GITHUB_TOKEN}@git.nuetzliche.it/nuts/powerbrain.git" workspace
+            fi
+            cd workspace
           fi
-          cd workspace
 
       - name: Login to Forgejo Registry
         run: |
@@ -49,10 +67,11 @@ jobs:
           REPO: powerbrain
           FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
           BEFORE_SHA: ${{ github.event.before }}
-          # On tag pushes (refs/tags/v*), pass the tag name so the
-          # script adds :<version> alongside :latest and :sha-<short>.
-          # Empty for branch pushes; falls back to git describe.
-          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          # Priority: explicit workflow_dispatch `version` input, then a tag
+          # push (refs/tags/v*). Empty for branch pushes; the script then
+          # falls back to `git describe`. A non-empty RELEASE_TAG makes
+          # build-images.sh rebuild ALL images tagged :<version>.
+          RELEASE_TAG: ${{ github.event.inputs.version || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '' }}
 
       - name: Deploy — pull and restart services
         run: |
