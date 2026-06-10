@@ -13,6 +13,6 @@ opentelemetry-exporter-otlp>=1.42.1
 opentelemetry-instrumentation-httpx>=0.63b1
 opentelemetry-instrumentation-fastapi>=0.62b1
 tenacity>=9.1.4
-cachetools>=7.1.1
+cachetools>=7.1.4
 jsonschema>=4.26.0
 pyyaml>=6.0.3
