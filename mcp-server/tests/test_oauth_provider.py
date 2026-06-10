@@ -245,6 +245,44 @@ class TestExchangeAuthorizationCode:
         assert "oauth_refresh_tokens" in call_sql
 
 
+# ── Exchange Refresh Token ────────────────────────────────
+
+
+class TestExchangeRefreshToken:
+    def _rt(self, client_id="client-1", scopes=None):
+        return PbRefreshToken(
+            token="rt_keep", client_id=client_id, scopes=scopes or ["read"],
+            expires_at=int(time.time() + 100), api_key="pb_k",
+        )
+
+    async def test_issues_new_access_keeps_refresh(self):
+        prov, _, _ = _provider()
+        token = await prov.exchange_refresh_token(_make_client(), self._rt(), scopes=["read"])
+        assert token.access_token is not None
+        assert token.refresh_token == "rt_keep"  # same refresh token is reused
+        assert token.expires_in == ACCESS_TOKEN_TTL
+        assert token.access_token in prov._access_tokens
+
+    async def test_slides_refresh_expiry(self):
+        # The whole point of the fix: an active connector must never be
+        # force-logged-out. Each refresh bumps the DB expiry to now + TTL.
+        prov, pool, _ = _provider()
+        floor = int(time.time() + REFRESH_TOKEN_TTL)
+        await prov.exchange_refresh_token(_make_client(), self._rt(), scopes=["read"])
+
+        pool.execute.assert_called_once()  # the _store_refresh_token upsert
+        sql, *args = pool.execute.call_args[0]
+        assert "oauth_refresh_tokens" in sql
+        assert "ON CONFLICT" in sql
+        assert args[0] == "rt_keep"          # same token, not a new row
+        assert args[4] >= floor              # expires_at slid to ~now + TTL
+
+    async def test_falls_back_to_refresh_scopes(self):
+        prov, _, _ = _provider()
+        token = await prov.exchange_refresh_token(_make_client(), self._rt(scopes=["read"]), scopes=[])
+        assert token.scope == "read"
+
+
 # ── Refresh Token ─────────────────────────────────────────
 
 
