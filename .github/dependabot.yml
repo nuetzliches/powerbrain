@@ -40,6 +40,33 @@ updates:
     labels: ["dependencies"]
     open-pull-requests-limit: 5
 
+  # Requirements are pinned exactly (see CLAUDE.md "Dependency Pinning"), so a
+  # directory that Dependabot does not watch never receives security patches.
+  # The three entries below close that gap.
+  - package-ecosystem: "pip"
+    directory: "/" # requirements-dev.txt — test + security tooling
+    target-branch: "development"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies"]
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "pip"
+    directory: "/ingestion/adapters/office365"
+    target-branch: "development"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies"]
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "pip"
+    directory: "/demo"
+    target-branch: "development"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies"]
+    open-pull-requests-limit: 5
+
   - package-ecosystem: "docker"
     directory: "/mcp-server"
     target-branch: "development"

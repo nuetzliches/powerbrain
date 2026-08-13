@@ -2,13 +2,17 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Install from reranker/requirements.txt so its pinned versions are the single
+# source of truth (see CLAUDE.md "Dependency Pinning"). This step used to
+# install an unpinned inline list, which bypassed those pins entirely and also
+# omitted pydantic and the OpenTelemetry packages — so the tracing this service
+# is configured for in docker-compose.yml silently degraded to disabled.
+# The PyTorch CPU index keeps the image small: `torch==X` also matches `X+cpu`,
+# which that index serves and pip prefers over the PyPI (CUDA) wheel.
+COPY reranker/requirements.txt .
 RUN pip install --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/cpu \
-    fastapi \
-    "uvicorn[standard]" \
-    sentence-transformers \
-    torch \
-    prometheus-client
+    -r requirements.txt
 
 COPY shared/ ./shared/
 COPY reranker/service.py .
