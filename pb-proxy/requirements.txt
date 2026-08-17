@@ -1,7 +1,7 @@
 # Exact pins (supply-chain hardening) — see CLAUDE.md "Dependency Pinning".
 # Dependabot proposes bumps; every change is reviewed in a PR.
 fastapi==0.141.1
-uvicorn[standard]==0.52.2
+uvicorn[standard]==0.52.3
 litellm==1.96.2
 # IMPORTANT: mcp is held at 1.x. 2.0.0 removes
 # `mcp.client.streamable_http.streamablehttp_client`, used in tool_injection.py.
