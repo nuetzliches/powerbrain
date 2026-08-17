@@ -1,7 +1,7 @@
 # Exact pins (supply-chain hardening) — see CLAUDE.md "Dependency Pinning".
 # Dependabot proposes bumps; every change is reviewed in a PR.
 fastapi==0.141.1
-uvicorn[standard]==0.52.2
+uvicorn[standard]==0.52.3
 httpx==0.28.1
 asyncpg==0.31.0
 qdrant-client==1.19.0
