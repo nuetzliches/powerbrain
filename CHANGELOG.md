@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The dependency audit skipped files and still reported success** — the
+  `security-scan` job ran four `pip-audit` invocations as four plain lines in a
+  `run:` block. GitHub runs those under `bash -e`, and `pip-audit` exits 1 when
+  it finds something, so a finding in the second file ended the step before the
+  third and fourth were ever audited. `continue-on-error: true` then swallowed
+  the failure and the check went green. Two requirement files were therefore
+  unaudited while the job actively signalled that they had been checked — worse
+  than having no audit at all, because nobody goes looking. The step now audits
+  each file, collects the statuses instead of aborting, and exits with the
+  collected result. The file list comes from `git ls-files '*requirements*.txt'`
+  rather than being spelled out, which also closes the four files that were
+  never in the list (`reranker`, `demo`, `requirements-dev`, the Office 365
+  adapter), and means a requirements file added later cannot be left out by
+  being forgotten. `--strict` turns a dependency that could not be resolved into
+  a reported failure rather than a skipped line inside a passing run.
+  `continue-on-error` stays — a CVE published in a transitive dependency should
+  not block every unrelated PR — but a finding is no longer indistinguishable
+  from a clean run: the per-file result is written to the job summary with the
+  audit output inlined, and a workflow annotation points at it. The scanners
+  themselves are installed with `--constraint requirements-dev.txt` instead of
+  unpinned, since an unpinned `pip install` in CI is the supply-chain hole this
+  job exists to find. (#257)
+
 ## [0.12.1] - 2026-08-17
 
 ### Fixed
