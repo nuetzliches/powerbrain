@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from graph_service import (
-    create_node, find_node, delete_node,
+    create_node, create_relationship, find_node, delete_node,
     _execute_cypher, validate_identifier,
 )
 
@@ -61,6 +61,95 @@ class TestCreateNode:
         pool, conn = mock_pool
         with pytest.raises(ValueError, match="Property-Key"):
             await create_node(pool, "Project", {"invalid key": "x"})
+
+
+class TestCreateNodeIsIdempotent:
+    """A repeated sync run must not add a second copy of the same node.
+
+    Plain CREATE never checks uniqueness, so it never errors and every run
+    silently inserts another copy of the same entity.
+    """
+
+    @staticmethod
+    def _cypher(conn):
+        """The cypher statement, unwrapped from the SELECT ... cypher(...) shell."""
+        return conn.fetch.call_args[0][0]
+
+    async def test_merges_on_id_and_sets_remaining_properties(self, mock_pool):
+        pool, conn = mock_pool
+        await create_node(pool, "Project", {"id": "proj-1", "name": "Project One", "status": "active"})
+
+        cypher = self._cypher(conn)
+        assert "MERGE (n:Project {id: 'proj-1'})" in cypher
+        assert "CREATE" not in cypher
+        # name/status must be SET, not part of the MERGE pattern -- otherwise a
+        # renamed project would merge into a second node instead of updating.
+        assert "SET n.name = 'Project One', n.status = 'active'" in cypher
+
+    async def test_falls_back_to_name_when_no_id(self, mock_pool):
+        pool, conn = mock_pool
+        await create_node(pool, "Customer", {"name": "Acme"})
+
+        assert "MERGE (n:Customer {name: 'Acme'})" in self._cypher(conn)
+
+    async def test_merges_on_all_properties_without_identity_key(self, mock_pool):
+        pool, conn = mock_pool
+        await create_node(pool, "Concept", {"topic": "GDPR"})
+
+        cypher = self._cypher(conn)
+        assert "MERGE (n:Concept {topic: 'GDPR'})" in cypher
+        assert "SET" not in cypher
+
+    async def test_keeps_create_for_property_less_node(self, mock_pool):
+        pool, conn = mock_pool
+        await create_node(pool, "Project", {})
+
+        # MERGE on a bare label would match any existing Project.
+        assert "CREATE (n:Project) RETURN n" in self._cypher(conn)
+        assert "MERGE" not in self._cypher(conn)
+
+    async def test_logs_upsert_not_create(self, mock_pool):
+        pool, conn = mock_pool
+        await create_node(pool, "Project", {"id": "proj-1"})
+
+        assert pool.execute.call_args[0][3] == "upsert"
+
+
+class TestCreateRelationshipIsIdempotent:
+    """MATCH ... CREATE grows worse than linear: on run N it matches N copies
+    per side and creates N^2 edges, so edge count grows with the sum of k^2.
+    """
+
+    @staticmethod
+    def _cypher(conn):
+        return conn.fetch.call_args[0][0]
+
+    async def test_merges_the_edge(self, mock_pool):
+        pool, conn = mock_pool
+        await create_relationship(
+            pool, "Project", "proj-1", "Customer", "cust-1", "BELONGS_TO",
+        )
+
+        cypher = self._cypher(conn)
+        assert "MERGE (a)-[r:BELONGS_TO]->(b)" in cypher
+        assert "CREATE" not in cypher
+
+    async def test_properties_are_set_not_merged(self, mock_pool):
+        pool, conn = mock_pool
+        await create_relationship(
+            pool, "Project", "proj-1", "Customer", "cust-1", "BELONGS_TO",
+            properties={"since": "2026-04-21"},
+        )
+
+        cypher = self._cypher(conn)
+        # A property inside the MERGE pattern would make every changed value
+        # create an additional edge -- exactly the duplication we are fixing.
+        assert "MERGE (a)-[r:BELONGS_TO]->(b) SET r.since = '2026-04-21'" in cypher
+
+    async def test_rejects_invalid_rel_type(self, mock_pool):
+        pool, conn = mock_pool
+        with pytest.raises(ValueError, match="rel_type"):
+            await create_relationship(pool, "Project", "a", "Customer", "b", "BAD-TYPE")
 
 
 class TestFindNode:

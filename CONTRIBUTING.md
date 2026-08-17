@@ -75,6 +75,14 @@ All PRs require passing CI checks (unit tests, OPA policy tests, Docker build) b
 - **Environment variables** for all configuration (no hardcoded values)
 - **Graceful degradation** — every service must work when optional dependencies (reranker, Ollama) are unavailable
 - **`pb` prefix** for all project-specific identifiers (containers, metrics, OPA packages, collections)
+- **`# nosec` carries a test ID and a reason** — a bandit finding is either fixed
+  or annotated `# nosec Bxxx` with a comment above it saying why it is not a
+  problem at that spot. Not a bare `# nosec`, which hides every check on the
+  line rather than the one you assessed, and not a project-wide skip, which
+  hides it everywhere including code not written yet. The scan is
+  `continue-on-error`, so its value rests entirely on the steady state being
+  zero: the job summary reports the suppression count next to the findings, and
+  anything it does report is something nobody has looked at yet.
 
 ## License
 

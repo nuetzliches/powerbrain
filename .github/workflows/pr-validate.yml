@@ -182,16 +182,112 @@ jobs:
           fi
           exit "$status"
 
+      # Same failure mode the audit above had (#257): bandit exits 1 on any
+      # finding, `continue-on-error` turns that back into a green check, and a
+      # finding becomes indistinguishable from a clean run unless somebody opens
+      # the log. The result goes to the job summary and raises annotations now.
+      #
+      # The step used to invoke bandit twice — once for the JSON artifact, once
+      # for console output. One run produces the JSON and the summary is
+      # rendered from it, so the uploaded artifact and what you read can no
+      # longer disagree.
+      #
+      # `continue-on-error` stays, for the same reason as the audit: a finding
+      # in code the PR did not touch should not block it. What makes that
+      # tolerable is that the expected steady state is zero — findings that were
+      # assessed and accepted carry a `# nosec Bxxx` marker with the reason at
+      # the point of use, and the summary reports how many were suppressed that
+      # way, so suppressions cannot quietly accumulate.
       - name: Static security scan (bandit)
         continue-on-error: true
         run: |
+          status=0
           bandit -r shared/ mcp-server/ ingestion/ reranker/ pb-proxy/ worker/ \
             -x '*/tests/*' \
             --severity-level medium \
-            -f json -o bandit-report.json || true
-          bandit -r shared/ mcp-server/ ingestion/ reranker/ pb-proxy/ worker/ \
-            -x '*/tests/*' \
-            --severity-level medium
+            -f json -o bandit-report.json || status=$?
+
+          # Rendered in Python rather than bash: the report is JSON, and the
+          # setup-python step above already put an interpreter on PATH.
+          python3 - "$status" <<'PY'
+          import json
+          import os
+          import sys
+
+          exit_status = int(sys.argv[1])
+
+          with open("bandit-report.json", encoding="utf-8") as fh:
+              report = json.load(fh)
+
+          results = report.get("results", [])
+          totals = report.get("metrics", {}).get("_totals", {})
+          suppressed = int(totals.get("skipped_tests", 0) or 0)
+          errors = report.get("errors", [])
+
+          def cell(text):
+              """Collapse whitespace and escape pipes so a message cannot break the table."""
+              return " ".join(str(text).split()).replace("|", "\\|")
+
+          out = ["## Static security scan (bandit)", ""]
+          if results:
+              out += [
+                  f"**{len(results)} finding(s)** at or above medium severity.",
+                  "",
+                  "| file | line | test | severity / confidence | issue |",
+                  "| --- | --- | --- | --- | --- |",
+              ]
+              out += [
+                  "| `{}` | {} | [{}]({}) | {} / {} | {} |".format(
+                      cell(r.get("filename")),
+                      r.get("line_number"),
+                      cell(r.get("test_id")),
+                      r.get("more_info"),
+                      cell(r.get("issue_severity")),
+                      cell(r.get("issue_confidence")),
+                      cell(r.get("issue_text")),
+                  )
+                  for r in results
+              ]
+          else:
+              out.append("No findings at or above medium severity.")
+
+          out += [
+              "",
+              f"{suppressed} finding(s) suppressed by reviewed `# nosec` markers "
+              "(see the reason next to each marker in the source).",
+          ]
+          if errors:
+              out += ["", "**Scan errors:**", "", "```", json.dumps(errors, indent=2), "```"]
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write("\n".join(out) + "\n")
+
+          # File annotations attach each finding to its line in the PR view.
+          for r in results:
+              print("::warning file={},line={},title=bandit {}::{}".format(
+                  r.get("filename"), r.get("line_number"),
+                  r.get("test_id"), cell(r.get("issue_text")),
+              ))
+          if results:
+              print(
+                  "::warning title=Static security scan::bandit reported "
+                  f"{len(results)} finding(s) — see the job summary."
+              )
+          # A file bandit could not parse is a hole in the scan's coverage, and
+          # it does not show up as a finding — annotate it in its own right.
+          if errors:
+              print(
+                  "::warning title=Static security scan::bandit could not scan "
+                  f"{len(errors)} file(s) — see the job summary."
+              )
+          if exit_status != 0 and not results and not errors:
+              print(
+                  "::warning title=Static security scan::bandit exited "
+                  f"{exit_status} without reporting findings — the scan may not have run."
+              )
+          PY
+
+          exit "$status"
 
       - name: Upload bandit report
         if: always()

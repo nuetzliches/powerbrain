@@ -244,4 +244,7 @@ async def list_models():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8082)
+    # B104 accepted: dev entrypoint mirroring the container CMD, which binds the
+    # same address so the service is reachable on pb-net. Host exposure is a
+    # docker compose port-publishing decision.
+    uvicorn.run(app, host="0.0.0.0", port=8082)  # nosec B104

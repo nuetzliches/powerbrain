@@ -206,9 +206,11 @@ class TestExportAuditLog:
         )
         payload = json.loads(result[0].text)
         assert payload["limit"] == 50
-        # Generated SQL contains the capped limit
+        # The capped limit is bound as the last parameter, not interpolated
+        # into the SQL text.
         sql = mock_pool.fetch.call_args[0][0]
-        assert "LIMIT 50" in sql
+        assert "LIMIT $1" in sql
+        assert mock_pool.fetch.call_args[0][-1] == 50
 
     async def test_default_limit_when_missing(self, _patch_globals):
         mock_http, mock_pool = _patch_globals
@@ -221,7 +223,8 @@ class TestExportAuditLog:
 
         await _dispatch("export_audit_log", {}, "admin-1", "admin")
         sql = mock_pool.fetch.call_args[0][0]
-        assert "LIMIT 250" in sql
+        assert "LIMIT $1" in sql
+        assert mock_pool.fetch.call_args[0][-1] == 250
 
     async def test_filters_applied(self, _patch_globals):
         mock_http, mock_pool = _patch_globals

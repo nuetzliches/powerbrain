@@ -162,11 +162,13 @@ async def _execute_cypher(pool: asyncpg.Pool, cypher: str, params: dict | None =
     columns = _parse_return_columns(query)
     as_clause = ", ".join(f"{col} agtype" for col in columns)
 
-    sql = f"""
-    SELECT * FROM cypher('{GRAPH_NAME}', $$
-        {query}
-    $$) AS ({as_clause})
-    """
+    # B608 is unavoidable here: AGE has no parameter binding for cypher, so the
+    # query has to be interpolated. GRAPH_NAME is a module constant, `as_clause`
+    # is stripped to [A-Za-z0-9_] by _parse_return_columns(), and `query` only
+    # reaches here from the builders below, which run every label and property
+    # key through _require_identifier() and every value through
+    # _escape_cypher_value().
+    sql = f"SELECT * FROM cypher('{GRAPH_NAME}', $$\n{query}\n$$) AS ({as_clause})"  # nosec B608
 
     async with pool.acquire() as conn:
         await conn.execute(AGE_INIT)
@@ -218,17 +220,41 @@ def _escape_cypher_value(value: Any) -> str:
 # ── Knoten-Operationen ──────────────────────────────────────
 
 async def create_node(pool: asyncpg.Pool, label: str, properties: dict) -> dict:
-    """Erstellt einen Knoten im Graph."""
+    """Legt einen Knoten an oder aktualisiert ihn (Upsert).
+
+    Verwendet `MERGE` statt `CREATE`: `CREATE` prueft nichts auf Eindeutigkeit,
+    laeuft also nie auf einen Fehler und legt bei jedem Sync-Lauf eine weitere
+    Kopie desselben Knotens an. Gemergt wird auf dem Identitaets-Property
+    (`id`, ersatzweise `name`), die uebrigen Properties werden per `SET`
+    aktualisiert -- so bleibt ein erneuter Lauf mit geaenderten Daten ein
+    Update statt einer zweiten Kopie.
+    """
     _require_identifier(label, "Label")
     for k in properties:
         _require_identifier(k, "Property-Key")
-    props_str = ", ".join(f"{k}: {_escape_cypher_value(v)}" for k, v in properties.items())
-    cypher = f"CREATE (n:{label} {{{props_str}}}) RETURN n"
+
+    merge_key = next((k for k in ("id", "name") if k in properties), None)
+    if not properties:
+        # Ohne Properties gibt es keinen Schluessel zum Deduplizieren -- ein
+        # MERGE nur auf dem Label wuerde jeden beliebigen Knoten dieses Typs
+        # treffen, was schlimmer waere als eine Kopie.
+        cypher = f"CREATE (n:{label}) RETURN n"
+    elif merge_key is None:
+        props_str = ", ".join(f"{k}: {_escape_cypher_value(v)}" for k, v in properties.items())
+        cypher = f"MERGE (n:{label} {{{props_str}}}) RETURN n"
+    else:
+        cypher = f"MERGE (n:{label} {{{merge_key}: {_escape_cypher_value(properties[merge_key])}}})"
+        rest = {k: v for k, v in properties.items() if k != merge_key}
+        if rest:
+            set_str = ", ".join(f"n.{k} = {_escape_cypher_value(v)}" for k, v in rest.items())
+            cypher += f" SET {set_str}"
+        cypher += " RETURN n"
+
     results = await _execute_cypher(pool, cypher)
 
     # Sync-Log
     node_id = properties.get("id", properties.get("name", "unknown"))
-    await _log_sync(pool, label.lower(), str(node_id), "create")
+    await _log_sync(pool, label.lower(), str(node_id), "upsert")
 
     return results[0] if results else {}
 
@@ -264,21 +290,32 @@ async def create_relationship(
     rel_type: str,
     properties: dict | None = None,
 ) -> dict:
-    """Erstellt eine Beziehung zwischen zwei Knoten."""
+    """Legt eine Beziehung zwischen zwei Knoten an oder aktualisiert sie (Upsert).
+
+    Verwendet `MERGE` statt `CREATE`, damit ein erneuter Sync-Lauf keine
+    zweite Kante zwischen denselben Knoten anlegt. Kanten-Properties kommen
+    per `SET` dazu und nicht in das MERGE-Pattern -- sonst gaebe ein
+    geaenderter Property-Wert wieder eine zusaetzliche Kante.
+
+    Achtung: `MATCH (a), (b)` bildet das Kreuzprodukt beider Seiten. Solange
+    Knoten dedupliziert sind (siehe `create_node`), ist das je Seite genau
+    einer; auf einem Graphen mit Knoten-Duplikaten bleibt eine Kante je
+    Kopien-Kombination bestehen.
+    """
     _require_identifier(from_label, "from_label")
     _require_identifier(to_label, "to_label")
     _require_identifier(rel_type, "rel_type")
-    props_str = ""
+    set_str = ""
     if properties:
         for k in properties:
             _require_identifier(k, "Property-Key")
-        props_items = ", ".join(f"{k}: {_escape_cypher_value(v)}" for k, v in properties.items())
-        props_str = f" {{{props_items}}}"
+        set_items = ", ".join(f"r.{k} = {_escape_cypher_value(v)}" for k, v in properties.items())
+        set_str = f" SET {set_items}"
 
     cypher = (
         f"MATCH (a:{from_label} {{id: {_escape_cypher_value(from_id)}}}), "
         f"(b:{to_label} {{id: {_escape_cypher_value(to_id)}}}) "
-        f"CREATE (a)-[r:{rel_type}{props_str}]->(b) RETURN r"
+        f"MERGE (a)-[r:{rel_type}]->(b){set_str} RETURN r"
     )
     results = await _execute_cypher(pool, cypher)
     return results[0] if results else {}
