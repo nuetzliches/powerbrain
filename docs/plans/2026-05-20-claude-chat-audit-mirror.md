@@ -312,7 +312,7 @@ CHAT_AUDIT_REPORT_WEBHOOK: str   # optional, Slack/Teams
 **Neue Tabellen:**
 
 ```sql
--- init-db/021_chat_audit.sql
+-- init-db/027_chat_audit.sql
 CREATE TABLE chat_audit_state (
     source         TEXT PRIMARY KEY,    -- 'anthropic'
     last_export_at TIMESTAMPTZ,
@@ -411,7 +411,7 @@ Phasen-Nummerierung:
 | Phase | Coverage-Strategy-Mapping | Inhalt | Aufwand | Wert |
 |---|---|---|---|---|
 | **A.0** | (Voraussetzung) | `POST /provider/scan` Endpoint im pb-proxy (Voraussetzung für B) | 0.5 d | unlocks B |
-| **A.1** | Phase 2 "Audit Mirror MVP" — macOS | A — Export-Worker als pb-worker-Job, Migration 021, Mail-Report, **Chat-Tab only**, Schema mit `tab`/`artifact_type` aber populated nur für Chat | 1.5 d | ✅ Tab-`chat` vollständig auditiert |
+| **A.1** | Phase 2 "Audit Mirror MVP" — macOS | A — Export-Worker als pb-worker-Job, Migration 027, Mail-Report, **Chat-Tab only**, Schema mit `tab`/`artifact_type` aber populated nur für Chat | 1.5 d | ✅ Tab-`chat` vollständig auditiert |
 | **A.2** | Phase 2 Erweiterung | A erweitert auf **Cowork**-Tab (Task-Phase-Chunking) | 0.5 d | ✅ Tab-`cowork` auditiert |
 | **A.3** | Phase 2 Erweiterung | A erweitert auf **Code**-Tab (File-Diffs, Terminal-Commands, Computer-Use-Actions) | 2 d | ✅ Tab-`code` auditiert — der größte Coverage-Sprung |
 | **B.1** | Phase 2 Defence-in-Depth | B — pb-guardian Extension, Chrome-Store-Submit (claude.ai-Web nur, Chat-Composer) | 2 d | ⚠️ Live-Prävention für den Browser-Use-Case |
@@ -502,7 +502,7 @@ grundsätzlich abgenommen sind:
    der Coverage Strategy für Pre-flight skizziert ist.
 4. Browser-Extension-Repo aufsetzen (`nuts/pb-guardian`) — Scope explizit
    auf claude.ai-Web halten, Desktop-Workflows decken durch Pre-flight ab.
-5. OPA-Policy-Section + Migration 021 als kleinen Vorlauf-PR auf
+5. OPA-Policy-Section + Migration 027 als kleinen Vorlauf-PR auf
    `nuts/powerbrain` einreichen.
 
 ---
