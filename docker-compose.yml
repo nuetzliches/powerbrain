@@ -246,7 +246,7 @@ services:
       - pb-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/health')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -628,7 +628,7 @@ services:
       - pb-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

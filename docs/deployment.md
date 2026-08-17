@@ -132,6 +132,46 @@ pb.example.com {
 }
 ```
 
+## Outbound TLS (Certificate Trust)
+
+The sections above cover *inbound* TLS — the certificates Powerbrain serves. This
+one covers *outbound*: which certificates Powerbrain accepts when it calls other
+systems (MCP servers, LLM providers, your Git server, Microsoft Graph).
+
+Two HTTP clients are in play, and they differ in **which CAs they trust by
+default**:
+
+| Client | Used for | Default trust store |
+|---|---|---|
+| `httpx` | Services' own calls (ingestion, embeddings, OPA, reranker, LLM providers) | certifi's bundled CA list |
+| `httpx2` | The MCP SDK's transport (pb-proxy → MCP servers), from `mcp` 2.0 on | The operating system trust store, via `truststore` |
+
+For deployments that only talk to endpoints with publicly-trusted certificates,
+this never surfaces. It matters when an endpoint presents a certificate signed by
+a **private or internal CA** — a self-hosted Forgejo or GitLab, an internal MCP
+server, a corporate TLS-inspecting proxy. Installing that CA only in the
+container's OS trust store is not enough: MCP connections would accept it while
+every other call still rejects it, which looks like "the proxy works but
+ingestion doesn't".
+
+**Set `SSL_CERT_FILE` to your CA bundle.** Both clients honour it, so one setting
+covers every outbound call:
+
+```yaml
+# docker-compose.override.yml
+services:
+  mcp-server:
+    environment:
+      SSL_CERT_FILE: /etc/ssl/private-ca/bundle.pem
+    volumes:
+      - ./private-ca:/etc/ssl/private-ca:ro
+```
+
+The bundle must contain the full chain **plus** the public roots you still need
+(`cat /etc/ssl/certs/ca-certificates.crt your-ca.pem > bundle.pem`) — pointing
+`SSL_CERT_FILE` at a file holding only your private CA makes every
+publicly-trusted endpoint fail verification.
+
 ## Docker Secrets Setup
 
 Powerbrain supports Docker Secrets for sensitive configuration values. This is the recommended approach for production deployments.

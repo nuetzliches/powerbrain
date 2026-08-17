@@ -6,11 +6,13 @@ prefixes them with server name, and routes tool calls to the correct server.
 import asyncio
 import logging
 import os
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
+import httpx2
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 import config
 from mcp_config import McpServerConfig, load_mcp_servers
@@ -72,17 +74,85 @@ def _mcp_headers(
     return headers
 
 
+def _prefixed_tool_name(prefix: str | None, name: str) -> str:
+    """Namespace an MCP tool name with its server prefix.
+
+    Idempotent: a server that already namespaces its own tools keeps the
+    names it publishes. timecockpit-mcp, for example, names every tool
+    `tc_…`, so the `prefix: tc` entry yields `tc_list_timesheets` rather
+    than `tc_tc_list_timesheets` — which is what the LLM (and the skills
+    and prompts written against those names) expects. Tools that are not
+    already namespaced still get the prefix, so names stay unique across
+    servers.
+    """
+    if not prefix or name.startswith(f"{prefix}_"):
+        return name
+    return f"{prefix}_{name}"
+
+
 def _mcp_tool_to_openai(tool: Any, prefix: str) -> dict:
     """Convert an MCP Tool to OpenAI function-calling format with prefix."""
-    prefixed_name = f"{prefix}_{tool.name}" if prefix else tool.name
+    prefixed_name = _prefixed_tool_name(prefix, tool.name)
     return {
         "type": "function",
         "function": {
             "name": prefixed_name,
             "description": tool.description or "",
-            "parameters": tool.inputSchema or {"type": "object"},
+            "parameters": tool.input_schema or {"type": "object"},
         },
     }
+
+
+def _leaf_exceptions(exc: BaseException) -> list[BaseException]:
+    """Flatten a possibly-nested ExceptionGroup into its leaf exceptions.
+
+    Groups can contain groups, so this recurses. A plain exception is its own
+    only leaf.
+    """
+    if isinstance(exc, BaseExceptionGroup):
+        leaves: list[BaseException] = []
+        for sub in exc.exceptions:
+            leaves.extend(_leaf_exceptions(sub))
+        return leaves
+    return [exc]
+
+
+def _describe_exception(exc: BaseException) -> str:
+    """Render an exception as `Type: message` for a single log line.
+
+    The MCP streamable-http client runs its read/write pumps inside an anyio
+    task group, so a failed connection surfaces as an ExceptionGroup whose own
+    str() is the useless "unhandled errors in a TaskGroup (1 sub-exception)" —
+    the HTTP status, auth rejection or connection error that actually broke
+    discovery sits in the sub-exceptions. Report the leaves instead, so the
+    warning names the cause without needing the full traceback.
+    """
+    parts: list[str] = []
+    for leaf in _leaf_exceptions(exc):
+        # httpx spreads its messages over several lines ("Client error '401
+        # Unauthorized' …\nFor more information check: …"); collapse the
+        # whitespace so one failure stays one log line.
+        message = " ".join(str(leaf).split())
+        parts.append(f"{type(leaf).__name__}: {message}" if message else type(leaf).__name__)
+    return "; ".join(parts) if parts else type(exc).__name__
+
+
+@asynccontextmanager
+async def _mcp_session(url: str, headers: dict[str, str]):
+    """Open an initialised MCP ClientSession over streamable HTTP.
+
+    mcp 2.x dropped the `headers=` argument: auth now rides on a caller-supplied
+    HTTP client. That client MUST be httpx2 — passing a plain httpx client is
+    accepted but silently stops delivering server-initiated messages instead of
+    raising, which on this path would break bearer auth without any error.
+    """
+    async with httpx2.AsyncClient(headers=headers) as http_client:
+        async with streamable_http_client(url, http_client=http_client) as (
+            read_stream, write_stream,
+        ):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                yield session
 
 
 class ToolInjector:
@@ -138,10 +208,13 @@ class ToolInjector:
                 )
             except Exception as e:
                 self._server_status[server.name] = False
+                cause = _describe_exception(e)
                 if server.required:
-                    log.error("Required server '%s' unreachable: %s", server.name, e)
+                    log.error("Required server '%s' unreachable: %s", server.name, cause)
                 else:
-                    log.warning("Optional server '%s' unreachable: %s", server.name, e)
+                    log.warning("Optional server '%s' unreachable: %s", server.name, cause)
+                # Full traceback only at debug level, so the line above stays readable.
+                log.debug("Discovery failure for server '%s'", server.name, exc_info=True)
 
         if new_tools:
             self._tools = new_tools
@@ -157,24 +230,20 @@ class ToolInjector:
         headers = _mcp_headers(server)
         tools: dict[str, ToolEntry] = {}
 
-        async with streamablehttp_client(server.url, headers=headers) as (
-            read_stream, write_stream, _,
-        ):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                result = await session.list_tools()
+        async with _mcp_session(server.url, headers) as session:
+            result = await session.list_tools()
 
-                for tool in result.tools:
-                    # Apply whitelist filter
-                    if server.tool_whitelist and tool.name not in server.tool_whitelist:
-                        continue
-                    prefixed_name = f"{server.prefix}_{tool.name}" if server.prefix else tool.name
-                    tools[prefixed_name] = ToolEntry(
-                        server_name=server.name,
-                        original_name=tool.name,
-                        schema=_mcp_tool_to_openai(tool, server.prefix),
-                        server_config=server,
-                    )
+            for tool in result.tools:
+                # Apply whitelist filter
+                if server.tool_whitelist and tool.name not in server.tool_whitelist:
+                    continue
+                prefixed_name = _prefixed_tool_name(server.prefix, tool.name)
+                tools[prefixed_name] = ToolEntry(
+                    server_name=server.name,
+                    original_name=tool.name,
+                    schema=_mcp_tool_to_openai(tool, server.prefix),
+                    server_config=server,
+                )
 
         return tools
 
@@ -256,14 +325,10 @@ class ToolInjector:
         """
         headers = _mcp_headers(entry.server_config, user_token=user_token, client_headers=client_headers)
 
-        async with streamablehttp_client(
-            entry.server_config.url, headers=headers,
-        ) as (read_stream, write_stream, _):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                result = await session.call_tool(entry.original_name, arguments)
-                texts = []
-                for content in result.content:
-                    if hasattr(content, "text"):
-                        texts.append(content.text)
-                return "\n".join(texts) if texts else str(result.content)
+        async with _mcp_session(entry.server_config.url, headers) as session:
+            result = await session.call_tool(entry.original_name, arguments)
+            texts = []
+            for content in result.content:
+                if hasattr(content, "text"):
+                    texts.append(content.text)
+            return "\n".join(texts) if texts else str(result.content)

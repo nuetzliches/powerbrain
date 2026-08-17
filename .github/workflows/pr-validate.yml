@@ -3,12 +3,19 @@ name: PR Validate
 on:
   pull_request:
     branches: [development, master]
+  # Requirements are resolved fresh on every run, so a dependency that ships a
+  # breaking major between PRs only surfaces the next time CI runs. Without a
+  # cadence that can be weeks, and the first symptom is a crashlooping image on
+  # someone's machine. Weekly run against the default branch closes that gap.
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
 
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Run unit tests
         run: |
@@ -41,7 +48,7 @@ jobs:
   opa-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Download OPA
         run: |
@@ -56,10 +63,21 @@ jobs:
   docker-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Build mcp-server image
         run: docker build -f mcp-server/Dockerfile -t pb-mcp-server:pr-test .
+
+      # `docker build` only runs pip install — it never imports the app. An
+      # incompatible dependency bump therefore builds green and crashloops at
+      # runtime. Importing the CMD module is the cheapest check that the image
+      # can actually start. SKIP_INGESTION_AUTH_STARTUP_CHECK mirrors the test
+      # conftests: it bypasses the fail-closed auth guard, which has no token to
+      # find here and is not what this step is testing.
+      - name: Smoke-import mcp-server
+        run: |
+          docker run --rm -e SKIP_INGESTION_AUTH_STARTUP_CHECK=true \
+            pb-mcp-server:pr-test python -c "import server"
 
       - name: Build ingestion image
         run: docker build -f ingestion/Dockerfile -t pb-ingestion:pr-test .
@@ -70,16 +88,21 @@ jobs:
       - name: Build pb-proxy image
         run: docker build -f pb-proxy/Dockerfile -t pb-proxy:pr-test .
 
+      - name: Smoke-import pb-proxy
+        run: |
+          docker run --rm -e SKIP_INGESTION_AUTH_STARTUP_CHECK=true \
+            pb-proxy:pr-test python -c "import proxy"
+
       - name: Build worker image
         run: docker build -f worker/Dockerfile -t pb-worker:pr-test .
 
   security-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 

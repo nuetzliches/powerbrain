@@ -1,17 +1,15 @@
 # Exact pins (supply-chain hardening) — see CLAUDE.md "Dependency Pinning".
 # Dependabot proposes bumps; every change is reviewed in a PR.
 #
-# IMPORTANT: mcp is held at 1.x. 2.0.0 is a breaking API change — it drops the
-# `Server.list_tools()` decorator used in server.py. Do not accept a 2.x bump
-# without porting server.py first.
-# The former `[server]` extra was dropped: no 1.x release provides it either
-# (pip: "does not provide the extra 'server'"), so it installed nothing.
-mcp==1.29.0
+# mcp 2.x: the lowlevel Server binds handlers via on_list_tools/on_call_tool
+# constructor params instead of decorators — see server.py "MCP-Server-Instanz".
+# The `[server]` extra does not exist in either 1.x or 2.x, so it is not used.
+mcp==2.0.0
 httpx==0.28.1
 asyncpg==0.31.0
 qdrant-client==1.19.0
 pydantic==2.13.4
-uvicorn[standard]==0.52.2
+uvicorn[standard]==0.52.3
 starlette==1.6.0
 prometheus-client==0.26.0
 # OpenTelemetry (optional, aktiviert via OTEL_ENABLED=true)

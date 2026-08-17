@@ -4,7 +4,22 @@ import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from mcp.types import CallToolRequestParams
+
 import server
+
+
+async def _call(name: str, arguments: dict):
+    """Invoke the tool handler and return its content blocks.
+
+    mcp 2.x calls handlers as (ctx, params) and wraps the reply in a
+    CallToolResult; these tests assert on the content blocks either way. The
+    handler ignores ctx, so None is sufficient here.
+    """
+    result = await server.call_tool(
+        None, CallToolRequestParams(name=name, arguments=arguments),
+    )
+    return result.content
 
 
 @pytest.fixture(autouse=True)
@@ -65,7 +80,7 @@ class TestManagePoliciesList:
         token.scopes = ["admin"]
         monkeypatch.setattr(server, "get_access_token", lambda: token)
 
-        result = await server.call_tool("manage_policies", {"action": "list"})
+        result = await _call("manage_policies", {"action": "list"})
         data = json.loads(result[0].text)
         assert "sections" in data
         # All 17 required sections should be listed
@@ -83,7 +98,7 @@ class TestManagePoliciesList:
         token.scopes = ["analyst"]
         monkeypatch.setattr(server, "get_access_token", lambda: token)
 
-        result = await server.call_tool("manage_policies", {"action": "list"})
+        result = await _call("manage_policies", {"action": "list"})
         data = json.loads(result[0].text)
         assert "error" in data
         assert "admin" in data["error"]
@@ -102,7 +117,7 @@ class TestManagePoliciesRead:
         token.scopes = ["admin"]
         monkeypatch.setattr(server, "get_access_token", lambda: token)
 
-        result = await server.call_tool("manage_policies", {
+        result = await _call("manage_policies", {
             "action": "read", "section": "roles"
         })
         data = json.loads(result[0].text)
@@ -117,7 +132,7 @@ class TestManagePoliciesRead:
         token.scopes = ["admin"]
         monkeypatch.setattr(server, "get_access_token", lambda: token)
 
-        result = await server.call_tool("manage_policies", {
+        result = await _call("manage_policies", {
             "action": "read", "section": "nonexistent"
         })
         data = json.loads(result[0].text)
@@ -134,7 +149,7 @@ class TestManagePoliciesRead:
         token.scopes = ["admin"]
         monkeypatch.setattr(server, "get_access_token", lambda: token)
 
-        result = await server.call_tool("manage_policies", {
+        result = await _call("manage_policies", {
             "action": "read", "section": "roles"
         })
         data = json.loads(result[0].text)
@@ -158,7 +173,7 @@ class TestManagePoliciesUpdate:
         monkeypatch.setattr(server, "get_access_token", lambda: token)
 
         new_roles = ["viewer", "analyst", "developer", "admin", "auditor"]
-        result = await server.call_tool("manage_policies", {
+        result = await _call("manage_policies", {
             "action": "update", "section": "roles", "data": new_roles
         })
         data = json.loads(result[0].text)
@@ -178,7 +193,7 @@ class TestManagePoliciesUpdate:
         monkeypatch.setattr(server, "get_access_token", lambda: token)
 
         # roles must be an array, not a string
-        result = await server.call_tool("manage_policies", {
+        result = await _call("manage_policies", {
             "action": "update", "section": "roles", "data": "not_an_array"
         })
         data = json.loads(result[0].text)
@@ -196,7 +211,7 @@ class TestManagePoliciesUpdate:
         monkeypatch.setattr(server, "get_access_token", lambda: token)
 
         # roles has minItems: 1, so empty array should fail
-        result = await server.call_tool("manage_policies", {
+        result = await _call("manage_policies", {
             "action": "update", "section": "roles", "data": []
         })
         data = json.loads(result[0].text)
@@ -211,7 +226,7 @@ class TestManagePoliciesUpdate:
         token.scopes = ["admin"]
         monkeypatch.setattr(server, "get_access_token", lambda: token)
 
-        result = await server.call_tool("manage_policies", {
+        result = await _call("manage_policies", {
             "action": "update", "section": "roles"
         })
         data = json.loads(result[0].text)
@@ -232,7 +247,7 @@ class TestManagePoliciesUpdate:
         server._opa_cache["test_key"] = True
         server._fields_to_redact_cache["test_key"] = {"email"}
 
-        await server.call_tool("manage_policies", {
+        await _call("manage_policies", {
             "action": "update", "section": "roles",
             "data": ["viewer", "analyst", "admin"]
         })
@@ -251,7 +266,7 @@ class TestManagePoliciesUpdate:
         token.scopes = ["admin"]
         monkeypatch.setattr(server, "get_access_token", lambda: token)
 
-        result = await server.call_tool("manage_policies", {
+        result = await _call("manage_policies", {
             "action": "update", "section": "roles",
             "data": ["viewer", "admin"]
         })

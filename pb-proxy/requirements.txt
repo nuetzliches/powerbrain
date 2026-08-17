@@ -1,13 +1,15 @@
 # Exact pins (supply-chain hardening) — see CLAUDE.md "Dependency Pinning".
 # Dependabot proposes bumps; every change is reviewed in a PR.
 fastapi==0.141.1
-uvicorn[standard]==0.52.2
+uvicorn[standard]==0.52.3
 litellm==1.96.2
-# IMPORTANT: mcp is held at 1.x. 2.0.0 removes
-# `mcp.client.streamable_http.streamablehttp_client`, used in tool_injection.py.
-# Do not accept a 2.x bump without porting the client code first.
-mcp==1.29.0
+mcp==2.0.0
 httpx==0.28.1
+# httpx2 is the MCP SDK's HTTP stack from 2.0 on. tool_injection.py imports it
+# directly to attach auth headers, so it is pinned here rather than inherited.
+# Do not substitute httpx: the SDK accepts an httpx client and then silently
+# stops delivering server-initiated messages.
+httpx2==2.10.0
 pydantic==2.13.4
 pyyaml==6.0.3
 prometheus-client==0.26.0
