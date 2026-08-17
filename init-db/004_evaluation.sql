@@ -4,7 +4,7 @@
 -- ============================================================
 
 -- Agent feedback on search results
-CREATE TABLE search_feedback (
+CREATE TABLE IF NOT EXISTS search_feedback (
     id              BIGSERIAL PRIMARY KEY,
     query           TEXT NOT NULL,
     result_ids      TEXT[] NOT NULL,
@@ -18,13 +18,13 @@ CREATE TABLE search_feedback (
     created_at      TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_feedback_query   ON search_feedback(query);
-CREATE INDEX idx_feedback_rating  ON search_feedback(rating);
-CREATE INDEX idx_feedback_agent   ON search_feedback(agent_id);
-CREATE INDEX idx_feedback_time    ON search_feedback(created_at);
+CREATE INDEX IF NOT EXISTS idx_feedback_query   ON search_feedback(query);
+CREATE INDEX IF NOT EXISTS idx_feedback_rating  ON search_feedback(rating);
+CREATE INDEX IF NOT EXISTS idx_feedback_agent   ON search_feedback(agent_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_time    ON search_feedback(created_at);
 
 -- Test set for offline evaluation
-CREATE TABLE eval_test_set (
+CREATE TABLE IF NOT EXISTS eval_test_set (
     id                SERIAL PRIMARY KEY,
     query             TEXT NOT NULL,
     expected_ids      TEXT[],           -- Known relevant document IDs
@@ -35,7 +35,7 @@ CREATE TABLE eval_test_set (
 );
 
 -- Evaluation runs (stored results from run_eval.py)
-CREATE TABLE eval_runs (
+CREATE TABLE IF NOT EXISTS eval_runs (
     id              SERIAL PRIMARY KEY,
     run_date        TIMESTAMPTZ DEFAULT now(),
     test_count      INTEGER,

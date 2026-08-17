@@ -1,11 +1,11 @@
 # pb-worker dependencies.
-# Ranges (not hard pins) so pip-audit / Dependabot can pick up patches;
-# upper bounds cap at the next major to block incompatible rewrites.
+# Exact pins (supply-chain hardening) — see CLAUDE.md "Dependency Pinning".
+# Dependabot proposes bumps; every change is reviewed in a PR.
 # IMPORTANT: APScheduler 4.x is a full rewrite and NOT compatible with the
-# 3.x scheduler API used in worker/scheduler.py — keep the `<4.0` ceiling.
-apscheduler>=3.11,<4.0
-asyncpg>=0.31.0,<1.0
-httpx>=0.28.1,<1.0
-prometheus-client>=0.25,<1.0
-qdrant-client>=1.18.0,<2.0
-python-dotenv>=1.2.2,<2.0
+# 3.x scheduler API used in worker/scheduler.py — do not accept a 4.x bump.
+apscheduler==3.11.3
+asyncpg==0.31.0
+httpx==0.28.1
+prometheus-client==0.26.0
+qdrant-client==1.19.0
+python-dotenv==1.2.2

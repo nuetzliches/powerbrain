@@ -596,6 +596,32 @@ Details on all features: see `docs/architecture.md`
 - Environment variables for all configuration (no hardcoded values)
 - Graceful degradation: every service must work without the reranker
 - Docker Secrets supported via `_read_secret()` with env var fallback
+- Python dependencies pinned exactly (`==`), never open ranges — see below
+
+### Dependency Pinning
+
+All `requirements*.txt` files pin exact versions (`==`), never open ranges (`>=`).
+
+**Why:** an open range means the next `pip install` — in CI, in a Docker build,
+on a laptop — silently pulls whatever is newest on PyPI at that moment. On
+2026-03-24 the LiteLLM releases `1.82.7`/`1.82.8` were malicious and live for
+about 40 minutes; the pin at the time was `litellm>=1.60`, so any build in that
+window would have installed the backdoor. Exact pins turn a new release into a
+reviewed event instead of an automatic one. Upper bounds at the next major
+(`<2.0`) do **not** help against this: `1.82.8` sits inside `>=1.60,<2.0`.
+
+**Consequences to keep in mind:**
+
+- Every directory holding a requirements file must be listed in
+  `.github/dependabot.yml` — an unwatched directory freezes and stops receiving
+  security patches, which is strictly worse than an open range.
+- Transitive dependencies stay unpinned. Closing that gap needs a lockfile with
+  hashes (`pip-compile --generate-hashes` plus `pip install --require-hashes`)
+  and a rewrite of the Dockerfile and CI install steps — not done yet.
+- When changing a version, resolve the whole set at once
+  (`pip install --dry-run --report`) so shared packages (httpx, pydantic,
+  OpenTelemetry, …) stay identical across services: CI installs every
+  requirements file into a single environment, so a mismatch breaks the build.
 
 ### Naming Prefix Convention (`pb`)
 

@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Exact dependency pins** — every `requirements*.txt` now pins exact versions
+  (`==`) instead of open `>=` ranges. An open range means each `pip install` —
+  in CI, in a Docker build, on a laptop — silently takes whatever is newest on
+  PyPI at that moment. On 2026-03-24 the malicious LiteLLM releases `1.82.7`
+  and `1.82.8` were live for roughly 40 minutes; the pin at the time was
+  `litellm>=1.60`, so any build inside that window would have installed the
+  backdoor. No build ran then — the first CI workflow landed on 2026-03-26,
+  `pb-proxy` sits behind an opt-in compose profile that the E2E stack does not
+  activate, and no local artefacts of those versions exist. Upper bounds at the
+  next major would not have helped either: `1.82.8` sits inside `>=1.60,<2.0`.
+  Rationale and the remaining gap — transitive dependencies are still unpinned —
+  are documented in CLAUDE.md under "Dependency Pinning".
+- **Dependabot coverage completed** — added pip entries for `/`
+  (`requirements-dev.txt`), `/ingestion/adapters/office365` and `/demo`. With
+  exact pins, a directory Dependabot does not watch never receives security
+  patches, which is strictly worse than an open range.
+- **Reranker image no longer bypasses its pins** — `reranker/Dockerfile`
+  installed an unpinned inline package list and ignored
+  `reranker/requirements.txt` entirely. It now installs from that file, still
+  via the PyTorch CPU index.
+
+### Fixed
+
+- **CI red since late July** — `mcp[server]>=1.27.1` resolved to `mcp 2.0.0`,
+  whose API drops the `Server.list_tools()` decorator used in
+  `mcp-server/server.py` and `streamablehttp_client` used in
+  `pb-proxy/tool_injection.py`. Test collection failed on both; the cascading
+  `DuplicateTimeseries` errors were a symptom of the half-executed imports, not
+  an independent fault. `mcp` is now held at `1.29.0`, the last 1.x release, and
+  the suite passes again (1115 passed, 20 skipped, 70.45% coverage). Porting to
+  the 2.x API remains a separate task.
+- **Reranker tracing was silently disabled** — the image never installed the
+  OpenTelemetry packages its `requirements.txt` declares, so
+  `shared/telemetry.py` degraded to disabled even though `docker-compose.yml`
+  configures the service with `OTEL_ENABLED=true` and an OTLP endpoint.
+  Installing from `requirements.txt` now also brings in `pydantic` and the OTel
+  packages, so the reranker traces as documented.
+- **Dead `[server]` extra** — `mcp[server]` requested an extra that no `mcp`
+  release provides (pip: "does not provide the extra 'server'"), so it had
+  always installed nothing. Dropped.
+
 ## [0.11.1] - 2026-05-27
 
 Patch release fixing a silent rate-limiter outage in the MCP server. No
