@@ -489,7 +489,7 @@ PR workflow (`.github/workflows/pr-validate.yml`) runs on every PR to `developme
 - **unit-tests** — All service tests in `python:3.12-slim` container (`-m "not integration"`), coverage threshold 80% (`--cov-fail-under=80`)
 - **opa-tests** — OPA policy tests (`opa test opa-policies/`)
 - **docker-build** — Build all 5 images (no push)
-- **security-scan** — `pip-audit` (dependency vulnerabilities) + `bandit` (static analysis), non-blocking
+- **security-scan** — `pip-audit` (dependency vulnerabilities) + `bandit` (static analysis). Both are `continue-on-error`, so neither blocks a PR on a finding in code it did not touch — but both write their result to the job summary and raise a `::warning::` annotation, so a finding is not indistinguishable from a clean run. bandit's expected steady state is zero findings: each one is either fixed or annotated `# nosec Bxxx` with the reason at the point of use, and the summary reports how many were suppressed that way so they cannot quietly accumulate
 
 Running the full suite on `master` PRs too means the exact `development → master` merge commit is re-validated before a release lands — green-on-`development` alone is not relied upon, since direct pushes to `development` are permitted.
 
