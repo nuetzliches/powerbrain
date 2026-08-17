@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-17
+
 ### Security
 
 - **Exact dependency pins** — every `requirements*.txt` now pins exact versions
@@ -107,6 +109,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   line, and the full traceback is emitted separately at debug level via
   `exc_info`. Applies to both the required (`log.error`) and optional
   (`log.warning`) branches.
+- **Healthchecks for `reranker` and `pb-proxy` could never pass** — both invoked
+  `curl`, which neither image contains: `reranker/Dockerfile` and
+  `pb-proxy/Dockerfile` build `FROM python:3.12-slim` and never install it, so
+  every probe exited with `exec: "curl": executable file not found in $PATH` and
+  both containers stayed perpetually unhealthy. Anything gating on
+  `depends_on: condition: service_healthy` against them would wait forever.
+  Both now use the `python3 -c "import urllib.request; …"` pattern already used
+  by `mcp-server` and `ingestion` instead of installing curl, so the images stay
+  small. Semantics are unchanged — `urlopen()` raises on any non-2xx exactly
+  where `curl -f` failed, and both endpoints answer 200 even while degraded
+  (`{"status":"loading"}` on the reranker, `{"status":"degraded"}` on the proxy,
+  whose auth middleware whitelists `/health`). Interval, timeout and retries are
+  untouched. `docker-compose.ghcr.yml` only overrides `image:`, so the prebuilt
+  GHCR images — broken identically, since they come from the same Dockerfiles —
+  are covered by the same change. The `ollama` and `vllm` healthchecks keep
+  using curl; those are third-party images that ship it.
 
 ## [0.11.1] - 2026-05-27
 
