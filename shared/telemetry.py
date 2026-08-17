@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextvars
 import logging
 import os
+import re
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -139,6 +140,62 @@ def init_telemetry(service_name: str) -> Any:
         return None
 
 
+# Path segments that would otherwise make every call its own span name: numeric
+# ids and UUIDs. Span names are a metric dimension for span-to-metric
+# connectors, so an un-generalised id there costs one series per record.
+_CLIENT_SPAN_ID_SEGMENT = re.compile(
+    r"/(?:\d+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?=/|$)"
+)
+
+
+def _name_client_span(span: Any, request: Any) -> None:
+    """Rename an httpx client span from `<METHOD>` to `<METHOD> <host><path>`.
+
+    The instrumentation names client spans after the HTTP method alone, which is
+    what the HTTP semantic conventions prescribe when no URL template is known.
+    For a service whose outbound calls all use plain paths that collapses every
+    dependency into two buckets, `GET` and `POST`: a trace then shows that a call
+    happened but not who was called, which is the one thing worth knowing about
+    an outbound hop.
+
+    Registered as a `request_hook`, because this instrumentation offers no
+    span-name callback. Ids in the path are generalised (see above).
+
+    Never raises: the hook runs inside the request path, so a naming problem must
+    not be able to fail the request it is describing.
+    """
+    if span is None or not span.is_recording():
+        return
+    try:
+        method = request.method
+        if isinstance(method, bytes):
+            method = method.decode()
+        url = request.url
+        if isinstance(url, tuple):
+            # Transport-level hook: (scheme, host, port, path), each bytes.
+            _scheme, host, _port, path = url
+            host = host.decode() if isinstance(host, bytes) else host
+            path = path.decode() if isinstance(path, bytes) else path
+        else:
+            # httpx.URL
+            host, path = url.host, url.path
+        span.update_name(f"{method} {host}{_CLIENT_SPAN_ID_SEGMENT.sub('/{id}', path)}")
+    except Exception as e:  # pragma: no cover - defensive, see docstring
+        log.debug("could not rename httpx client span: %s", e)
+
+
+async def _name_client_span_async(span: Any, request: Any) -> None:
+    """Async variant of `_name_client_span`, needed as a separate coroutine.
+
+    The instrumentation checks the async hook with `iscoroutinefunction` and
+    silently sets it to `None` when it is a plain function. Passing the sync hook
+    for `async_request_hook` therefore looks accepted and renames nothing, so the
+    async client path would keep the bare `<METHOD>` names while the sync path
+    got proper ones.
+    """
+    _name_client_span(span, request)
+
+
 def setup_auto_instrumentation(app: Any = None) -> None:
     """Set up auto-instrumentation for FastAPI and httpx.
 
@@ -148,7 +205,10 @@ def setup_auto_instrumentation(app: Any = None) -> None:
         return
     try:
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-        HTTPXClientInstrumentor().instrument()
+        HTTPXClientInstrumentor().instrument(
+            request_hook=_name_client_span,
+            async_request_hook=_name_client_span_async,
+        )
         log.info("httpx auto-instrumentation enabled (traceparent propagation)")
     except ImportError:
         log.debug("opentelemetry-instrumentation-httpx not installed")
@@ -159,7 +219,10 @@ def setup_auto_instrumentation(app: Any = None) -> None:
     # pb-proxy pull httpx2 in (via mcp), so absence here is normal, not an error.
     try:
         from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor
-        HTTPX2ClientInstrumentor().instrument()
+        HTTPX2ClientInstrumentor().instrument(
+            request_hook=_name_client_span,
+            async_request_hook=_name_client_span_async,
+        )
         log.info("httpx2 auto-instrumentation enabled (traceparent propagation)")
     except Exception as e:
         log.debug("httpx2 auto-instrumentation unavailable: %s", e)

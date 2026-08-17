@@ -1,6 +1,7 @@
 # shared/tests/test_telemetry.py
 """Tests for shared telemetry module."""
 import time
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -85,6 +86,89 @@ class TestInitTelemetry:
         else:
             # Graceful degradation: returns None when OTel not installed
             assert tracer is None
+
+
+class TestNameClientSpan:
+    """The request_hook that renames httpx client spans.
+
+    The instrumentation names them after the method alone, so without this hook
+    every outbound dependency collapses into `GET` and `POST`.
+    """
+
+    def _span(self):
+        span = MagicMock()
+        span.is_recording.return_value = True
+        return span
+
+    def test_uses_host_and_path_from_transport_tuple(self):
+        from shared.telemetry import _name_client_span
+        span = self._span()
+        request = MagicMock()
+        request.method = b"GET"
+        request.url = (b"http", b"example.internal", 8080, b"/readyz")
+        _name_client_span(span, request)
+        span.update_name.assert_called_once_with("GET example.internal/readyz")
+
+    def test_uses_host_and_path_from_url_object(self):
+        from shared.telemetry import _name_client_span
+        span = self._span()
+        request = MagicMock()
+        request.method = "POST"
+        request.url = SimpleNamespace(host="example.internal", path="/v1/query")
+        _name_client_span(span, request)
+        span.update_name.assert_called_once_with("POST example.internal/v1/query")
+
+    def test_generalises_numeric_and_uuid_segments(self):
+        from shared.telemetry import _name_client_span
+        for path, expected in (
+            ("/items/12345", "/items/{id}"),
+            ("/runs/8b1f4c2e-1111-2222-3333-444455556666/log", "/runs/{id}/log"),
+            ("/v1/models", "/v1/models"),
+        ):
+            span = self._span()
+            request = MagicMock()
+            request.method = "GET"
+            request.url = SimpleNamespace(host="h", path=path)
+            _name_client_span(span, request)
+            span.update_name.assert_called_once_with(f"GET h{expected}")
+
+    def test_ignores_non_recording_span(self):
+        from shared.telemetry import _name_client_span
+        span = MagicMock()
+        span.is_recording.return_value = False
+        _name_client_span(span, MagicMock())
+        span.update_name.assert_not_called()
+
+    def test_async_hook_is_a_coroutine_function(self):
+        """Guards a silent-failure trap in the instrumentation.
+
+        It validates the async hook with `iscoroutinefunction` and sets it to
+        `None` when it is a plain function -- no error, just no renaming on the
+        async client path. If this ever collapses back into one plain function,
+        this test is what catches it.
+        """
+        import asyncio
+        from shared.telemetry import _name_client_span_async
+        assert asyncio.iscoroutinefunction(_name_client_span_async)
+
+    def test_async_hook_delegates_to_the_sync_one(self):
+        import asyncio
+        from shared.telemetry import _name_client_span_async
+        span = self._span()
+        request = MagicMock()
+        request.method = "GET"
+        request.url = SimpleNamespace(host="example.internal", path="/readyz")
+        asyncio.run(_name_client_span_async(span, request))
+        span.update_name.assert_called_once_with("GET example.internal/readyz")
+
+    def test_never_raises_on_unexpected_request(self):
+        """A naming problem must not fail the request the span describes."""
+        from shared.telemetry import _name_client_span
+        span = self._span()
+        broken = MagicMock()
+        type(broken).method = property(lambda self: (_ for _ in ()).throw(RuntimeError("boom")))
+        _name_client_span(span, broken)
+        span.update_name.assert_not_called()
 
 
 class TestTraceOperation:
