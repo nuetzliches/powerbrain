@@ -137,10 +137,23 @@ jobs:
           rows=$(mktemp)
           details=$(mktemp)
 
+          # Advisories assessed as not reachable from this codebase. Each one is
+          # an entry in docs/dependency-audit.md carrying the assessment, a
+          # review date and the triggers that reopen it — do not add a line here
+          # without adding the entry there. Suppressed rather than tolerated,
+          # because a summary that always shows the same findings trains
+          # everyone to skip it, and this audit is only worth keeping
+          # non-blocking as long as a reported finding means something new.
+          ignore=(
+            --ignore-vuln PYSEC-2026-3552  # cryptography: PKCS#7 decrypt oracle
+            --ignore-vuln PYSEC-2026-3553  # cryptography: X.509 path-building DoS
+            --ignore-vuln PYSEC-2026-3554  # cryptography: X.509 wildcard SAN escape
+          )
+
           while IFS= read -r req; do
             log=$(mktemp)
             echo "::group::pip-audit $req"
-            if pip-audit --strict -r "$req" >"$log" 2>&1; then
+            if pip-audit --strict "${ignore[@]}" -r "$req" >"$log" 2>&1; then
               printf '| `%s` | no known vulnerabilities |\n' "$req" >>"$rows"
             else
               status=1

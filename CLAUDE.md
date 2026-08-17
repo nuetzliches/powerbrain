@@ -617,7 +617,12 @@ reviewed event instead of an automatic one. Upper bounds at the next major
   security patches, which is strictly worse than an open range.
 - Transitive dependencies stay unpinned. Closing that gap needs a lockfile with
   hashes (`pip-compile --generate-hashes` plus `pip install --require-hashes`)
-  and a rewrite of the Dockerfile and CI install steps — not done yet.
+  and a rewrite of the Dockerfile and CI install steps — not done yet. It also
+  means a vulnerable transitive package cannot always be fixed by a pin: an
+  intermediate dependency may cap it below the fix. See
+  `docs/dependency-audit.md` for how those are assessed, and for the ledger of
+  advisories accepted with a review date — a suppression in the audit step
+  without an entry there is not allowed.
 - When changing a version, resolve the whole set at once
   (`pip install --dry-run --report`) so shared packages (httpx, pydantic,
   OpenTelemetry, …) stay identical across services: CI installs every
