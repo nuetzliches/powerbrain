@@ -15,7 +15,10 @@ log = logging.getLogger("pb-proxy")
 
 
 # ── Service ──────────────────────────────────────────────────
-PROXY_HOST = os.getenv("PROXY_HOST", "0.0.0.0")
+# B104 accepted: containerised service, binds the container's interfaces so it
+# is reachable on pb-net. Host exposure is a docker compose port-publishing
+# decision, not this default. Override with PROXY_HOST.
+PROXY_HOST = os.getenv("PROXY_HOST", "0.0.0.0")  # nosec B104
 PROXY_PORT = int(os.getenv("PROXY_PORT", "8090"))
 
 # ── MCP Server ───────────────────────────────────────────────

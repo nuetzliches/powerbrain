@@ -31,6 +31,38 @@ Suppression is what keeps the audit readable: with known-and-assessed advisories
 filtered out, anything the summary reports is new and unassessed. An audit that
 always shows the same three findings trains everyone to skip it.
 
+## Static analysis findings are not ledgered here
+
+The same job also runs `bandit` over the service code, under the same
+`continue-on-error` trade and with the same reporting: findings go to the job
+summary, each one raises an annotation on its line, and the summary states how
+many were suppressed even when the run is clean.
+
+What it does **not** have is a ledger. An accepted `bandit` finding is recorded
+as a `# nosec Bxxx` marker with its reason in the source, and that is the whole
+record. The asymmetry with the advisories above is deliberate, and rests on
+three differences:
+
+- **There is a line to annotate.** An advisory concerns third-party code that
+  does not exist in this repository, so the assessment has nowhere to live
+  except a document. A `bandit` finding is our own code.
+- **The suppression is not remote from what it suppresses.** `--ignore-vuln
+  PYSEC-2026-3552` sits in a workflow file, far from anything it refers to, and
+  is an unexplained magic string without an entry here. `# nosec B608` sits on
+  the line it excuses, with the reason directly above it, where whoever edits
+  that code is already reading.
+- **There is nothing to expire.** An advisory needs a review date because
+  upstream moves without anyone here touching anything — a new `presidio`
+  release could lift the cap tomorrow. A justification like "this identifier
+  came from a module-level literal list" can only stop being true through an
+  edit to that same line, which brings the reason back into view at exactly the
+  moment it stops holding.
+
+A copy of those reasons in this document would be the half that silently drifts
+when the code moves. The rule itself — fix it, or annotate it with the test id
+and a reason, never bare and never a project-wide skip — is in
+[CONTRIBUTING.md](../CONTRIBUTING.md) next to the other code conventions.
+
 ## Accepted risks
 
 ### A-01 — `cryptography` 48.0.1, three advisories, capped by `presidio-anonymizer`

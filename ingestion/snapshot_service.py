@@ -99,7 +99,9 @@ async def get_pg_row_counts(pool: asyncpg.Pool) -> dict:
     counts = {}
     for table in PG_SNAPSHOT_TABLES:
         try:
-            row = await pool.fetchrow(f"SELECT COUNT(*) AS cnt FROM {table}")
+            # B608 false positive: `table` iterates PG_SNAPSHOT_TABLES, a
+            # module-level literal list; no caller value reaches this statement.
+            row = await pool.fetchrow(f"SELECT COUNT(*) AS cnt FROM {table}")  # nosec B608
             counts[table] = row["cnt"] if row else 0
         except Exception:
             counts[table] = -1  # Table does not (yet) exist

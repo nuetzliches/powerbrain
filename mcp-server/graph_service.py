@@ -162,11 +162,13 @@ async def _execute_cypher(pool: asyncpg.Pool, cypher: str, params: dict | None =
     columns = _parse_return_columns(query)
     as_clause = ", ".join(f"{col} agtype" for col in columns)
 
-    sql = f"""
-    SELECT * FROM cypher('{GRAPH_NAME}', $$
-        {query}
-    $$) AS ({as_clause})
-    """
+    # B608 is unavoidable here: AGE has no parameter binding for cypher, so the
+    # query has to be interpolated. GRAPH_NAME is a module constant, `as_clause`
+    # is stripped to [A-Za-z0-9_] by _parse_return_columns(), and `query` only
+    # reaches here from the builders below, which run every label and property
+    # key through _require_identifier() and every value through
+    # _escape_cypher_value().
+    sql = f"SELECT * FROM cypher('{GRAPH_NAME}', $$\n{query}\n$$) AS ({as_clause})"  # nosec B608
 
     async with pool.acquire() as conn:
         await conn.execute(AGE_INIT)

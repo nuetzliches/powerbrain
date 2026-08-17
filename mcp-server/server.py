@@ -154,7 +154,10 @@ _rerank_provider   = create_rerank_provider(
 from shared.embedding_cache import EmbeddingCache
 embedding_cache = EmbeddingCache()
 
-MCP_HOST       = os.getenv("MCP_HOST", "0.0.0.0")
+# B104 accepted: the service runs in a container and has to bind the container's
+# own interfaces to be reachable on pb-net; what is exposed to the host is
+# decided by docker compose port publishing, not here. Override with MCP_HOST.
+MCP_HOST       = os.getenv("MCP_HOST", "0.0.0.0")  # nosec B104
 MCP_PORT       = int(os.getenv("MCP_PORT", "8080"))
 MCP_PATH       = os.getenv("MCP_PATH", "/mcp")
 MCP_PUBLIC_URL = os.getenv("MCP_PUBLIC_URL", f"http://localhost:{MCP_PORT}")
@@ -2317,7 +2320,10 @@ async def _dispatch(name: str, arguments: dict[str, Any],
             params.append(str(value))
             idx += 1
 
-        q = f"SELECT data FROM dataset_rows WHERE {' AND '.join(where_clauses)} LIMIT ${idx}"
+        # B608 false positive: the only interpolated fragment is `where_clauses`,
+        # whose condition keys were rejected above unless validate_identifier()
+        # passed; every condition value and the limit are bound as $n.
+        q = f"SELECT data FROM dataset_rows WHERE {' AND '.join(where_clauses)} LIMIT ${idx}"  # nosec B608
         params.append(int(limit))
         rows = await pool.fetch(q, *params)
 
@@ -3002,8 +3008,11 @@ async def _dispatch(name: str, arguments: dict[str, Any],
         }, "errors": []}
 
         # 1. Fetch doc_ids from PostgreSQL (needed for graph cleanup + vault count)
+        # B608 false positive: pg_where comes from _build_delete_filter(), which
+        # emits literal column comparisons against $n placeholders only; the
+        # source_type/project values travel in pg_params.
         doc_rows = await pool.fetch(
-            f"SELECT id FROM documents_meta WHERE {pg_where}", *pg_params)
+            f"SELECT id FROM documents_meta WHERE {pg_where}", *pg_params)  # nosec B608
         doc_ids = [str(r["id"]) for r in doc_rows]
         result["deleted"]["documents_meta"] = len(doc_ids)
 
@@ -3041,8 +3050,10 @@ async def _dispatch(name: str, arguments: dict[str, Any],
 
         # 4. Delete from PostgreSQL (CASCADE handles vault)
         if doc_ids:
+            # B608 false positive: same _build_delete_filter() output as the
+            # SELECT above.
             await pool.execute(
-                f"DELETE FROM documents_meta WHERE {pg_where}", *pg_params)
+                f"DELETE FROM documents_meta WHERE {pg_where}", *pg_params)  # nosec B608
 
         # 5. Delete Document nodes from Knowledge Graph
         graph_deleted = 0
@@ -3096,7 +3107,8 @@ async def _dispatch(name: str, arguments: dict[str, Any],
                 "FROM pending_reviews "
                 "WHERE status = 'pending' "
                 "ORDER BY created_at ASC "
-                f"LIMIT {limit}"
+                "LIMIT $1",
+                limit,
             )
             out = [{
                 "review_id":      r["id"],
@@ -3334,18 +3346,22 @@ async def _dispatch(name: str, arguments: dict[str, Any],
             idx += 1
         where_sql = " AND ".join(where_parts) if where_parts else "TRUE"
 
+        params.append(limit)
+
         pool = await get_pg_pool()
         rows = await pool.fetch(
-            f"SELECT id, agent_id, agent_role, resource_type, resource_id, "
-            f"       action, policy_result, policy_reason, "
-            f"       contains_pii, purpose, legal_basis, data_category, "
-            f"       fields_redacted, created_at, "
-            f"       encode(prev_hash, 'hex')  AS prev_hash, "
-            f"       encode(entry_hash, 'hex') AS entry_hash "
-            f"FROM agent_access_log "
-            f"WHERE {where_sql} "
-            f"ORDER BY id ASC "
-            f"LIMIT {limit}",
+            "SELECT id, agent_id, agent_role, resource_type, resource_id, "
+            "       action, policy_result, policy_reason, "
+            "       contains_pii, purpose, legal_basis, data_category, "
+            "       fields_redacted, created_at, "
+            "       encode(prev_hash, 'hex')  AS prev_hash, "
+            "       encode(entry_hash, 'hex') AS entry_hash "
+            "FROM agent_access_log "
+            # B608 false positive: where_sql is joined from the literal fragments
+            # built above; every caller value is bound as $n, never interpolated.
+            f"WHERE {where_sql} "  # nosec B608
+            "ORDER BY id ASC "
+            f"LIMIT ${idx}",
             *params,
         )
 
@@ -3485,7 +3501,8 @@ async def _dispatch(name: str, arguments: dict[str, Any],
                 "       source::text, description, pii_types_found, notifiable_risk, "
                 "       frist_warnung "
                 "FROM v_incidents_requiring_attention "
-                f"LIMIT {limit}"
+                "LIMIT $1",
+                limit,
             )
             out = [{
                 "incident_id":            r["id"],
@@ -3511,14 +3528,17 @@ async def _dispatch(name: str, arguments: dict[str, Any],
                 params.append(source_filter)
                 idx += 1
             where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+            params.append(limit)
             rows = await pool.fetch(
                 "SELECT id::text, detected_at, detected_by, source::text, status::text, "
                 "       description, pii_types_found, data_category, notifiable_risk, "
                 "       authority_notified_at, subject_notified_at, resolved_at "
                 "FROM privacy_incidents"
-                + where_sql +
+                # B608 false positive: where_sql is joined from the literal
+                # fragments built above; the filter values are bound as $1/$2.
+                + where_sql +  # nosec B608
                 " ORDER BY detected_at DESC "
-                f"LIMIT {limit}",
+                f"LIMIT ${idx}",
                 *params,
             )
             out = [{

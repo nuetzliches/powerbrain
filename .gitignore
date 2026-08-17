@@ -25,3 +25,7 @@ composit-diff.html
 .coverage.*
 htmlcov/
 .pytest_cache/
+
+# bandit report — the security-scan job writes it into the workspace and uploads
+# it as an artifact; running the same scan locally drops it here too.
+bandit-report.json
