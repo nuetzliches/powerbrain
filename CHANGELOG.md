@@ -30,6 +30,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `reranker/requirements.txt` entirely. It now installs from that file, still
   via the PyTorch CPU index.
 
+### Changed
+
+- **Ported to MCP Python SDK 2.0** — `mcp` moves from `1.29.0` to `2.0.0` and
+  both services move with it. `mcp-server/server.py` binds its handlers through
+  the `on_list_tools` / `on_call_tool` constructor params instead of the removed
+  `@server.list_tools()` / `@server.call_tool()` decorators; the handlers now
+  take `(ctx, params)` and return `ListToolsResult` / `CallToolResult`. The tool
+  definitions and `TextContent(...)` blocks are untouched — 2.x keeps the
+  `inputSchema` field alias and populates by name, so only the two handler
+  signatures actually changed. In `pb-proxy/tool_injection.py` the replacement
+  `streamable_http_client` drops `headers=` in favour of a caller-supplied HTTP
+  client and yields two streams instead of three; both call sites now share one
+  `_mcp_session()` helper.
+- **httpx2 alongside httpx** — the MCP SDK's HTTP stack from 2.0 on is `httpx2`,
+  a separate distribution rather than a new httpx release. `pb-proxy` imports it
+  directly to attach auth headers. Passing a plain `httpx` client where the SDK
+  expects `httpx2` is *accepted* and then silently stops delivering
+  server-initiated messages, so client construction is centralised in
+  `_mcp_session()` with that caveat recorded at the call site.
+  `shared/telemetry.py` additionally registers `HTTPX2ClientInstrumentor`:
+  without it the pb-proxy → mcp-server hop loses its parent span and tool calls
+  surface as orphan traces in Tempo. Note for deployers: httpx2 defaults to the
+  OS trust store instead of certifi's bundle, so a private CA installed only at
+  OS level is honoured by MCP connections and rejected by everything else — both
+  clients accept `SSL_CERT_FILE`, which is now the documented lever. See
+  "Outbound TLS (Certificate Trust)" in `docs/deployment.md`.
+
 ### Fixed
 
 - **CI red since late July** — `mcp[server]>=1.27.1` resolved to `mcp 2.0.0`,
@@ -37,9 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mcp-server/server.py` and `streamablehttp_client` used in
   `pb-proxy/tool_injection.py`. Test collection failed on both; the cascading
   `DuplicateTimeseries` errors were a symptom of the half-executed imports, not
-  an independent fault. `mcp` is now held at `1.29.0`, the last 1.x release, and
-  the suite passes again (1115 passed, 20 skipped, 70.45% coverage). Porting to
-  the 2.x API remains a separate task.
+  an independent fault. `mcp` was first held at `1.29.0`, the last 1.x release,
+  to make the suite pass again (1115 passed, 20 skipped, 70.45% coverage). The
+  port to the 2.x API has since landed — see "Ported to MCP Python SDK 2.0"
+  under Changed above.
 - **Reranker tracing was silently disabled** — the image never installed the
   OpenTelemetry packages its `requirements.txt` declares, so
   `shared/telemetry.py` degraded to disabled even though `docker-compose.yml`

@@ -530,7 +530,7 @@ docker run --rm -v "$(pwd):/app" -w /app python:3.12-slim bash -c "
 ### Structured Telemetry
 All 4 services (mcp-server, proxy, reranker, ingestion) share a common telemetry module (`shared/telemetry.py`):
 
-- **OTel Tracing** — `init_telemetry(service_name)` creates TracerProvider + OTLP exporter to Tempo. Auto-instrumentation for FastAPI and httpx (W3C `traceparent` propagation). Configurable via `OTEL_ENABLED` (default `true`), `OTLP_ENDPOINT` (default `http://tempo:4317`).
+- **OTel Tracing** — `init_telemetry(service_name)` creates TracerProvider + OTLP exporter to Tempo. Auto-instrumentation for FastAPI, httpx and httpx2 (W3C `traceparent` propagation). Both HTTP clients are instrumented because the MCP SDK speaks httpx2 from 2.0 on while the services' own calls use httpx — instrumenting only one leaves the proxy → mcp-server hop as an orphan trace. Configurable via `OTEL_ENABLED` (default `true`), `OTLP_ENDPOINT` (default `http://tempo:4317`).
 - **Per-Request Telemetry** — `RequestTelemetry` + `PipelineStep` dataclasses accumulate timing breakdown per request. `trace_operation()` context manager creates OTel span and records step simultaneously. Responses include `_telemetry` block when `TELEMETRY_IN_RESPONSE=true` (default).
 - **JSON Metrics Endpoint** — Each service exposes `GET /metrics/json` returning structured metrics from Prometheus registry via `MetricsAggregator`. Designed for demo-UI consumption without PromQL knowledge.
 - **Graceful degradation** — If OTel packages not installed or exporter unreachable, tracing silently disables. Prometheus metrics always available.
@@ -555,7 +555,7 @@ All 4 services (mcp-server, proxy, reranker, ingestion) share a common telemetry
 16. ✅ **Proxy Authentication** — ASGI middleware (`pb-proxy/middleware.py`) for global `pb_` API-key auth, identity propagation to MCP servers
 17. ✅ **Multi-MCP-Server Aggregation** — Proxy aggregates tools from N MCP servers with per-server auth, prefix namespacing, and OPA-controlled access (`pb.proxy.mcp_servers_allowed`)
 18. ✅ **T1 Production Hardening** — Embedding cache (in-process LRU), batch embedding API, OPA result cache, configurable PG pool sizes, Docker health checks for all services
-19. ✅ **Structured Telemetry** — Shared OTel module (`shared/telemetry.py`), per-request `_telemetry` in search/chat responses, `/metrics/json` endpoints on all 4 services (mcp-server, proxy, reranker, ingestion), W3C traceparent propagation via auto-instrumented httpx
+19. ✅ **Structured Telemetry** — Shared OTel module (`shared/telemetry.py`), per-request `_telemetry` in search/chat responses, `/metrics/json` endpoints on all 4 services (mcp-server, proxy, reranker, ingestion), W3C traceparent propagation via auto-instrumented httpx + httpx2
 20. ✅ **Per-Provider Key Management** — Flexible LLM API key resolution (central/user/hybrid modes) via `provider_keys` in `litellm_config.yaml`, `X-Provider-Key` header support
 21. ✅ **PII Scan Observability & Strict Defaults** — `PII_SCAN_FORCED` defaults to `true` (fail-closed). Telemetry step `pii_pseudonymize` includes `mode`, `entities_found`, `entity_types`, `fail_mode`. OPA policy `pb.proxy.pii_scan_forced` defaults to `true`, admin can override via `pii_scan_forced_override: false`
 22. ✅ **Reranker Provider Abstraction** — Configurable reranker backend via `RERANKER_BACKEND` env var (`powerbrain`/`tei`/`cohere`). Strategy pattern in `shared/rerank_provider.py`, transparent format translation, graceful fallback preserved

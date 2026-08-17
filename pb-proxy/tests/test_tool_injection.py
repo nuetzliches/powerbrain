@@ -156,7 +156,7 @@ def test_mcp_tool_to_openai_uses_idempotent_prefix():
     class _Tool:
         name = "tc_create_timesheet"
         description = "Create a timesheet entry"
-        inputSchema = {"type": "object", "properties": {}}
+        input_schema = {"type": "object", "properties": {}}
 
     schema = _mcp_tool_to_openai(_Tool(), "tc")
     assert schema["function"]["name"] == "tc_create_timesheet"
