@@ -49,6 +49,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dead `[server]` extra** — `mcp[server]` requested an extra that no `mcp`
   release provides (pip: "does not provide the extra 'server'"), so it had
   always installed nothing. Dropped.
+- **MCP discovery failures logged without their cause** — a server that failed
+  tool discovery was logged as `Optional server '…' unreachable: unhandled
+  errors in a TaskGroup (1 sub-exception)`. The MCP streamable-http client runs
+  its read/write pumps in an anyio task group, so the real failure arrives
+  wrapped in an `ExceptionGroup` whose own `str()` carries no HTTP status, auth
+  rejection or connection error — and the line repeats once per refresh
+  interval with no way to tell why, so the cause could only be found by
+  re-running discovery by hand. Discovery failures are now flattened
+  (`_describe_exception`) to their leaf exceptions, recursively since groups
+  nest, and logged as `Type: message` — e.g. `HTTPStatusError: Client error
+  '401 Unauthorized' for url '…'` or `ConnectError: All connection attempts
+  failed`. Multi-line leaf messages are collapsed so one failure stays one log
+  line, and the full traceback is emitted separately at debug level via
+  `exc_info`. Applies to both the required (`log.error`) and optional
+  (`log.warning`) branches.
 
 ## [0.11.1] - 2026-05-27
 
