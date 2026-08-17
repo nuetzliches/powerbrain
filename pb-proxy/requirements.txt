@@ -6,7 +6,7 @@ litellm==1.96.2
 # IMPORTANT: mcp is held at 1.x. 2.0.0 removes
 # `mcp.client.streamable_http.streamablehttp_client`, used in tool_injection.py.
 # Do not accept a 2.x bump without porting the client code first.
-mcp==1.29.0
+mcp==2.0.0
 httpx==0.28.1
 pydantic==2.13.4
 pyyaml==6.0.3

@@ -6,7 +6,7 @@
 # without porting server.py first.
 # The former `[server]` extra was dropped: no 1.x release provides it either
 # (pip: "does not provide the extra 'server'"), so it installed nothing.
-mcp==1.29.0
+mcp==2.0.0
 httpx==0.28.1
 asyncpg==0.31.0
 qdrant-client==1.19.0
