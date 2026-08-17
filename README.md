@@ -201,6 +201,7 @@ curl http://localhost:8090/v1/chat/completions \
 | [Office 365 Adapter](docs/office365-adapter.md) | Sync SharePoint, OneDrive, Outlook, Teams, OneNote |
 | [Technology Decisions](docs/technology-decisions.md) | ADRs and trade-offs |
 | [Risk Register](docs/risk-management.md) | EU AI Act Art. 9 risk register (R-01..R-08) |
+| [Dependency Audit](docs/dependency-audit.md) | How dependencies are audited, and advisories accepted with a review date |
 | [EU AI Act Plan](docs/plans/2026-04-08-eu-ai-act-compliance.md) | Implementation plan for B-40..B-46 |
 | [CLAUDE.md](CLAUDE.md) | Agent-facing reference (tools, schemas, conventions) |
 
