@@ -23,9 +23,16 @@ import httpx
 import asyncpg
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue, FilterSelector
-from mcp.server import Server
+from mcp.server import Server, ServerRequestContext
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp.types import Tool, TextContent
+from mcp.types import (
+    CallToolRequestParams,
+    CallToolResult,
+    ListToolsResult,
+    PaginatedRequestParams,
+    TextContent,
+    Tool,
+)
 from mcp.server.auth.provider import TokenVerifier, AccessToken
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend, RequireAuthMiddleware
 from mcp.server.auth.middleware.auth_context import AuthContextMiddleware, get_access_token
@@ -1294,12 +1301,14 @@ async def check_feedback_warning(query: str, pool: asyncpg.Pool):
 
 
 # ── MCP-Server ───────────────────────────────────────────────
-server = Server("pb-mcp-server")
-
-
-@server.list_tools()
-async def list_tools() -> list[Tool]:
-    return [
+# mcp 2.x replaced the @server.list_tools()/@server.call_tool() decorators with
+# on_* constructor params. The handlers are therefore plain functions and the
+# Server instance is built below them — see "MCP-Server-Instanz".
+async def list_tools(
+    ctx: ServerRequestContext,
+    params: PaginatedRequestParams | None,
+) -> ListToolsResult:
+    return ListToolsResult(tools=[
         Tool(
             name="search_knowledge",
             description="Semantic search over the knowledge base. "
@@ -1867,13 +1876,18 @@ async def list_tools() -> list[Tool]:
                 "required": ["incident_id", "subject_ref", "channel"]
             }
         ),
-    ]
+    ])
 
 
 # ── Tool-Implementierungen ───────────────────────────────────
 
-@server.call_tool()
-async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+async def call_tool(
+    ctx: ServerRequestContext,
+    params: CallToolRequestParams,
+) -> CallToolResult:
+    name = params.name
+    arguments = params.arguments or {}
+
     # ── Identity from auth token (preferred) or arguments (legacy) ──
     access_token = get_access_token()
     if access_token is not None:
@@ -1886,7 +1900,9 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         log.warning("Unauthenticated request for tool '%s' from agent_id='%s'", name, agent_id)
     else:
         # Should not reach here (RequireAuthMiddleware already rejected)
-        return [TextContent(type="text", text=json.dumps({"error": "authentication required"}))]
+        return CallToolResult(content=[
+            TextContent(type="text", text=json.dumps({"error": "authentication required"}))
+        ])
 
     t_start = time.perf_counter()
     status  = "ok"
@@ -1917,7 +1933,17 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     mcp_requests_total.labels(tool=name, status=status).inc()
     mcp_request_duration.labels(tool=name).observe(elapsed)
 
-    return result
+    # is_error stays at its default False: _dispatch reports failures as an
+    # {"error": ...} payload in the content, which is what clients already parse.
+    return CallToolResult(content=result)
+
+
+# ── MCP-Server-Instanz ───────────────────────────────────────
+server = Server(
+    "pb-mcp-server",
+    on_list_tools=list_tools,
+    on_call_tool=call_tool,
+)
 
 
 def _build_delete_filter(source_type: str | None, project: str | None,

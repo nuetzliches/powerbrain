@@ -153,6 +153,17 @@ def setup_auto_instrumentation(app: Any = None) -> None:
     except ImportError:
         log.debug("opentelemetry-instrumentation-httpx not installed")
 
+    # The MCP SDK (2.x) speaks httpx2, which the httpx instrumentor above does
+    # not cover. Without this the pb-proxy → mcp-server hop loses its parent
+    # span and tool calls surface as orphan traces in Tempo. Only mcp-server and
+    # pb-proxy pull httpx2 in (via mcp), so absence here is normal, not an error.
+    try:
+        from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor
+        HTTPX2ClientInstrumentor().instrument()
+        log.info("httpx2 auto-instrumentation enabled (traceparent propagation)")
+    except Exception as e:
+        log.debug("httpx2 auto-instrumentation unavailable: %s", e)
+
     if app is not None:
         try:
             from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor

@@ -6,11 +6,13 @@ prefixes them with server name, and routes tool calls to the correct server.
 import asyncio
 import logging
 import os
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
+import httpx2
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 import config
 from mcp_config import McpServerConfig, load_mcp_servers
@@ -96,7 +98,7 @@ def _mcp_tool_to_openai(tool: Any, prefix: str) -> dict:
         "function": {
             "name": prefixed_name,
             "description": tool.description or "",
-            "parameters": tool.inputSchema or {"type": "object"},
+            "parameters": tool.input_schema or {"type": "object"},
         },
     }
 
@@ -133,6 +135,24 @@ def _describe_exception(exc: BaseException) -> str:
         message = " ".join(str(leaf).split())
         parts.append(f"{type(leaf).__name__}: {message}" if message else type(leaf).__name__)
     return "; ".join(parts) if parts else type(exc).__name__
+
+
+@asynccontextmanager
+async def _mcp_session(url: str, headers: dict[str, str]):
+    """Open an initialised MCP ClientSession over streamable HTTP.
+
+    mcp 2.x dropped the `headers=` argument: auth now rides on a caller-supplied
+    HTTP client. That client MUST be httpx2 — passing a plain httpx client is
+    accepted but silently stops delivering server-initiated messages instead of
+    raising, which on this path would break bearer auth without any error.
+    """
+    async with httpx2.AsyncClient(headers=headers) as http_client:
+        async with streamable_http_client(url, http_client=http_client) as (
+            read_stream, write_stream,
+        ):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                yield session
 
 
 class ToolInjector:
@@ -210,24 +230,20 @@ class ToolInjector:
         headers = _mcp_headers(server)
         tools: dict[str, ToolEntry] = {}
 
-        async with streamablehttp_client(server.url, headers=headers) as (
-            read_stream, write_stream, _,
-        ):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                result = await session.list_tools()
+        async with _mcp_session(server.url, headers) as session:
+            result = await session.list_tools()
 
-                for tool in result.tools:
-                    # Apply whitelist filter
-                    if server.tool_whitelist and tool.name not in server.tool_whitelist:
-                        continue
-                    prefixed_name = _prefixed_tool_name(server.prefix, tool.name)
-                    tools[prefixed_name] = ToolEntry(
-                        server_name=server.name,
-                        original_name=tool.name,
-                        schema=_mcp_tool_to_openai(tool, server.prefix),
-                        server_config=server,
-                    )
+            for tool in result.tools:
+                # Apply whitelist filter
+                if server.tool_whitelist and tool.name not in server.tool_whitelist:
+                    continue
+                prefixed_name = _prefixed_tool_name(server.prefix, tool.name)
+                tools[prefixed_name] = ToolEntry(
+                    server_name=server.name,
+                    original_name=tool.name,
+                    schema=_mcp_tool_to_openai(tool, server.prefix),
+                    server_config=server,
+                )
 
         return tools
 
@@ -309,14 +325,10 @@ class ToolInjector:
         """
         headers = _mcp_headers(entry.server_config, user_token=user_token, client_headers=client_headers)
 
-        async with streamablehttp_client(
-            entry.server_config.url, headers=headers,
-        ) as (read_stream, write_stream, _):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                result = await session.call_tool(entry.original_name, arguments)
-                texts = []
-                for content in result.content:
-                    if hasattr(content, "text"):
-                        texts.append(content.text)
-                return "\n".join(texts) if texts else str(result.content)
+        async with _mcp_session(entry.server_config.url, headers) as session:
+            result = await session.call_tool(entry.original_name, arguments)
+            texts = []
+            for content in result.content:
+                if hasattr(content, "text"):
+                    texts.append(content.text)
+            return "\n".join(texts) if texts else str(result.content)
