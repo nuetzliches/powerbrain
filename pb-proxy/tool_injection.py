@@ -101,6 +101,40 @@ def _mcp_tool_to_openai(tool: Any, prefix: str) -> dict:
     }
 
 
+def _leaf_exceptions(exc: BaseException) -> list[BaseException]:
+    """Flatten a possibly-nested ExceptionGroup into its leaf exceptions.
+
+    Groups can contain groups, so this recurses. A plain exception is its own
+    only leaf.
+    """
+    if isinstance(exc, BaseExceptionGroup):
+        leaves: list[BaseException] = []
+        for sub in exc.exceptions:
+            leaves.extend(_leaf_exceptions(sub))
+        return leaves
+    return [exc]
+
+
+def _describe_exception(exc: BaseException) -> str:
+    """Render an exception as `Type: message` for a single log line.
+
+    The MCP streamable-http client runs its read/write pumps inside an anyio
+    task group, so a failed connection surfaces as an ExceptionGroup whose own
+    str() is the useless "unhandled errors in a TaskGroup (1 sub-exception)" —
+    the HTTP status, auth rejection or connection error that actually broke
+    discovery sits in the sub-exceptions. Report the leaves instead, so the
+    warning names the cause without needing the full traceback.
+    """
+    parts: list[str] = []
+    for leaf in _leaf_exceptions(exc):
+        # httpx spreads its messages over several lines ("Client error '401
+        # Unauthorized' …\nFor more information check: …"); collapse the
+        # whitespace so one failure stays one log line.
+        message = " ".join(str(leaf).split())
+        parts.append(f"{type(leaf).__name__}: {message}" if message else type(leaf).__name__)
+    return "; ".join(parts) if parts else type(exc).__name__
+
+
 class ToolInjector:
     """Discovers tools from multiple MCP servers and injects them into LLM requests."""
 
@@ -154,10 +188,13 @@ class ToolInjector:
                 )
             except Exception as e:
                 self._server_status[server.name] = False
+                cause = _describe_exception(e)
                 if server.required:
-                    log.error("Required server '%s' unreachable: %s", server.name, e)
+                    log.error("Required server '%s' unreachable: %s", server.name, cause)
                 else:
-                    log.warning("Optional server '%s' unreachable: %s", server.name, e)
+                    log.warning("Optional server '%s' unreachable: %s", server.name, cause)
+                # Full traceback only at debug level, so the line above stays readable.
+                log.debug("Discovery failure for server '%s'", server.name, exc_info=True)
 
         if new_tools:
             self._tools = new_tools
