@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-08-18
+
+Unlike 0.12.2 this one does touch the images: the knowledge-graph write path
+and four MCP query builders changed.
+
 ### Fixed
 
 - **Graph writes were not idempotent, so every sync run duplicated the graph** —
