@@ -23,3 +23,12 @@ If you discover a security vulnerability in Powerbrain, please report it respons
 ## Scope
 
 This policy covers the Powerbrain codebase and its Docker Compose deployment. Third-party dependencies (Qdrant, PostgreSQL, OPA, Ollama) should be reported to their respective maintainers.
+
+## Dependency Advisories
+
+Every pull request audits all Python requirement files with `pip-audit`. Where an
+advisory has no upgrade path and the vulnerable code is not reachable from this
+codebase, it is accepted rather than fixed — with the assessment, a review date
+and the conditions that reopen it recorded in
+[docs/dependency-audit.md](docs/dependency-audit.md). If you believe an accepted
+entry is wrong, that is worth reporting through the process above.

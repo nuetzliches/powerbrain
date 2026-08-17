@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Three `cryptography` advisories assessed and accepted, with an expiry** —
+  `cryptography==48.0.1` carries PYSEC-2026-3552, -3553 and -3554. It is
+  transitive, so no pin fixes it: `presidio-anonymizer==2.2.364` declares
+  `cryptography>=48.0.1,<49.0.0` while the fixes ship in 49.0.0 and 50.0.0, and
+  `2.2.364` is the latest release on PyPI — pinning higher yields a resolver
+  conflict, not a fix. What the cap does do is scope the blast radius:
+  `pb-ingestion` is the only image installing `presidio-anonymizer` and
+  therefore the only one resolving `cryptography` to 48.0.1. All three
+  advisories are confined to two API surfaces — `pkcs7_decrypt_*` and
+  `cryptography.x509.verification` — and neither is reachable here. The three
+  packages that pull the library in use it for something else entirely: RS256
+  signing of the GitHub App assertion (`pyjwt[crypto]`), AES operators that the
+  PII scanner never configures because it pseudonymises by direct replacement
+  (`presidio-anonymizer`), and an Entra ID client-secret grant that parses no
+  certificate (`msal`). Outbound TLS verification runs through `ssl`/OpenSSL and
+  `certifi`, not through this library's verifier; inbound TLS is terminated by
+  Caddy, which is Go. Recorded as an accepted risk in the new
+  `docs/dependency-audit.md` with a review date of 2026-11-18 and the four
+  conditions that reopen it, and suppressed in the audit step via
+  `--ignore-vuln` so that a reported finding continues to mean something new
+  rather than the same three lines every run. (#258)
+
 ### Fixed
 
 - **The dependency audit skipped files and still reported success** — the
