@@ -110,6 +110,58 @@ def test_merge_tools_filters_by_allowed_servers():
     assert "github_list" not in names
 
 
+# ── prefix application tests ─────────────────────────────────
+
+
+def test_prefixed_tool_name_applies_prefix():
+    """A tool that is not namespaced gets the server prefix."""
+    from tool_injection import _prefixed_tool_name
+
+    assert _prefixed_tool_name("powerbrain", "search_knowledge") == "powerbrain_search_knowledge"
+    assert _prefixed_tool_name("tc", "list_timesheets") == "tc_list_timesheets"
+
+
+def test_prefixed_tool_name_is_idempotent():
+    """A tool already named `<prefix>_…` is not prefixed twice.
+
+    timecockpit-mcp publishes `tc_list_timesheets` etc., so the `prefix: tc`
+    entry must not produce `tc_tc_list_timesheets`.
+    """
+    from tool_injection import _prefixed_tool_name
+
+    assert _prefixed_tool_name("tc", "tc_list_timesheets") == "tc_list_timesheets"
+    assert _prefixed_tool_name("tc", "tc_find_similar_entries") == "tc_find_similar_entries"
+
+
+def test_prefixed_tool_name_partial_match_still_prefixed():
+    """A name that merely starts with the prefix letters still gets prefixed."""
+    from tool_injection import _prefixed_tool_name
+
+    # "tcfoo" starts with "tc" but is not namespaced ("tc_"), so it needs the prefix.
+    assert _prefixed_tool_name("tc", "tcfoo") == "tc_tcfoo"
+
+
+def test_prefixed_tool_name_no_prefix():
+    """An empty or missing prefix leaves the name untouched."""
+    from tool_injection import _prefixed_tool_name
+
+    assert _prefixed_tool_name("", "search_knowledge") == "search_knowledge"
+    assert _prefixed_tool_name(None, "search_knowledge") == "search_knowledge"
+
+
+def test_mcp_tool_to_openai_uses_idempotent_prefix():
+    """Schema name and lookup key agree for an already-namespaced tool."""
+    from tool_injection import _mcp_tool_to_openai
+
+    class _Tool:
+        name = "tc_create_timesheet"
+        description = "Create a timesheet entry"
+        inputSchema = {"type": "object", "properties": {}}
+
+    schema = _mcp_tool_to_openai(_Tool(), "tc")
+    assert schema["function"]["name"] == "tc_create_timesheet"
+
+
 # ── _mcp_headers auth logic tests ────────────────────────────
 
 

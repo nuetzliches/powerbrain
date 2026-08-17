@@ -72,9 +72,25 @@ def _mcp_headers(
     return headers
 
 
+def _prefixed_tool_name(prefix: str | None, name: str) -> str:
+    """Namespace an MCP tool name with its server prefix.
+
+    Idempotent: a server that already namespaces its own tools keeps the
+    names it publishes. timecockpit-mcp, for example, names every tool
+    `tc_…`, so the `prefix: tc` entry yields `tc_list_timesheets` rather
+    than `tc_tc_list_timesheets` — which is what the LLM (and the skills
+    and prompts written against those names) expects. Tools that are not
+    already namespaced still get the prefix, so names stay unique across
+    servers.
+    """
+    if not prefix or name.startswith(f"{prefix}_"):
+        return name
+    return f"{prefix}_{name}"
+
+
 def _mcp_tool_to_openai(tool: Any, prefix: str) -> dict:
     """Convert an MCP Tool to OpenAI function-calling format with prefix."""
-    prefixed_name = f"{prefix}_{tool.name}" if prefix else tool.name
+    prefixed_name = _prefixed_tool_name(prefix, tool.name)
     return {
         "type": "function",
         "function": {
@@ -205,7 +221,7 @@ class ToolInjector:
                     # Apply whitelist filter
                     if server.tool_whitelist and tool.name not in server.tool_whitelist:
                         continue
-                    prefixed_name = f"{server.prefix}_{tool.name}" if server.prefix else tool.name
+                    prefixed_name = _prefixed_tool_name(server.prefix, tool.name)
                     tools[prefixed_name] = ToolEntry(
                         server_name=server.name,
                         original_name=tool.name,

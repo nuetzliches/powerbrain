@@ -49,6 +49,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dead `[server]` extra** — `mcp[server]` requested an extra that no `mcp`
   release provides (pip: "does not provide the extra 'server'"), so it had
   always installed nothing. Dropped.
+- **Doubled tool names for self-namespacing MCP servers** — pb-proxy applied a
+  server's configured `prefix` unconditionally, so a server that already
+  namespaces its own tools got the prefix twice. A timecockpit-mcp entry
+  configured with `prefix: tc` injected `tc_tc_list_timesheets`,
+  `tc_tc_create_timesheet`, … because that server publishes its tools as `tc_…`
+  already — names that no skill or prompt written against the MCP server
+  matches. Prefixing is now idempotent (`_prefixed_tool_name`): a name that
+  already starts with `<prefix>_` is left alone, everything else is still
+  prefixed, so names stay unique across servers. Dropping the prefix from the
+  config would not have fixed it — `McpServerConfig` defaults `prefix` to the
+  server name, which yields `timecockpit_tc_list_timesheets` — and an empty
+  prefix would leave that server's non-`tc_` tools unnamespaced. No behaviour
+  change for the powerbrain server, whose tools are not named `powerbrain_*`.
+  PII routing is unaffected: `ToolEntry.needs_pii_scan` matches
+  `pii_scanned_tools` against the unprefixed `original_name`.
 - **MCP discovery failures logged without their cause** — a server that failed
   tool discovery was logged as `Optional server '…' unreachable: unhandled
   errors in a TaskGroup (1 sub-exception)`. The MCP streamable-http client runs
