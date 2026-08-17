@@ -106,16 +106,68 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Constrained rather than pinned inline: requirements-dev.txt already
+      # carries the pins, and an unpinned `pip install` of the scanner is the
+      # exact supply-chain hole this job exists to find — see CLAUDE.md
+      # "Dependency Pinning".
       - name: Install scanning tools
-        run: pip install pip-audit bandit
+        run: pip install --constraint requirements-dev.txt pip-audit bandit
 
+      # pip-audit exits 1 when it finds something. The four invocations used to
+      # be four plain lines under the default `bash -e`, so the first finding
+      # aborted the step and the files after it were never audited at all —
+      # while `continue-on-error` reported the job green. That is worse than no
+      # audit, because the step claims coverage it did not deliver (#257).
+      #
+      # Every file is audited now and the statuses are collected. Coverage comes
+      # from `git ls-files` instead of a hand-kept list, so a newly added
+      # requirements file cannot be silently left out by being forgotten here —
+      # the same gap `.github/dependabot.yml` guards against for updates.
+      # `--strict` makes a dependency that could not be resolved a failure
+      # rather than a skipped line in the middle of a passing run.
+      #
+      # `continue-on-error` stays: a CVE published in a transitive dependency
+      # should not block every unrelated PR. It no longer hides the finding —
+      # the result lands in the job summary and raises an annotation, so a
+      # finding is distinguishable from a clean run at a glance.
       - name: Dependency audit (pip-audit)
         continue-on-error: true
         run: |
-          pip-audit -r mcp-server/requirements.txt
-          pip-audit -r ingestion/requirements.txt
-          pip-audit -r pb-proxy/requirements.txt
-          pip-audit -r worker/requirements.txt
+          status=0
+          rows=$(mktemp)
+          details=$(mktemp)
+
+          while IFS= read -r req; do
+            log=$(mktemp)
+            echo "::group::pip-audit $req"
+            if pip-audit --strict -r "$req" >"$log" 2>&1; then
+              printf '| `%s` | no known vulnerabilities |\n' "$req" >>"$rows"
+            else
+              status=1
+              printf '| `%s` | :warning: **findings** |\n' "$req" >>"$rows"
+              {
+                printf '\n<details><summary><code>%s</code></summary>\n\n```\n' "$req"
+                cat "$log"
+                printf '```\n\n</details>\n'
+              } >>"$details"
+            fi
+            cat "$log"
+            echo "::endgroup::"
+          done < <(git ls-files '*requirements*.txt')
+
+          {
+            echo "## Dependency audit (pip-audit)"
+            echo
+            echo "| requirements file | result |"
+            echo "| --- | --- |"
+            cat "$rows"
+            cat "$details"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+          if [ "$status" -ne 0 ]; then
+            echo "::warning title=Dependency audit::pip-audit reported findings — see the job summary for the affected requirements files."
+          fi
+          exit "$status"
 
       - name: Static security scan (bandit)
         continue-on-error: true
