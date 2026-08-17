@@ -3,9 +3,11 @@
 # Content extraction libs (markitdown, python-docx, openpyxl, python-pptx,
 # beautifulsoup4) have moved into ingestion/requirements.txt because they are
 # now shared across adapters and the /extract endpoint.
+#
+# Exact pins (supply-chain hardening) — see CLAUDE.md "Dependency Pinning".
 
 # Microsoft Graph authentication (Entra ID protocol fixes)
-msal>=1.32
+msal==1.37.0
 
 # HTTP client (shared with core)
-httpx>=0.28
+httpx==0.28.1

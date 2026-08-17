@@ -1,4 +1,6 @@
-streamlit>=1.32
-streamlit-agraph>=0.0.45
-requests>=2.32
-pydantic>=2.5
+# Exact pins (supply-chain hardening) — see CLAUDE.md "Dependency Pinning".
+# Dependabot proposes bumps; every change is reviewed in a PR.
+streamlit==1.61.1
+streamlit-agraph==0.0.45
+requests==2.34.2
+pydantic==2.13.4
