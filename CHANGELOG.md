@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Graph writes were not idempotent, so every sync run duplicated the graph** —
+  `create_node` and `create_relationship` in `mcp-server/graph_service.py` built
+  plain Cypher `CREATE` statements. `CREATE` checks nothing for uniqueness, so a
+  repeated sync never errored and simply inserted another copy of every node and
+  edge it had already written. For edges it was worse than linear: the statement
+  is `MATCH (a), (b) CREATE (a)-[r]->(b)`, and `MATCH` returns the cross product
+  of both sides, so on run N it found N copies per side and created N² edges —
+  edge count grows with the sum of k². The same class of bug was fixed once
+  before in the `init-db/003` demo seed (0.11.3); this is the remaining occurrence,
+  in the primitives themselves, and it affected every caller of the `graph_mutate`
+  tool rather than one migration.
+
+  Both functions now `MERGE`. `create_node` merges on the identity property
+  (`id`, falling back to `name`) and applies the remaining properties with `SET`,
+  so a re-sync with changed data is an update rather than a second node. A node
+  with no properties at all keeps `CREATE`, because `MERGE` on a bare label would
+  match any existing node of that type. `create_relationship` merges the edge and
+  applies edge properties with `SET` rather than putting them inside the merge
+  pattern — a property in the pattern would make every changed value create an
+  additional edge, which is the duplication being fixed. Node deduplication is
+  what removes the cross product: with one node per identity, `MATCH (a), (b)`
+  binds exactly one on each side.
+
+  `create_node` now logs its sync action as `upsert` instead of `create`, which
+  also makes pre-fix and post-fix rows in `graph_sync_log` distinguishable.
+
+  Note for operators: `MERGE` makes re-syncs stable, but it does not invent an
+  identity. Where a caller passes a non-unique value as `id` — a project *name*
+  that repeats across customers, say — the merge collapses those onto one node by
+  design. That is a data-modelling question for the caller, not something this
+  fix can resolve.
+
 ## [0.12.2] - 2026-08-18
 
 This release changes CI and documentation only — the service images are
