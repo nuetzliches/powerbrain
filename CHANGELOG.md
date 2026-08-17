@@ -41,6 +41,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   design. That is a data-modelling question for the caller, not something this
   fix can resolve.
 
+- **The static security scan failed on every run and reported green** — `bandit`
+  found 12 medium-severity issues and exited 1 each time, but the step is
+  `continue-on-error: true`, so the check stayed green and the output only
+  existed inside a collapsed log nobody opens. Same failure mode as the
+  dependency audit below, on the step that was left out of scope there. All 12
+  are now resolved rather than tolerated, so the run is clean and the next
+  finding is the only thing in it: four queries that interpolated an
+  already-clamped `LIMIT` bind it as a parameter instead (`review_pending`,
+  `export_audit_log`, both `list_incidents` branches), which removes two
+  findings outright and leaves one rule behind — these queries interpolate
+  validated identifiers and literal fragments, never a caller value. The
+  remaining ten carry a `# nosec Bxxx` marker with the reason next to it: seven
+  `B608` where the dynamic part is a `$n`-placeholder fragment or a
+  module-level constant (and, for Apache AGE, a cypher string that cannot be
+  parameterised at all, built only by helpers that run every label through
+  `_require_identifier()` and every value through `_escape_cypher_value()`), and
+  three `B104` where a containerised service binds its own interfaces so it is
+  reachable on `pb-net` — what reaches the host is a compose port-publishing
+  decision. The step itself gets the same treatment the audit got: it invoked
+  bandit twice, once for the JSON artifact and once for console output, so the
+  uploaded report and the text people read could disagree; it now runs once and
+  renders the summary from that JSON. Findings land in the job summary as a
+  table, each one also raising a file annotation on its line, and a scan error
+  or an unexplained non-zero exit annotates too — a file bandit cannot parse is
+  a hole in coverage that never appears as a finding. The summary reports the
+  suppression count on every run, including clean ones, so `# nosec` markers
+  cannot quietly accumulate. (#262)
+
 ## [0.12.2] - 2026-08-18
 
 This release changes CI and documentation only — the service images are
@@ -71,34 +99,6 @@ functionally identical to 0.12.1.
   rather than the same three lines every run. (#258)
 
 ### Fixed
-
-- **The static security scan failed on every run and reported green** — `bandit`
-  found 12 medium-severity issues and exited 1 each time, but the step is
-  `continue-on-error: true`, so the check stayed green and the output only
-  existed inside a collapsed log nobody opens. Same failure mode as the
-  dependency audit below, on the step that was left out of scope there. All 12
-  are now resolved rather than tolerated, so the run is clean and the next
-  finding is the only thing in it: four queries that interpolated an
-  already-clamped `LIMIT` bind it as a parameter instead (`review_pending`,
-  `export_audit_log`, both `list_incidents` branches), which removes two
-  findings outright and leaves one rule behind — these queries interpolate
-  validated identifiers and literal fragments, never a caller value. The
-  remaining ten carry a `# nosec Bxxx` marker with the reason next to it: seven
-  `B608` where the dynamic part is a `$n`-placeholder fragment or a
-  module-level constant (and, for Apache AGE, a cypher string that cannot be
-  parameterised at all, built only by helpers that run every label through
-  `_require_identifier()` and every value through `_escape_cypher_value()`), and
-  three `B104` where a containerised service binds its own interfaces so it is
-  reachable on `pb-net` — what reaches the host is a compose port-publishing
-  decision. The step itself gets the same treatment the audit got: it invoked
-  bandit twice, once for the JSON artifact and once for console output, so the
-  uploaded report and the text people read could disagree; it now runs once and
-  renders the summary from that JSON. Findings land in the job summary as a
-  table, each one also raising a file annotation on its line, and a scan error
-  or an unexplained non-zero exit annotates too — a file bandit cannot parse is
-  a hole in coverage that never appears as a finding. The summary reports the
-  suppression count on every run, including clean ones, so `# nosec` markers
-  cannot quietly accumulate. (#257)
 
 - **The dependency audit skipped files and still reported success** — the
   `security-scan` job ran four `pip-audit` invocations as four plain lines in a
