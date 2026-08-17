@@ -11,25 +11,37 @@
 --  Even "closed" incidents remain as evidence.
 -- ============================================================
 
-CREATE TYPE incident_status AS ENUM (
-    'detected',          -- Detected automatically or manually, not yet assessed
-    'under_review',      -- Data protection officer / admin is reviewing
-    'contained',         -- Data access locked, further dissemination stopped
-    'notified_authority',-- Notification to supervisory authority sent (Art. 33)
-    'notified_subject',  -- Data subject informed (Art. 34)
-    'resolved',          -- Closed, no notification required or already reported
-    'false_positive'     -- Review found no actual breach
-);
+-- ENUM types have no CREATE ... IF NOT EXISTS, so guard on pg_type.
+-- Note: adding a value to an existing enum needs its own
+-- ALTER TYPE ... ADD VALUE IF NOT EXISTS in a later migration; this
+-- guard only covers first creation.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'incident_status') THEN
+        CREATE TYPE incident_status AS ENUM (
+            'detected',          -- Detected automatically or manually, not yet assessed
+            'under_review',      -- Data protection officer / admin is reviewing
+            'contained',         -- Data access locked, further dissemination stopped
+            'notified_authority',-- Notification to supervisory authority sent (Art. 33)
+            'notified_subject',  -- Data subject informed (Art. 34)
+            'resolved',          -- Closed, no notification required or already reported
+            'false_positive'     -- Review found no actual breach
+        );
+    END IF;
 
-CREATE TYPE incident_source AS ENUM (
-    'llm_detection',     -- LLM detected unanonymized PII in the context
-    'pii_scanner',       -- Presidio scan during re-indexing
-    'agent_report',      -- Agent reported via submit_feedback or explicit report
-    'manual_audit',      -- Human review
-    'retention_check'    -- Retention cleanup discovered orphaned PII data
-);
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'incident_source') THEN
+        CREATE TYPE incident_source AS ENUM (
+            'llm_detection',     -- LLM detected unanonymized PII in the context
+            'pii_scanner',       -- Presidio scan during re-indexing
+            'agent_report',      -- Agent reported via submit_feedback or explicit report
+            'manual_audit',      -- Human review
+            'retention_check'    -- Retention cleanup discovered orphaned PII data
+        );
+    END IF;
+END
+$$;
 
-CREATE TABLE privacy_incidents (
+CREATE TABLE IF NOT EXISTS privacy_incidents (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
     -- Detection
@@ -82,11 +94,11 @@ CREATE TABLE privacy_incidents (
     deletion_request_id UUID REFERENCES deletion_requests(id)
 );
 
-CREATE INDEX idx_incidents_status    ON privacy_incidents(status);
-CREATE INDEX idx_incidents_detected  ON privacy_incidents(detected_at);
-CREATE INDEX idx_incidents_source    ON privacy_incidents(source);
-CREATE INDEX idx_incidents_pii_types ON privacy_incidents USING gin(pii_types_found);
-CREATE INDEX idx_incidents_notifiable ON privacy_incidents(notifiable_risk)
+CREATE INDEX IF NOT EXISTS idx_incidents_status    ON privacy_incidents(status);
+CREATE INDEX IF NOT EXISTS idx_incidents_detected  ON privacy_incidents(detected_at);
+CREATE INDEX IF NOT EXISTS idx_incidents_source    ON privacy_incidents(source);
+CREATE INDEX IF NOT EXISTS idx_incidents_pii_types ON privacy_incidents USING gin(pii_types_found);
+CREATE INDEX IF NOT EXISTS idx_incidents_notifiable ON privacy_incidents(notifiable_risk)
     WHERE notifiable_risk = true AND authority_notified_at IS NULL;
 
 -- Trigger: automatically record status changes in history
@@ -105,13 +117,14 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trg_incident_status_history ON privacy_incidents;
 CREATE TRIGGER trg_incident_status_history
     BEFORE UPDATE ON privacy_incidents
     FOR EACH ROW EXECUTE FUNCTION track_incident_status();
 
 -- View: open incidents that might endanger the 72-hour notification deadline
 -- (Art. 33: notification within 72 hours of becoming aware)
-CREATE VIEW v_incidents_requiring_attention AS
+CREATE OR REPLACE VIEW v_incidents_requiring_attention AS
 SELECT
     id,
     detected_at,
