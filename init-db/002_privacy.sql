@@ -4,7 +4,7 @@
 -- ============================================================
 
 -- Data categories for GDPR purpose binding
-CREATE TABLE data_categories (
+CREATE TABLE IF NOT EXISTS data_categories (
     id              VARCHAR(50) PRIMARY KEY,
     description     TEXT NOT NULL,
     contains_pii    BOOLEAN DEFAULT false,
@@ -20,34 +20,35 @@ INSERT INTO data_categories (id, description, contains_pii, legal_basis, allowed
 ('marketing_data',  'Marketing contacts',           true,  'Art. 6 para. 1 lit. a (consent)',             ARRAY['campaign_management','consent_based_contact'], 365),
 ('contract_data',   'Contract documents',           true,  'Art. 6 para. 1 lit. b (contract performance)', ARRAY['contract_fulfillment','legal'], 1095),
 ('accounting_data', 'Accounting data',              true,  'Art. 6 para. 1 lit. c (legal obligation)',    ARRAY['accounting','audit'], 3650),
-('technical_data',  'Technical documentation',      false, NULL, ARRAY['development','operations'], 365);
+('technical_data',  'Technical documentation',      false, NULL, ARRAY['development','operations'], 365)
+ON CONFLICT (id) DO NOTHING;
 
 -- Add privacy fields to datasets
 ALTER TABLE datasets
-    ADD COLUMN data_category     VARCHAR(50) REFERENCES data_categories(id),
-    ADD COLUMN contains_pii      BOOLEAN DEFAULT false,
-    ADD COLUMN legal_basis        VARCHAR(100),
-    ADD COLUMN retention_expires_at TIMESTAMPTZ,
-    ADD COLUMN pii_fields         TEXT[],           -- Which fields contain PII
-    ADD COLUMN pseudonymized      BOOLEAN DEFAULT false;
+    ADD COLUMN IF NOT EXISTS data_category     VARCHAR(50) REFERENCES data_categories(id),
+    ADD COLUMN IF NOT EXISTS contains_pii      BOOLEAN DEFAULT false,
+    ADD COLUMN IF NOT EXISTS legal_basis        VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS retention_expires_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS pii_fields         TEXT[],           -- Which fields contain PII
+    ADD COLUMN IF NOT EXISTS pseudonymized      BOOLEAN DEFAULT false;
 
-CREATE INDEX idx_datasets_retention ON datasets(retention_expires_at)
+CREATE INDEX IF NOT EXISTS idx_datasets_retention ON datasets(retention_expires_at)
     WHERE retention_expires_at IS NOT NULL;
-CREATE INDEX idx_datasets_pii ON datasets(contains_pii)
+CREATE INDEX IF NOT EXISTS idx_datasets_pii ON datasets(contains_pii)
     WHERE contains_pii = true;
 
 -- Add privacy fields to documents_meta
 ALTER TABLE documents_meta
-    ADD COLUMN data_category     VARCHAR(50) REFERENCES data_categories(id),
-    ADD COLUMN contains_pii      BOOLEAN DEFAULT false,
-    ADD COLUMN retention_expires_at TIMESTAMPTZ,
-    ADD COLUMN data_subject_refs TEXT[];    -- References to data subjects
+    ADD COLUMN IF NOT EXISTS data_category     VARCHAR(50) REFERENCES data_categories(id),
+    ADD COLUMN IF NOT EXISTS contains_pii      BOOLEAN DEFAULT false,
+    ADD COLUMN IF NOT EXISTS retention_expires_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS data_subject_refs TEXT[];    -- References to data subjects
 
-CREATE INDEX idx_docs_retention ON documents_meta(retention_expires_at)
+CREATE INDEX IF NOT EXISTS idx_docs_retention ON documents_meta(retention_expires_at)
     WHERE retention_expires_at IS NOT NULL;
 
 -- Data subjects (for access and deletion requests)
-CREATE TABLE data_subjects (
+CREATE TABLE IF NOT EXISTS data_subjects (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     external_ref    VARCHAR(255) UNIQUE NOT NULL,  -- External ID (customer no., etc.)
     pseudonym       VARCHAR(100) UNIQUE,           -- Pseudonymized identifier
@@ -56,11 +57,11 @@ CREATE TABLE data_subjects (
     created_at      TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_data_subjects_ref ON data_subjects(external_ref);
-CREATE INDEX idx_data_subjects_pseudonym ON data_subjects(pseudonym);
+CREATE INDEX IF NOT EXISTS idx_data_subjects_ref ON data_subjects(external_ref);
+CREATE INDEX IF NOT EXISTS idx_data_subjects_pseudonym ON data_subjects(pseudonym);
 
 -- Deletion request tracking (Art. 17 GDPR)
-CREATE TABLE deletion_requests (
+CREATE TABLE IF NOT EXISTS deletion_requests (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     data_subject_id UUID REFERENCES data_subjects(id),
     request_date    TIMESTAMPTZ DEFAULT now(),
@@ -73,14 +74,14 @@ CREATE TABLE deletion_requests (
 
 -- Extend audit log with privacy fields
 ALTER TABLE agent_access_log
-    ADD COLUMN contains_pii      BOOLEAN DEFAULT false,
-    ADD COLUMN purpose            VARCHAR(100),
-    ADD COLUMN legal_basis        VARCHAR(100),
-    ADD COLUMN data_category      VARCHAR(50),
-    ADD COLUMN fields_redacted    TEXT[];
+    ADD COLUMN IF NOT EXISTS contains_pii      BOOLEAN DEFAULT false,
+    ADD COLUMN IF NOT EXISTS purpose            VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS legal_basis        VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS data_category      VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS fields_redacted    TEXT[];
 
 -- PII scan results (detection log)
-CREATE TABLE pii_scan_log (
+CREATE TABLE IF NOT EXISTS pii_scan_log (
     id              BIGSERIAL PRIMARY KEY,
     source          VARCHAR(500),
     scan_date       TIMESTAMPTZ DEFAULT now(),
@@ -91,7 +92,7 @@ CREATE TABLE pii_scan_log (
 );
 
 -- View: all datasets with an expiring retention period
-CREATE VIEW v_expiring_data AS
+CREATE OR REPLACE VIEW v_expiring_data AS
 SELECT
     'dataset' AS source_type,
     id,

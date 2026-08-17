@@ -3,7 +3,7 @@
 -- ============================================================
 
 -- Classification levels
-CREATE TABLE classifications (
+CREATE TABLE IF NOT EXISTS classifications (
     id          SERIAL PRIMARY KEY,
     name        VARCHAR(50) UNIQUE NOT NULL,
     level       INTEGER NOT NULL,           -- 0=public, 1=internal, 2=confidential, 3=restricted
@@ -15,10 +15,11 @@ INSERT INTO classifications (name, level, description, access_policy) VALUES
 ('public',       0, 'Freely accessible to all agents',  'pb.access.public'),
 ('internal',     1, 'Internal agents only',             'pb.access.internal'),
 ('confidential', 2, 'Restricted access',                'pb.access.confidential'),
-('restricted',   3, 'Strictly controlled',              'pb.access.restricted');
+('restricted',   3, 'Strictly controlled',              'pb.access.restricted')
+ON CONFLICT (name) DO NOTHING;
 
 -- Datasets (imported CSV, JSON etc.)
-CREATE TABLE datasets (
+CREATE TABLE IF NOT EXISTS datasets (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name             VARCHAR(255) NOT NULL,
     description      TEXT,
@@ -31,22 +32,22 @@ CREATE TABLE datasets (
     updated_at       TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_datasets_project ON datasets(project);
-CREATE INDEX idx_datasets_classification ON datasets(classification);
+CREATE INDEX IF NOT EXISTS idx_datasets_project ON datasets(project);
+CREATE INDEX IF NOT EXISTS idx_datasets_classification ON datasets(classification);
 
 -- Individual rows of a dataset
-CREATE TABLE dataset_rows (
+CREATE TABLE IF NOT EXISTS dataset_rows (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     dataset_id  UUID REFERENCES datasets(id) ON DELETE CASCADE,
     data        JSONB NOT NULL,
     created_at  TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_dataset_rows_dataset ON dataset_rows(dataset_id);
-CREATE INDEX idx_dataset_rows_data ON dataset_rows USING GIN(data);
+CREATE INDEX IF NOT EXISTS idx_dataset_rows_dataset ON dataset_rows(dataset_id);
+CREATE INDEX IF NOT EXISTS idx_dataset_rows_data ON dataset_rows USING GIN(data);
 
 -- Document metadata (reference to Qdrant vectors)
-CREATE TABLE documents_meta (
+CREATE TABLE IF NOT EXISTS documents_meta (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title               VARCHAR(500) NOT NULL,
     source              VARCHAR(500),
@@ -60,11 +61,11 @@ CREATE TABLE documents_meta (
     updated_at          TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_documents_meta_project ON documents_meta(project);
-CREATE INDEX idx_documents_meta_classification ON documents_meta(classification);
+CREATE INDEX IF NOT EXISTS idx_documents_meta_project ON documents_meta(project);
+CREATE INDEX IF NOT EXISTS idx_documents_meta_classification ON documents_meta(classification);
 
 -- Audit log for agent access
-CREATE TABLE agent_access_log (
+CREATE TABLE IF NOT EXISTS agent_access_log (
     id              BIGSERIAL PRIMARY KEY,
     agent_id        VARCHAR(100) NOT NULL,
     agent_role      VARCHAR(50),
@@ -77,12 +78,12 @@ CREATE TABLE agent_access_log (
     created_at      TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_audit_agent ON agent_access_log(agent_id);
-CREATE INDEX idx_audit_time ON agent_access_log(created_at);
-CREATE INDEX idx_audit_result ON agent_access_log(policy_result);
+CREATE INDEX IF NOT EXISTS idx_audit_agent ON agent_access_log(agent_id);
+CREATE INDEX IF NOT EXISTS idx_audit_time ON agent_access_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_result ON agent_access_log(policy_result);
 
 -- Project management
-CREATE TABLE projects (
+CREATE TABLE IF NOT EXISTS projects (
     id          VARCHAR(100) PRIMARY KEY,
     name        VARCHAR(255) NOT NULL,
     description TEXT,

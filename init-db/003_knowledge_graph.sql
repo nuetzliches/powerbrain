@@ -16,82 +16,71 @@ CREATE EXTENSION IF NOT EXISTS age;
 LOAD 'age';
 SET search_path = ag_catalog, "$user", public;
 
--- Create graph
-SELECT create_graph('knowledge');
+-- ── Graph + labels ─────────────────────────────────────────
+--
+-- AGE has no IF NOT EXISTS for create_graph/create_vlabel/create_elabel,
+-- so guard against its catalog (ag_graph.name, ag_label.name+graph).
 
--- ── Vertex labels (node types) ─────────────────────────────
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = 'knowledge') THEN
+        PERFORM ag_catalog.create_graph('knowledge');
+    END IF;
+END
+$$;
 
-SELECT create_vlabel('knowledge', 'Project');
-SELECT create_vlabel('knowledge', 'Technology');
-SELECT create_vlabel('knowledge', 'Actor');
-SELECT create_vlabel('knowledge', 'Document');
-SELECT create_vlabel('knowledge', 'Rule');
-SELECT create_vlabel('knowledge', 'Concept');
+-- The ::cstring casts are required, not cosmetic: create_vlabel/create_elabel
+-- take cstring parameters. Bare string literals work because "unknown"
+-- coerces to cstring, but a TEXT loop variable does not -- without the cast
+-- this fails with "function ag_catalog.create_vlabel(unknown, text) does not
+-- exist".
+DO $$
+DECLARE
+    graph_oid OID;
+    lbl       TEXT;
+BEGIN
+    SELECT graphid INTO graph_oid FROM ag_catalog.ag_graph WHERE name = 'knowledge';
 
--- ── Edge labels (relationship types) ───────────────────────
+    -- Vertex labels (node types)
+    FOREACH lbl IN ARRAY ARRAY[
+        'Project', 'Technology', 'Actor', 'Document', 'Rule', 'Concept'
+    ] LOOP
+        IF NOT EXISTS (
+            SELECT 1 FROM ag_catalog.ag_label
+            WHERE name = lbl AND graph = graph_oid
+        ) THEN
+            PERFORM ag_catalog.create_vlabel('knowledge'::cstring, lbl::cstring);
+        END IF;
+    END LOOP;
 
-SELECT create_elabel('knowledge', 'USES');
-SELECT create_elabel('knowledge', 'WORKS_ON');
-SELECT create_elabel('knowledge', 'HAS_ROLE');
-SELECT create_elabel('knowledge', 'BELONGS_TO');
-SELECT create_elabel('knowledge', 'DESCRIBES');
-SELECT create_elabel('knowledge', 'APPLIES_TO');
-SELECT create_elabel('knowledge', 'RELATED_TO');
-SELECT create_elabel('knowledge', 'DEPENDS_ON');
+    -- Edge labels (relationship types)
+    FOREACH lbl IN ARRAY ARRAY[
+        'USES', 'WORKS_ON', 'HAS_ROLE', 'BELONGS_TO',
+        'DESCRIBES', 'APPLIES_TO', 'RELATED_TO', 'DEPENDS_ON'
+    ] LOOP
+        IF NOT EXISTS (
+            SELECT 1 FROM ag_catalog.ag_label
+            WHERE name = lbl AND graph = graph_oid
+        ) THEN
+            PERFORM ag_catalog.create_elabel('knowledge'::cstring, lbl::cstring);
+        END IF;
+    END LOOP;
+END
+$$;
 
--- ── Example data ───────────────────────────────────────────
-
-SELECT * FROM cypher('knowledge', $$
-  CREATE (:Project {name: 'knowledge base', phase: 'setup', classification: 'internal'})
-$$) AS (v agtype);
-
-SELECT * FROM cypher('knowledge', $$
-  CREATE (:Project {name: 'API-Gateway', phase: 'production', classification: 'confidential'})
-$$) AS (v agtype);
-
-SELECT * FROM cypher('knowledge', $$
-  CREATE (:Technology {name: 'Qdrant', category: 'database', version: '1.12'})
-$$) AS (v agtype);
-
-SELECT * FROM cypher('knowledge', $$
-  CREATE (:Technology {name: 'PostgreSQL', category: 'database', version: '16'})
-$$) AS (v agtype);
-
-SELECT * FROM cypher('knowledge', $$
-  CREATE (:Technology {name: 'OPA', category: 'policy_engine'})
-$$) AS (v agtype);
-
-SELECT * FROM cypher('knowledge', $$
-  CREATE (:Technology {name: 'FastAPI', category: 'framework'})
-$$) AS (v agtype);
-
-SELECT * FROM cypher('knowledge', $$
-  MATCH (p:Project {name: 'knowledge base'}), (t:Technology {name: 'Qdrant'})
-  CREATE (p)-[:USES {since: '2026-03', purpose: 'vector search'}]->(t)
-$$) AS (e agtype);
-
-SELECT * FROM cypher('knowledge', $$
-  MATCH (p:Project {name: 'knowledge base'}), (t:Technology {name: 'PostgreSQL'})
-  CREATE (p)-[:USES {since: '2026-03', purpose: 'structured data'}]->(t)
-$$) AS (e agtype);
-
-SELECT * FROM cypher('knowledge', $$
-  MATCH (p:Project {name: 'knowledge base'}), (t:Technology {name: 'OPA'})
-  CREATE (p)-[:USES {since: '2026-03', purpose: 'policy set'}]->(t)
-$$) AS (e agtype);
-
-SELECT * FROM cypher('knowledge', $$
-  CREATE (:Concept {name: 'GDPR', domain: 'compliance'})
-$$) AS (v agtype);
-
-SELECT * FROM cypher('knowledge', $$
-  CREATE (:Concept {name: 'PII detection', domain: 'privacy'})
-$$) AS (v agtype);
-
-SELECT * FROM cypher('knowledge', $$
-  MATCH (c1:Concept {name: 'PII detection'}), (c2:Concept {name: 'GDPR'})
-  CREATE (c1)-[:RELATED_TO {relation: 'implements_requirement_of'}]->(c2)
-$$) AS (e agtype);
+-- ── No example data ────────────────────────────────────────
+--
+-- This file used to seed demo nodes here (Projects 'knowledge base' and
+-- 'API-Gateway', Technologies Qdrant/PostgreSQL/OPA/FastAPI, Concepts
+-- GDPR/'PII detection') via plain cypher CREATE. Because db-migrate re-runs
+-- every init-db file on each deploy and CREATE has no uniqueness check,
+-- those statements never errored -- they silently inserted another copy
+-- every time. The MATCH ... CREATE edge statements made it worse than
+-- linear: on run N they match N copies on each side and create N^2 edges.
+-- Live this had reached 25 copies per node and 16575 USES edges instead of 3.
+--
+-- Keep this section empty. The graph is populated by ingestion, and demo
+-- content does not belong in a migration that re-runs on every deploy.
 
 -- ── Views for fast access ──────────────────────────────────
 

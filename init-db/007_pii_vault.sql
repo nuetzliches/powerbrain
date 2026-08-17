@@ -20,7 +20,7 @@ GRANT USAGE ON SCHEMA pii_vault TO mcp_vault_reader;
 -- ── Tables ─────────────────────────────────────────────────
 
 -- Original content (plaintext + detected PII entities)
-CREATE TABLE pii_vault.original_content (
+CREATE TABLE IF NOT EXISTS pii_vault.original_content (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id     UUID NOT NULL REFERENCES documents_meta(id) ON DELETE CASCADE,
     chunk_index     INT NOT NULL,
@@ -32,13 +32,13 @@ CREATE TABLE pii_vault.original_content (
     UNIQUE (document_id, chunk_index)
 );
 
-CREATE INDEX idx_vault_content_retention
+CREATE INDEX IF NOT EXISTS idx_vault_content_retention
     ON pii_vault.original_content(retention_expires_at);
-CREATE INDEX idx_vault_content_document
+CREATE INDEX IF NOT EXISTS idx_vault_content_document
     ON pii_vault.original_content(document_id);
 
 -- Pseudonym mapping (for traceability + Art. 17 deletion)
-CREATE TABLE pii_vault.pseudonym_mapping (
+CREATE TABLE IF NOT EXISTS pii_vault.pseudonym_mapping (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id     UUID NOT NULL REFERENCES documents_meta(id) ON DELETE CASCADE,
     chunk_index     INT NOT NULL,
@@ -48,13 +48,13 @@ CREATE TABLE pii_vault.pseudonym_mapping (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_vault_mapping_document
+CREATE INDEX IF NOT EXISTS idx_vault_mapping_document
     ON pii_vault.pseudonym_mapping(document_id);
-CREATE INDEX idx_vault_mapping_pseudonym
+CREATE INDEX IF NOT EXISTS idx_vault_mapping_pseudonym
     ON pii_vault.pseudonym_mapping(pseudonym);
 
 -- Separate audit log only for vault access
-CREATE TABLE pii_vault.vault_access_log (
+CREATE TABLE IF NOT EXISTS pii_vault.vault_access_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     agent_id        VARCHAR(200) NOT NULL,
     document_id     UUID NOT NULL,
@@ -64,13 +64,13 @@ CREATE TABLE pii_vault.vault_access_log (
     accessed_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_vault_access_agent
+CREATE INDEX IF NOT EXISTS idx_vault_access_agent
     ON pii_vault.vault_access_log(agent_id, accessed_at);
-CREATE INDEX idx_vault_access_document
+CREATE INDEX IF NOT EXISTS idx_vault_access_document
     ON pii_vault.vault_access_log(document_id);
 
 -- Project salts (deterministic per project)
-CREATE TABLE pii_vault.project_salts (
+CREATE TABLE IF NOT EXISTS pii_vault.project_salts (
     project_id      VARCHAR(100) PRIMARY KEY REFERENCES projects(id),
     salt            VARCHAR(200) NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -87,37 +87,50 @@ ALTER TABLE pii_vault.project_salts     ENABLE ROW LEVEL SECURITY;
 -- Audit log: even the table owner may not delete
 ALTER TABLE pii_vault.vault_access_log FORCE ROW LEVEL SECURITY;
 
--- Policy: only mcp_vault_reader and the DB owner (pb_admin) may access
-CREATE POLICY vault_content_read ON pii_vault.original_content
-    FOR SELECT TO mcp_vault_reader USING (true);
-
-CREATE POLICY vault_content_insert ON pii_vault.original_content
-    FOR INSERT TO mcp_vault_reader WITH CHECK (true);
-
-CREATE POLICY vault_content_delete ON pii_vault.original_content
-    FOR DELETE TO mcp_vault_reader USING (true);
-
-CREATE POLICY vault_mapping_read ON pii_vault.pseudonym_mapping
-    FOR SELECT TO mcp_vault_reader USING (true);
-
-CREATE POLICY vault_mapping_insert ON pii_vault.pseudonym_mapping
-    FOR INSERT TO mcp_vault_reader WITH CHECK (true);
-
-CREATE POLICY vault_mapping_delete ON pii_vault.pseudonym_mapping
-    FOR DELETE TO mcp_vault_reader USING (true);
-
-CREATE POLICY vault_access_log_insert ON pii_vault.vault_access_log
-    FOR INSERT TO mcp_vault_reader WITH CHECK (true);
-
-CREATE POLICY vault_access_log_read ON pii_vault.vault_access_log
-    FOR SELECT TO mcp_vault_reader USING (true);
-
--- Salts are append-only: no UPDATE/DELETE to preserve pseudonym integrity
-CREATE POLICY vault_salts_read ON pii_vault.project_salts
-    FOR SELECT TO mcp_vault_reader USING (true);
-
-CREATE POLICY vault_salts_insert ON pii_vault.project_salts
-    FOR INSERT TO mcp_vault_reader WITH CHECK (true);
+-- Policy: only mcp_vault_reader and the DB owner (pb_admin) may access.
+--
+-- Postgres has no CREATE POLICY IF NOT EXISTS, so each policy is guarded
+-- against pg_policies the same way 014/022/024 do it. Driven off a VALUES
+-- list rather than ten near-identical DO blocks.
+--
+-- Salts and the access log are append-only: no UPDATE/DELETE policy, so
+-- pseudonym integrity and the audit trail survive a compromised reader.
+--
+-- Caveat, same as the hand-written guards elsewhere: this only creates a
+-- missing policy, it never updates one that already exists. Changing a
+-- definition below needs an explicit DROP POLICY in a later migration.
+DO $$
+DECLARE
+    pol RECORD;
+BEGIN
+    FOR pol IN
+        SELECT * FROM (VALUES
+            ('original_content',  'vault_content_read',      'SELECT', 'USING (true)'),
+            ('original_content',  'vault_content_insert',    'INSERT', 'WITH CHECK (true)'),
+            ('original_content',  'vault_content_delete',    'DELETE', 'USING (true)'),
+            ('pseudonym_mapping', 'vault_mapping_read',      'SELECT', 'USING (true)'),
+            ('pseudonym_mapping', 'vault_mapping_insert',    'INSERT', 'WITH CHECK (true)'),
+            ('pseudonym_mapping', 'vault_mapping_delete',    'DELETE', 'USING (true)'),
+            ('vault_access_log',  'vault_access_log_insert', 'INSERT', 'WITH CHECK (true)'),
+            ('vault_access_log',  'vault_access_log_read',   'SELECT', 'USING (true)'),
+            ('project_salts',     'vault_salts_read',        'SELECT', 'USING (true)'),
+            ('project_salts',     'vault_salts_insert',      'INSERT', 'WITH CHECK (true)')
+        ) AS p(tbl, polname, cmd, clause)
+    LOOP
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_policies
+            WHERE schemaname = 'pii_vault'
+              AND tablename  = pol.tbl
+              AND policyname = pol.polname
+        ) THEN
+            EXECUTE format(
+                'CREATE POLICY %I ON pii_vault.%I FOR %s TO mcp_vault_reader %s',
+                pol.polname, pol.tbl, pol.cmd, pol.clause
+            );
+        END IF;
+    END LOOP;
+END
+$$;
 
 -- Grant permissions
 GRANT SELECT, INSERT, DELETE ON pii_vault.original_content TO mcp_vault_reader;

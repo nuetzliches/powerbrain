@@ -4,7 +4,7 @@
 -- ============================================================
 
 -- Snapshot metadata (Qdrant + PG + OPA policy commit)
-CREATE TABLE knowledge_snapshots (
+CREATE TABLE IF NOT EXISTS knowledge_snapshots (
     id              SERIAL PRIMARY KEY,
     snapshot_name   VARCHAR(255) NOT NULL,
     created_at      TIMESTAMPTZ DEFAULT now(),
@@ -20,11 +20,11 @@ CREATE TABLE knowledge_snapshots (
     size_bytes      BIGINT
 );
 
-CREATE INDEX idx_snapshots_name ON knowledge_snapshots(snapshot_name);
-CREATE INDEX idx_snapshots_time ON knowledge_snapshots(created_at);
+CREATE INDEX IF NOT EXISTS idx_snapshots_name ON knowledge_snapshots(snapshot_name);
+CREATE INDEX IF NOT EXISTS idx_snapshots_time ON knowledge_snapshots(created_at);
 
 -- Temporal history for datasets (SCD Type 2)
-CREATE TABLE datasets_history (
+CREATE TABLE IF NOT EXISTS datasets_history (
     history_id      BIGSERIAL PRIMARY KEY,
     dataset_id      UUID NOT NULL,
     valid_from      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -34,8 +34,8 @@ CREATE TABLE datasets_history (
     changed_by      VARCHAR(100)
 );
 
-CREATE INDEX idx_datasets_hist_id   ON datasets_history(dataset_id);
-CREATE INDEX idx_datasets_hist_time ON datasets_history(valid_from, valid_to);
+CREATE INDEX IF NOT EXISTS idx_datasets_hist_id   ON datasets_history(dataset_id);
+CREATE INDEX IF NOT EXISTS idx_datasets_hist_time ON datasets_history(valid_from, valid_to);
 
 -- Trigger: automatically write history on changes to datasets
 CREATE OR REPLACE FUNCTION track_dataset_changes()
@@ -58,6 +58,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trg_datasets_history ON datasets;
 CREATE TRIGGER trg_datasets_history
     AFTER INSERT OR UPDATE OR DELETE ON datasets
     FOR EACH ROW EXECUTE FUNCTION track_dataset_changes();
