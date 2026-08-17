@@ -61,6 +61,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Outbound calls were indistinguishable in traces** — the httpx
+  instrumentation names client spans after the HTTP method alone, so every
+  dependency a service talks to collapsed into two spans, `GET` and `POST`. A
+  trace showed that a call happened but not who was called, which is the main
+  thing an outbound hop is worth recording. `shared/telemetry.py` now registers a
+  `request_hook` that renames them to `<METHOD> <host><path>`; there is no
+  span-name callback in this instrumentation, so the hook is the supported way.
+  Numeric and UUID path segments are generalised to `/{id}`, because span names
+  are a dimension for span-to-metric connectors and an id there costs one series
+  per record. The async client path needs its own coroutine wrapper: the
+  instrumentation validates that hook with `iscoroutinefunction` and silently
+  drops a plain function, so passing the sync hook would have renamed sync calls
+  while leaving async ones bare — covered by a test.
+
 - **CI red since late July** — `mcp[server]>=1.27.1` resolved to `mcp 2.0.0`,
   whose API drops the `Server.list_tools()` decorator used in
   `mcp-server/server.py` and `streamablehttp_client` used in
