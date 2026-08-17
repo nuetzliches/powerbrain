@@ -1,9 +1,11 @@
-pytest>=8.0
-pytest-asyncio>=0.24
-pytest-mock>=3.14
-respx>=0.22
-coverage>=7.0
-pytest-cov>=6.0
-pip-audit>=2.7
-bandit>=1.8
-locust>=2.20
+# Exact pins (supply-chain hardening) — see CLAUDE.md "Dependency Pinning".
+# Dependabot proposes bumps; every change is reviewed in a PR.
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-mock==3.15.1
+respx==0.23.1
+coverage==7.15.4
+pytest-cov==7.1.0
+pip-audit==2.10.1
+bandit==1.9.4
+locust==2.46.3
