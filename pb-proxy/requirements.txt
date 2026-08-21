@@ -9,7 +9,7 @@ httpx==0.28.1
 # directly to attach auth headers, so it is pinned here rather than inherited.
 # Do not substitute httpx: the SDK accepts an httpx client and then silently
 # stops delivering server-initiated messages.
-httpx2==2.10.0
+httpx2==2.12.0
 pydantic==2.13.4
 pyyaml==6.0.3
 prometheus-client==0.26.0
