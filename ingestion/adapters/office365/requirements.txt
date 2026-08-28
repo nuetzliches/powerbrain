@@ -7,7 +7,7 @@
 # Exact pins (supply-chain hardening) — see CLAUDE.md "Dependency Pinning".
 
 # Microsoft Graph authentication (Entra ID protocol fixes)
-msal==1.37.0
+msal==1.38.0
 
 # HTTP client (shared with core)
 httpx==0.28.1
