@@ -2,7 +2,7 @@
 # Dependabot proposes bumps; every change is reviewed in a PR.
 fastapi==0.141.1
 uvicorn[standard]==0.52.3
-litellm==1.96.2
+litellm==1.98.0
 mcp==2.0.0
 httpx==0.28.1
 # httpx2 is the MCP SDK's HTTP stack from 2.0 on. tool_injection.py imports it
