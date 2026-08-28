@@ -3,7 +3,7 @@
 fastapi==0.141.1
 uvicorn[standard]==0.52.3
 litellm==1.96.2
-mcp==2.0.0
+mcp==2.1.1
 httpx==0.28.1
 # httpx2 is the MCP SDK's HTTP stack from 2.0 on. tool_injection.py imports it
 # directly to attach auth headers, so it is pinned here rather than inherited.
