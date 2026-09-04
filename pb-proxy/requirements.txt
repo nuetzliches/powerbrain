@@ -10,7 +10,7 @@ httpx==0.28.1
 # Do not substitute httpx: the SDK accepts an httpx client and then silently
 # stops delivering server-initiated messages.
 httpx2==2.10.0
-pydantic==2.13.4
+pydantic==2.13.5
 pyyaml==6.0.3
 prometheus-client==0.26.0
 tenacity==9.1.4
