@@ -7,7 +7,7 @@
 mcp==2.0.0
 httpx==0.28.1
 asyncpg==0.31.0
-qdrant-client==1.19.0
+qdrant-client==1.19.1
 pydantic==2.13.4
 uvicorn[standard]==0.52.3
 starlette==1.6.0
